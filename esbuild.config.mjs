@@ -61,14 +61,7 @@ if (prod) {
             fs.copyFileSync("styles.css", path.join(outputDir, "styles.css"));
         }
 
-        // 复制 README 文件（可选）
-        if (fs.existsSync("README.md")) {
-            fs.copyFileSync("README.md", path.join(outputDir, "README.md"));
-        }
-        if (fs.existsSync("README-zh.md")) {
-            fs.copyFileSync("README-zh.md", path.join(outputDir, "README-zh.md"));
-        }
-
+  
         // 复制 LICENSE 文件（可选）
         if (fs.existsSync("LICENSE")) {
             fs.copyFileSync("LICENSE", path.join(outputDir, "LICENSE"));
@@ -79,7 +72,9 @@ if (prod) {
         console.log("📄 Generated files:");
         console.log(`   - manifest.json`);
         console.log(`   - main.js`);
-        console.log(`   - styles.css`);
+        if (fs.existsSync("styles.css")) {
+            console.log(`   - styles.css`);
+        }
 
         process.exit(0);
     } catch (error) {
