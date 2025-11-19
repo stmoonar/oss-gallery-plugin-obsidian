@@ -1,19 +1,20 @@
-import { MinioObject, SyncChanges, ServiceDependencies } from '../types/gallery';
+import { SyncChanges, ServiceDependencies } from '../types/gallery';
+import { OssImage } from '../types/oss';
 import { ImageCache } from '../utils/ImageCache';
 
 export class SyncService {
     constructor(private deps: ServiceDependencies) {}
 
     /**
-     * 与远程服务器同步
+     * Sync with remote server
      */
-    async sync(localObjects: MinioObject[]): Promise<{ objects: MinioObject[]; changes: SyncChanges }> {
+    async sync(localObjects: OssImage[]): Promise<{ objects: OssImage[]; changes: SyncChanges }> {
         try {
             const remoteObjects = await this.fetchRemoteObjects();
             const changes = this.detectChanges(localObjects, remoteObjects);
 
             if (changes.hasChanges) {
-                // 清理已删除文件的缓存
+                // Clean up deleted files from cache
                 changes.deleted.forEach(objectName => {
                     ImageCache.delete(objectName);
                 });
@@ -30,61 +31,44 @@ export class SyncService {
     }
 
     /**
-     * 获取远程对象列表
+     * Fetch remote objects
      */
-    private async fetchRemoteObjects(): Promise<MinioObject[]> {
-        return new Promise((resolve, reject) => {
-            const objects: MinioObject[] = [];
-            const stream = this.deps.client.listObjects(this.deps.settings.bucket, '', true);
-
-            stream.on('data', (obj: MinioObject) => {
-                if (obj.name) {
-                    objects.push({
-                        name: obj.name,
-                        lastModified: obj.lastModified
-                    });
-                }
-            });
-
-            stream.on('end', () => {
-                resolve(objects.sort((a, b) =>
-                    (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
-                ));
-            });
-
-            stream.on('error', reject);
-        });
+    private async fetchRemoteObjects(): Promise<OssImage[]> {
+        const objects = await this.deps.provider.listImages();
+        return objects.sort((a, b) =>
+            (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
+        );
     }
 
     /**
-     * 检测本地和远程的变更
+     * Detect changes between local and remote
      */
-    private detectChanges(local: MinioObject[], remote: MinioObject[]): SyncChanges {
-        const localMap = new Map(local.map(obj => [obj.name, obj.lastModified]));
-        const remoteMap = new Map(remote.map(obj => [obj.name, obj.lastModified]));
+    private detectChanges(local: OssImage[], remote: OssImage[]): SyncChanges {
+        const localMap = new Map(local.map(obj => [obj.key, obj.lastModified]));
+        const remoteMap = new Map(remote.map(obj => [obj.key, obj.lastModified]));
 
-        const added: MinioObject[] = [];
+        const added: OssImage[] = [];
         const deleted: string[] = [];
-        const modified: MinioObject[] = [];
+        const modified: OssImage[] = [];
         let hasChanges = false;
 
-        // 检测新增和修改
-        for (const [name, remoteModified] of remoteMap) {
-            const localModified = localMap.get(name);
+        // Detect added and modified
+        for (const [key, remoteModified] of remoteMap) {
+            const localModified = localMap.get(key);
 
             if (!localModified) {
-                added.push(remote.find(obj => obj.name === name)!);
+                added.push(remote.find(obj => obj.key === key)!);
                 hasChanges = true;
             } else if (remoteModified?.getTime() !== localModified?.getTime()) {
-                modified.push(remote.find(obj => obj.name === name)!);
+                modified.push(remote.find(obj => obj.key === key)!);
                 hasChanges = true;
             }
         }
 
-        // 检测删除
-        for (const name of localMap.keys()) {
-            if (!remoteMap.has(name)) {
-                deleted.push(name);
+        // Detect deleted
+        for (const key of localMap.keys()) {
+            if (!remoteMap.has(key)) {
+                deleted.push(key);
                 hasChanges = true;
             }
         }
@@ -93,10 +77,10 @@ export class SyncService {
     }
 
     /**
-     * 删除对象
+     * Delete object
      */
     async deleteObject(objectName: string): Promise<void> {
-        await this.deps.client.removeObject(this.deps.settings.bucket, objectName);
+        await this.deps.provider.deleteImage(objectName);
         ImageCache.delete(objectName);
     }
 }

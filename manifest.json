@@ -1,6 +1,6 @@
 {
-	"id": "minio-plus",
-	"name": "Minio Plus",
+	"id": "obsidian-oss-gallery",
+	"name": "OSS Gallery",
 	"version": "1.0.2",
 	"minAppVersion": "0.15.0",
 	"description": "Upload and manage files to Minio OSS with ease.",

@@ -361,18 +361,21 @@ If your plugin does not need CSS, delete this file.
     left: 0;
     right: 0;
     height: 60px;
+    /* 稍微增加高度 */
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 20px;
+    padding: 0 60px;
+    /* 增加左右 padding，避开右侧按钮 */
     pointer-events: none;
-    z-index: 1002;
+    z-index: 2000;
+    /* 提高层级 */
 }
 
 /* Background Toggle Button */
 .minio-preview-toggle-bg-btn {
     position: absolute;
-    top: 15px;
+    top: 12px;
     right: 15px;
     width: 36px;
     height: 36px;
@@ -386,7 +389,8 @@ If your plugin does not need CSS, delete this file.
     color: white;
     pointer-events: auto;
     transition: all 0.2s ease;
-    z-index: 1003;
+    z-index: 2002;
+    /* 最高层级 */
 }
 
 .minio-preview-toggle-bg-btn:hover {
@@ -717,4 +721,187 @@ If your plugin does not need CSS, delete this file.
     width: 0;
     transition: width 0.3s ease;
     display: block;
+}
+
+/* Error State */
+.minio-gallery-error {
+    color: var(--text-error);
+    text-align: center;
+    padding: var(--minio-spacing-md);
+    margin: var(--minio-spacing-md) auto;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: var(--minio-spacing-sm);
+}
+
+/* Preview Modal Error */
+.minio-preview-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(220, 53, 69, 0.95);
+    color: white;
+    padding: 20px 30px;
+    border-radius: 8px;
+    font-size: 14px;
+    text-align: center;
+    max-width: 80%;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    animation: fadeIn 0.3s ease;
+    z-index: 1005;
+}
+
+.minio-preview-error .error-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.minio-preview-error .error-message {
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.minio-preview-error .error-url {
+    font-size: 12px;
+    opacity: 0.9;
+    word-break: break-all;
+    font-family: monospace;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.9);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* Path Display */
+.minio-preview-path {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 16px;
+    font-family: var(--font-interface);
+    text-align: center;
+    max-width: 60%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: auto;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    z-index: 1001;
+    padding: 0;
+    background: none;
+}
+
+.minio-image-preview-container.light .minio-preview-path {
+    color: rgba(0, 0, 0, 0.8);
+    text-shadow: 0 0 2px rgba(255, 255, 255, 0.8);
+    /* 增加白色描边以防背景太黑看不清 */
+    background: none;
+    box-shadow: none;
+}
+
+/* Loading Spinner */
+.minio-preview-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    pointer-events: none;
+    z-index: 1004;
+}
+
+.loading-spinner {
+    width: 56px;
+    height: 56px;
+    border: 5px solid rgba(255, 255, 255, 0.15);
+    border-top: 5px solid white;
+    border-radius: 50%;
+    animation: spin 1.2s linear infinite;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.loading-text {
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.9),
+        0 0 20px rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.7);
+    padding: 8px 20px;
+    border-radius: 20px;
+    backdrop-filter: blur(10px);
+}
+
+/* 浅色主题下的加载动画 */
+.minio-image-preview-container.light .minio-preview-loading .loading-text {
+    color: #333;
+    text-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.3),
+        0 0 20px rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.85);
+}
+
+.minio-image-preview-container.light .minio-preview-loading .loading-spinner {
+    border-color: rgba(0, 0, 0, 0.2);
+    border-top-color: #333;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* 图片加载时的背景样式 */
+.minio-image-preview {
+    transition: opacity 0.3s ease;
+}
+
+.minio-image-preview.loading-bg {
+    opacity: 0.3;
+}
+
+/* Placeholder */
+.minio-preview-placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+.minio-preview-placeholder svg {
+    width: 120px;
+    height: 120px;
+    color: rgba(255, 255, 255, 0.2);
+    transition: color 0.3s ease;
+}
+
+.minio-image-preview-container.light .minio-preview-placeholder svg {
+    color: rgba(0, 0, 0, 0.1);
 }

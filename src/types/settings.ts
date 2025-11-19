@@ -1,13 +1,35 @@
-export interface MinioPluginSettings {
-    accessKey: string;
-    secretKey: string;
-    region: string;
-    bucket: string;
-    basepath: string;
+export interface MinioSettings {
     endpoint: string;
     port: number;
-    customDomain: string;
     useSSL: boolean;
+    accessKey: string;
+    secretKey: string;
+    bucket: string;
+    region: string;
+    customDomain: string;
+}
+
+export interface SmMsSettings {
+    token: string;
+}
+
+export interface GithubSettings {
+    repo: string;
+    branch: string;
+    token: string;
+    customUrl: string;
+}
+
+export interface PluginSettings {
+    activeProvider: string;
+    providers: {
+        minio: MinioSettings;
+        smms: SmMsSettings;
+        github: GithubSettings;
+        [key: string]: any;
+    };
+    // Global settings
+    basepath: string;
     imgPreview: boolean;
     videoPreview: boolean;
     audioPreview: boolean;
@@ -16,16 +38,36 @@ export interface MinioPluginSettings {
     pathRule: string;
 }
 
-export const DEFAULT_SETTINGS: MinioPluginSettings = {
+export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
+    endpoint: '',
+    port: 9000,
+    useSSL: true,
     accessKey: '',
     secretKey: '',
-    region: '',
-    endpoint: '',
-    port: 9001,
-    customDomain: '',
     bucket: '',
+    region: '',
+    customDomain: '',
+};
+
+export const DEFAULT_SMMS_SETTINGS: SmMsSettings = {
+    token: '',
+};
+
+export const DEFAULT_GITHUB_SETTINGS: GithubSettings = {
+    repo: '',
+    branch: 'main',
+    token: '',
+    customUrl: '',
+};
+
+export const DEFAULT_SETTINGS: PluginSettings = {
+    activeProvider: 'minio',
+    providers: {
+        minio: DEFAULT_MINIO_SETTINGS,
+        smms: DEFAULT_SMMS_SETTINGS,
+        github: DEFAULT_GITHUB_SETTINGS,
+    },
     basepath: '',
-    useSSL: true,
     imgPreview: true,
     videoPreview: true,
     audioPreview: true,

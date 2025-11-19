@@ -10,7 +10,7 @@ export default {
 	"Enter your bucket": "Enter your bucket",
 	"Enter your port": "Enter your port",
 
-	"Enter your base path(e.g. /path)": "Enter your base path(e.g. /path)",
+
 	"Enter your custom domain(e.g. https://minio.example.com)":
 		"Enter your custom domain(e.g. https://minio.example.com)",
 
@@ -67,4 +67,18 @@ export default {
 	Cancel: "Cancel",
 	"Invalid regex pattern": "Invalid regex pattern",
 	"Toggle regex search": "Toggle regex search",
+	"Select Provider": "Select Provider",
+	"Choose the OSS provider you want to use": "Choose the OSS provider you want to use",
+	"No active provider": "No active provider",
+	"Please configure OSS settings first": "Please configure OSS settings first",
+	"Enter your base path(e.g. /path)": "Enter your base path (e.g. /path)",
+	"Token": "Token",
+	"SM.MS Secret Token": "SM.MS Secret Token",
+	"Repo Name": "Repo Name",
+	"username/reponame": "username/reponame",
+	"Branch": "Branch",
+	"main or master": "main or master",
+	"GitHub Personal Access Token": "GitHub Personal Access Token",
+	"Custom Domain": "Custom Domain",
+	"e.g. https://cdn.jsdelivr.net/gh/user/repo": "e.g. https://cdn.jsdelivr.net/gh/user/repo",
 };

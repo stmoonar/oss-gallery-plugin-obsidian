@@ -1,4 +1,4 @@
-import { MinioObject, SearchResult } from '../types/gallery';
+import { OssImage, SearchResult } from '../types/oss';
 import { t } from '../i18n';
 import { isImageFile } from '../utils/FileUtils';
 import { handleError } from '../utils/ErrorHandler';
@@ -6,13 +6,13 @@ import { handleError } from '../utils/ErrorHandler';
 export class SearchService {
     private allImageUrls: Map<string, string> = new Map();
 
-    constructor(private generateUrl: (objectName: string) => string) {}
+    constructor(private generateUrl: (objectName: string) => Promise<string>) {}
 
     /**
      * 执行搜索
      */
     async search(
-        objects: MinioObject[],
+        objects: OssImage[],
         searchText: string,
         useRegex: boolean = false
     ): Promise<SearchResult> {
@@ -23,7 +23,7 @@ export class SearchService {
             };
         }
 
-        const matchedObjects: MinioObject[] = [];
+        const matchedObjects: OssImage[] = [];
 
         if (useRegex) {
             const result = await this.regexSearch(objects, searchText);
@@ -42,8 +42,8 @@ export class SearchService {
     /**
      * 正则表达式搜索
      */
-    private async regexSearch(objects: MinioObject[], searchText: string): Promise<MinioObject[]> {
-        const matchedObjects: MinioObject[] = [];
+    private async regexSearch(objects: OssImage[], searchText: string): Promise<OssImage[]> {
+        const matchedObjects: OssImage[] = [];
 
         try {
             let regexPattern = searchText;
@@ -54,15 +54,23 @@ export class SearchService {
             const regex = new RegExp(regexPattern, 'i');
 
             for (const obj of objects) {
-                if (!isImageFile(obj.name)) continue;
+                if (!isImageFile(obj.key)) continue;
 
-                const cachedUrl = this.allImageUrls.get(obj.name);
-                const url = cachedUrl || this.generateUrl(obj.name);
+                const cachedUrl = this.allImageUrls.get(obj.key);
+                let url = cachedUrl;
+                
+                if (!url) {
+                    if (obj.url) {
+                        url = obj.url;
+                    } else {
+                        url = await this.generateUrl(obj.key);
+                    }
+                }
 
                 if (regex.test(url)) {
                     matchedObjects.push(obj);
                     if (!cachedUrl) {
-                        this.allImageUrls.set(obj.name, url);
+                        this.allImageUrls.set(obj.key, url);
                     }
                 }
             }
@@ -83,20 +91,28 @@ export class SearchService {
     /**
      * 普通文本搜索
      */
-    private async textSearch(objects: MinioObject[], searchText: string): Promise<MinioObject[]> {
-        const matchedObjects: MinioObject[] = [];
+    private async textSearch(objects: OssImage[], searchText: string): Promise<OssImage[]> {
+        const matchedObjects: OssImage[] = [];
         const lowerSearchText = searchText.toLowerCase();
 
         for (const obj of objects) {
-            if (!isImageFile(obj.name)) continue;
+            if (!isImageFile(obj.key)) continue;
 
-            const cachedUrl = this.allImageUrls.get(obj.name);
-            const url = cachedUrl || this.generateUrl(obj.name);
+            const cachedUrl = this.allImageUrls.get(obj.key);
+            let url = cachedUrl;
+
+            if (!url) {
+                if (obj.url) {
+                    url = obj.url;
+                } else {
+                    url = await this.generateUrl(obj.key);
+                }
+            }
 
             if (url.toLowerCase().includes(lowerSearchText)) {
                 matchedObjects.push(obj);
                 if (!cachedUrl) {
-                    this.allImageUrls.set(obj.name, url);
+                    this.allImageUrls.set(obj.key, url);
                 }
             }
         }

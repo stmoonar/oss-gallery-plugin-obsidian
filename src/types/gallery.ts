@@ -1,10 +1,4 @@
-import { MinioPluginSettings } from "./settings";
-import { Client } from "minio-es";
-
-export interface MinioObject {
-	name: string;
-	lastModified?: Date;
-}
+import { IOssProvider, OssImage } from "./oss";
 
 export interface FileInputEvent extends Event {
 	target: HTMLInputElement & {
@@ -17,20 +11,20 @@ export interface ImagePreviewOptions {
 }
 
 export interface SearchResult {
-	matchedObjects: MinioObject[];
+	matchedObjects: OssImage[];
 	totalCount: number;
 }
 
 export interface SyncChanges {
 	hasChanges: boolean;
-	added: MinioObject[];
+	added: OssImage[];
 	deleted: string[];
-	modified: MinioObject[];
+	modified: OssImage[];
 }
 
 export interface GalleryState {
-	remoteObjects: MinioObject[];
-	visibleImages: MinioObject[];
+	remoteObjects: OssImage[];
+	visibleImages: OssImage[];
 	isSearching: boolean;
 	savedSearchTerm: string;
 	useRegexSearch: boolean;
@@ -56,6 +50,5 @@ export interface LazyImageOptions {
 }
 
 export interface ServiceDependencies {
-	client: Client;
-	settings: MinioPluginSettings;
+	provider: IOssProvider;
 }

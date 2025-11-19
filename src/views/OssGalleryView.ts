@@ -1,24 +1,20 @@
 import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
-import { Client } from 'minio-es';
 import { t } from '../i18n';
-import { MinioPluginSettings } from '../types/settings';
+import { IOssProvider, OssImage } from '../types/oss';
 import { ImagePreviewModal } from '../modals/ImagePreviewModal';
 import { ConfirmModal } from '../modals/ConfirmModal';
 import { ImageCache } from '../utils/ImageCache';
-import { UrlGenerator } from '../utils/UrlGenerator';
 import { SearchService } from '../services/SearchService';
 import { SyncService } from '../services/SyncService';
 import { ImageGrid } from '../components/ImageGrid';
 import { SearchComponent } from '../components/SearchComponent';
-import { MinioObject, GalleryState } from '../types/gallery';
-import { isImageFile } from '../utils/FileUtils';
+import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 
-export const GALLERY_VIEW_TYPE = 'minio-gallery-view';
+export const GALLERY_VIEW_TYPE = 'oss-gallery-view';
 
-export class MinioGalleryView extends ItemView {
-    private client: Client;
-    private settings: MinioPluginSettings;
+export class OssGalleryView extends ItemView {
+    private provider: IOssProvider;
     private container: HTMLElement;
     private refreshBtn: HTMLButtonElement;
     private backToTopBtn: HTMLButtonElement | null = null;
@@ -26,14 +22,13 @@ export class MinioGalleryView extends ItemView {
     private scrollTimeout: number | null = null;
     private lastLoadTime: number = 0;
 
-    // 服务和组件
-    private urlGenerator: UrlGenerator;
+    // Services and Components
     private searchService: SearchService;
     private syncService: SyncService;
     private imageGrid: ImageGrid | null = null;
     private searchComponent: SearchComponent | null = null;
 
-    // 状态管理
+    // State
     private state: GalleryState = {
         remoteObjects: [],
         visibleImages: [],
@@ -44,17 +39,25 @@ export class MinioGalleryView extends ItemView {
         isLoading: false
     };
 
-    constructor(leaf: WorkspaceLeaf, client: Client, settings: MinioPluginSettings) {
+    constructor(leaf: WorkspaceLeaf, provider: IOssProvider) {
         super(leaf);
-        this.client = client;
-        this.settings = settings;
+        this.provider = provider;
         this.initializeServices();
     }
 
+    updateProvider(provider: IOssProvider) {
+        this.provider = provider;
+        this.initializeServices();
+        this.loadGallery(true);
+    }
+
     private initializeServices(): void {
-        this.urlGenerator = new UrlGenerator(this.settings);
-        this.searchService = new SearchService((objectName) => this.urlGenerator.generateUrl(objectName));
-        this.syncService = new SyncService({ client: this.client, settings: this.settings });
+        // Search service might need update if it depends on specific object structure, 
+        // but OssImage should be compatible if we map 'key' to 'name' or update SearchService.
+        // Assuming SearchService expects objects with 'name' property. 
+        // OssImage has 'key', let's ensure compatibility.
+        this.searchService = new SearchService(async (objectName) => await this.getObjectUrl(objectName));
+        this.syncService = new SyncService({ provider: this.provider });
     }
 
     getViewType(): string {
@@ -62,7 +65,7 @@ export class MinioGalleryView extends ItemView {
     }
 
     getDisplayText(): string {
-        return t('Minio gallery');
+        return t('Minio gallery'); // Should probably rename to OSS Gallery in i18n
     }
 
     getIcon(): string {
@@ -102,30 +105,48 @@ export class MinioGalleryView extends ItemView {
         };
     }
 
-    private async loadGallery(forceRefresh = false): Promise<void> {
+    async loadGallery(forceRefresh = false): Promise<void> {
         if (this.state.isLoading) return;
 
         const currentTime = Date.now();
-        if (!forceRefresh && (currentTime - this.lastLoadTime < 60000)) return;
+        // Increase cache time to 5 minutes to reduce frequent API calls
+        if (!forceRefresh && (currentTime - this.lastLoadTime < 300000)) {
+            // But if it's a force refresh for new upload, we should bypass cache
+            if (!forceRefresh) return;
+        }
 
         this.state.isLoading = true;
         this.refreshBtn?.addClass('loading');
         this.lastLoadTime = currentTime;
 
         this.cleanupImageGrid();
+
+        // Clear any existing loading or error messages
+        const existingMessages = this.container.querySelectorAll('.minio-loading-spinner, .minio-gallery-error');
+        existingMessages.forEach(el => el.remove());
+
+        // If we have cached data and not forcing refresh, use it first
+        if (!forceRefresh && this.state.remoteObjects.length > 0) {
+            // Show cached data immediately for better UX
+            this.createImageGrid();
+            await this.imageGrid!.renderImages(this.state.remoteObjects);
+            this.state.visibleImages = this.state.remoteObjects;
+            this.state.isSearching = false;
+
+            // Then load fresh data in background
+            this.refreshDataInBackground();
+            return;
+        }
+
         const loading = this.container.createEl('div', { cls: 'minio-loading-spinner' });
 
         try {
-            if (!this.settings.bucket) {
-                throw new Error('Bucket is not configured');
-            }
-
             const { objects } = await this.syncService.sync(this.state.remoteObjects);
             this.state.remoteObjects = objects;
 
-            const imageObjects = objects
-                .filter(obj => isImageFile(obj.name))
-                .sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
+            // Filter logic might need adjustment if listImages returns non-images
+            // But IOssProvider.listImages implies images.
+            const imageObjects = objects;
 
             this.createImageGrid();
             await this.imageGrid!.renderImages(imageObjects);
@@ -136,7 +157,10 @@ export class MinioGalleryView extends ItemView {
             loading.remove();
         } catch (err) {
             loading.removeClass('minio-loading-spinner');
-            loading.setText(t('Load failed'));
+            loading.addClass('minio-gallery-error');
+            
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            loading.setText(`${t('Load failed')}: ${errorMessage}`);
             console.error(err);
         } finally {
             this.state.isLoading = false;
@@ -150,7 +174,7 @@ export class MinioGalleryView extends ItemView {
         });
 
         this.imageGrid = new ImageGrid(gridContainer, {
-            getObjectUrl: (objectName) => this.getObjectUrl(objectName),
+            getObjectUrl: async (objectName) => await this.getObjectUrl(objectName),
             onPreview: (index) => this.openImagePreview(index),
             onDelete: async (objectName, element) => {
                 await this.handleDelete(objectName, element);
@@ -175,10 +199,10 @@ export class MinioGalleryView extends ItemView {
         this.state.savedSearchTerm = searchText;
 
         try {
-            let objectsToRender: MinioObject[];
+            let objectsToRender: OssImage[];
 
             if (searchText.trim() === '') {
-                objectsToRender = this.state.remoteObjects.filter(obj => isImageFile(obj.name));
+                objectsToRender = this.state.remoteObjects;
                 this.state.isSearching = false;
                 this.state.savedSearchTerm = '';
             } else {
@@ -207,26 +231,55 @@ export class MinioGalleryView extends ItemView {
         }
 
         const object = this.state.visibleImages[imageIndex];
-        const objectUrl = await this.getObjectUrl(object.name);
+        // 使用 object.url 而不是异步搜索
+        const objectUrl = object.url;
 
         if (modal) {
-            modal.updateImage(objectUrl, object.name);
+            modal.updateImage(objectUrl, object.key);
             this.state.currentPreviewIndex = imageIndex;
             return;
         }
 
-        const modalInstance = new ImagePreviewModal(this.app, objectUrl, object.name, {
+        const modalInstance = new ImagePreviewModal(this.app, objectUrl, object.key, {
             onNavigate: (direction: 'prev' | 'next') => {
                 const currentIndex = this.state.currentPreviewIndex ?? imageIndex;
                 const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
                 if (newIndex >= 0 && newIndex < this.state.visibleImages.length) {
-                    this.openImagePreview(newIndex, modalInstance);
+                    // 直接更新，不需要再次调用 openImagePreview
+                    const nextObject = this.state.visibleImages[newIndex];
+                    if (nextObject) {
+                        modalInstance.updateImage(nextObject.url, nextObject.key);
+                        this.state.currentPreviewIndex = newIndex;
+                    }
                 }
             }
         });
         modalInstance.open();
 
         this.state.currentPreviewIndex = imageIndex;
+
+        // 预加载相邻图片
+        this.preloadAdjacentImages(imageIndex);
+    }
+
+    private preloadAdjacentImages(currentIndex: number): void {
+        // 预加载下一张
+        if (currentIndex < this.state.visibleImages.length - 1) {
+            const nextObject = this.state.visibleImages[currentIndex + 1];
+            if (nextObject) {
+                const img = new Image();
+                img.src = nextObject.url;
+            }
+        }
+
+        // 预加载上一张
+        if (currentIndex > 0) {
+            const prevObject = this.state.visibleImages[currentIndex - 1];
+            if (prevObject) {
+                const img = new Image();
+                img.src = prevObject.url;
+            }
+        }
     }
 
     private async handleDelete(objectName: string, element: HTMLElement): Promise<void> {
@@ -235,8 +288,8 @@ export class MinioGalleryView extends ItemView {
                 await this.syncService.deleteObject(objectName);
                 element.remove();
 
-                this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.name !== objectName);
-                this.state.visibleImages = this.state.visibleImages.filter(obj => obj.name !== objectName);
+                this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
+                this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
 
                 ImageCache.delete(objectName);
 
@@ -254,12 +307,36 @@ export class MinioGalleryView extends ItemView {
 
     
     private async getObjectUrl(objectName: string): Promise<string> {
-        const cachedUrl = await ImageCache.get(objectName);
-        if (cachedUrl) return cachedUrl;
+        // Try to find object in remoteObjects to get URL directly if available
+        const obj = this.state.remoteObjects.find(o => o.key === objectName);
+        if (obj && obj.url) {
+            return obj.url;
+        }
 
-        const url = this.urlGenerator.generateUrl(objectName);
-        await ImageCache.set(objectName, url);
-        return url;
+        return '';
+    }
+
+    private async refreshDataInBackground(): Promise<void> {
+        try {
+            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
+
+            if (changes.hasChanges) {
+                this.state.remoteObjects = objects;
+
+                // Update gallery if user hasn't changed anything
+                if (!this.state.isSearching) {
+                    this.createImageGrid();
+                    await this.imageGrid!.renderImages(objects);
+                    this.state.visibleImages = objects;
+                }
+            }
+        } catch (error) {
+            console.error('Background refresh failed:', error);
+            // Don't show error to user for background refresh
+        } finally {
+            this.state.isLoading = false;
+            this.refreshBtn?.removeClass('loading');
+        }
     }
 
     private startAutoSync(): void {
@@ -269,7 +346,7 @@ export class MinioGalleryView extends ItemView {
                 this.state.remoteObjects = objects;
 
                 if (!this.state.isSearching) {
-                    this.state.visibleImages = objects.filter(obj => isImageFile(obj.name));
+                    this.state.visibleImages = objects;
                 }
             } catch (error) {
                 handleError(error, {

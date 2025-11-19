@@ -1,53 +1,69 @@
-import { App, Editor, Notice, Plugin, WorkspaceLeaf } from "obsidian";
-import { Client } from "minio-es";
+import { Editor, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { t } from "./i18n";
-import { MinioGalleryView, GALLERY_VIEW_TYPE } from "./views/MinioGalleryView";
-import { MinioPluginSettings, DEFAULT_SETTINGS } from "./types/settings";
+import { OssGalleryView, GALLERY_VIEW_TYPE } from "./views/OssGalleryView";
+import { PluginSettings, DEFAULT_SETTINGS } from "./types/settings";
 import { SettingsManager } from "./settings/SettingsManager";
 import { FileProcessor } from "./services/FileProcessor";
 import { UploadService, UploadProgress } from "./services/UploadService";
 import { handleUploadError } from "./utils/ErrorHandler";
+import { OssProviderManager } from "./providers/OssProviderManager";
+import { MinioProvider } from "./providers/MinioProvider";
+import { SmMsProvider } from "./providers/SmMsProvider";
+import { GithubProvider } from "./providers/GithubProvider";
 
 interface Position {
 	line: number;
 	ch: number;
 }
 
-export default class MinioPlusPlugin extends Plugin {
-	settings: MinioPluginSettings;
-	minioClient: Client;
+export default class OssGalleryPlugin extends Plugin {
+	settings: PluginSettings;
+	providerManager: OssProviderManager;
 
-	// 服务
+	// Services
 	private fileProcessor: FileProcessor;
 	private uploadService: UploadService;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.addSettingTab(new SettingsManager(this.app, this));
+		this.providerManager = new OssProviderManager(this.settings);
+		
+		// Register Providers
+		this.providerManager.registerProvider(new MinioProvider(this.settings.providers.minio));
+		this.providerManager.registerProvider(new SmMsProvider(this.settings.providers.smms));
+		this.providerManager.registerProvider(new GithubProvider(this.settings.providers.github));
+		// Register other providers here...
+
+		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager));
 		this.addCommands();
 
-		if (this.validateSettings()) {
-			this.initializeMinioClient();
-			this.initializeServices();
-			this.registerEvents();
-			this.setupView();
-		}
+		this.initializeServices();
+		this.registerEvents();
+		this.setupView();
 	}
 
 	private initializeServices(): void {
 		this.fileProcessor = new FileProcessor(this.settings);
-		this.uploadService = new UploadService(this.minioClient, this.settings);
+		
+		const activeProvider = this.providerManager.getActiveProvider();
+		if (activeProvider) {
+			this.uploadService = new UploadService(activeProvider);
+		} else {
+			// Handle case where no provider is active or found
+			// For now, we might not initialize uploadService or handle it gracefully
+			console.warn("No active provider found during initialization");
+		}
 	}
 
 	private addCommands(): void {
 		this.addCommand({
-			id: "minio-uploader",
+			id: "oss-upload",
 			name: t("File upload"),
 			icon: "upload-cloud",
 			editorCallback: (editor: Editor) => {
 				if (!this.validateSettings()) {
-					new Notice(t("Please configure Minio settings first"));
+					new Notice(t("Please configure OSS settings first"));
 					return;
 				}
 				this.triggerFileUpload(editor);
@@ -55,24 +71,11 @@ export default class MinioPlusPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "open-minio-gallery",
-			name: t("Open Minio gallery"),
+			id: "open-oss-gallery",
+			name: t("Open Minio gallery"), // Keep name for familiarity or update
 			icon: "image-file",
 			callback: () => this.openGalleryView(),
 		});
-	}
-
-	private initializeMinioClient(): void {
-		this.minioClient = new Client({
-			endPoint: this.settings.endpoint,
-			port: this.settings.port,
-			useSSL: this.settings.useSSL,
-			region: this.settings.region,
-			accessKey: this.settings.accessKey,
-			secretKey: this.settings.secretKey,
-		});
-
-		this.uploadService?.updateSettings(this.settings);
 	}
 
 	private registerEvents(): void {
@@ -90,8 +93,11 @@ export default class MinioPlusPlugin extends Plugin {
 	private setupView(): void {
 		this.registerView(
 			GALLERY_VIEW_TYPE,
-			(leaf) =>
-				new MinioGalleryView(leaf, this.minioClient, this.settings)
+			(leaf) => {
+				const provider = this.providerManager.getActiveProvider();
+				if (!provider) throw new Error("No active provider");
+				return new OssGalleryView(leaf, provider);
+			}
 		);
 
 		this.addRibbonIcon("image-file", t("Minio gallery"), () => {
@@ -102,7 +108,7 @@ export default class MinioPlusPlugin extends Plugin {
 	async openGalleryView(): Promise<void> {
 		const { workspace } = this.app;
 		let leaf: WorkspaceLeaf | null = null;
-		const currentView = workspace.getActiveViewOfType(MinioGalleryView);
+		const currentView = workspace.getActiveViewOfType(OssGalleryView);
 
 		if (currentView) {
 			leaf = currentView.leaf;
@@ -160,10 +166,14 @@ export default class MinioPlusPlugin extends Plugin {
 		let previewText = await this.showUploadPreview(editor, startPos, file);
 
 		try {
+			if (!this.uploadService) {
+				throw new Error("Upload service not initialized. Check settings.");
+			}
+
 			const objectName = this.fileProcessor.generateObjectName(file);
 			const fileType = this.fileProcessor.getFileType(file);
 
-			await this.uploadService.uploadFile(
+			const url = await this.uploadService.uploadFile(
 				file,
 				objectName,
 				(progress: UploadProgress) => {
@@ -176,28 +186,32 @@ export default class MinioPlusPlugin extends Plugin {
 				}
 			);
 
-			const url = this.uploadService.generateAccessUrl(objectName);
-
+			// Wait a bit for the progress bar to complete visually
 			setTimeout(() => {
 				const finalText = this.fileProcessor.wrapFileDependingOnType(
 					fileType,
 					url,
 					file.name
 				);
-				// 获取当前预览文本的实际范围
+				// Get actual range of preview text
 				const endPos = editor.offsetToPos(
 					editor.posToOffset(startPos) + previewText.length
 				);
 				editor.replaceRange(finalText, startPos, endPos);
-				// 将光标移动到插入内容的下一行
+				// Move cursor to end of inserted text
 				const newCursorPos = editor.offsetToPos(
 					editor.posToOffset(startPos) + finalText.length
 				);
 				editor.setCursor(newCursorPos);
-			}, 200);
+				// Ensure editor focus
+				editor.focus();
+
+				// Refresh all gallery views to show the new upload
+				this.refreshGalleryViews();
+			}, 500);
 		} catch (error) {
 			handleUploadError(error, file.name);
-			// 获取预览文本的实际范围并删除
+			// Remove preview text
 			const endPos = editor.offsetToPos(
 				editor.posToOffset(startPos) + previewText.length
 			);
@@ -242,7 +256,6 @@ export default class MinioPlusPlugin extends Plugin {
 		}
 
 		editor.replaceRange(previewText, startPos);
-		// 设置光标到预览文本的末尾（下一行开始）
 		editor.setCursor({ line: startPos.line + 1, ch: 0 });
 
 		return previewText;
@@ -279,19 +292,26 @@ export default class MinioPlusPlugin extends Plugin {
 	}
 
 	validateSettings(): boolean {
-		return (
-			this.uploadService?.validateUploadConfig().valid ??
-			!!(
-				this.settings.accessKey &&
-				this.settings.secretKey &&
-				this.settings.endpoint &&
-				this.settings.bucket
-			)
-		);
+		const activeProvider = this.providerManager.getActiveProvider();
+		return !!activeProvider;
+		// We might want to add a validate method to IOssProvider
+	}
+
+	/**
+	 * Refresh all gallery views after upload
+	 */
+	private refreshGalleryViews(): void {
+		// Get all gallery views and force refresh them
+		this.app.workspace.getLeavesOfType('oss-gallery-view').forEach(leaf => {
+			if (leaf.view instanceof OssGalleryView) {
+				// Force refresh by calling loadGallery with true
+				(leaf.view as OssGalleryView).loadGallery(true);
+			}
+		});
 	}
 
 	onunload(): void {
-		// 清理资源
+		// Cleanup
 	}
 
 	async loadSettings(): Promise<void> {
@@ -302,6 +322,28 @@ export default class MinioPlusPlugin extends Plugin {
 			this.settings = { ...DEFAULT_SETTINGS };
 		} else {
 			this.settings = Object.assign({}, DEFAULT_SETTINGS, existingData);
+			
+			// Migration logic for old settings if needed
+			if (!this.settings.providers) {
+				// It's likely old settings structure
+				const oldSettings = existingData as any;
+				this.settings.providers = {
+					minio: {
+						accessKey: oldSettings.accessKey || '',
+						secretKey: oldSettings.secretKey || '',
+						region: oldSettings.region || '',
+						bucket: oldSettings.bucket || '',
+						endpoint: oldSettings.endpoint || '',
+						port: oldSettings.port || 9000,
+						customDomain: oldSettings.customDomain || '',
+						useSSL: oldSettings.useSSL ?? true,
+					},
+                    smms: { token: '' },
+                    github: { repo: '', branch: 'main', token: '', customUrl: '' }
+				};
+                this.settings.basepath = oldSettings.basepath || '';
+				this.settings.activeProvider = 'minio';
+			}
 		}
 	}
 
@@ -309,10 +351,18 @@ export default class MinioPlusPlugin extends Plugin {
 		await this.saveData(this.settings);
 
 		this.fileProcessor?.updateSettings(this.settings);
-		this.uploadService?.updateSettings(this.settings);
+		this.providerManager?.updateSettings(this.settings);
+		
+		const activeProvider = this.providerManager.getActiveProvider();
+		if (activeProvider) {
+			this.uploadService?.updateProvider(activeProvider);
 
-		if (this.minioClient && this.validateSettings()) {
-			this.initializeMinioClient();
+			// Update all gallery views
+			this.app.workspace.getLeavesOfType('oss-gallery-view').forEach(leaf => {
+				if (leaf.view instanceof OssGalleryView) {
+					leaf.view.updateProvider(activeProvider);
+				}
+			});
 		}
 	}
 }

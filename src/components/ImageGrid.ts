@@ -1,4 +1,4 @@
-import { MinioObject, RenderImageOptions } from "../types/gallery";
+import { OssImage } from "../types/oss";
 import { LazyImageService } from "../services/LazyImageService";
 import { Notice, setIcon } from "obsidian";
 import { t } from "../i18n";
@@ -30,14 +30,14 @@ export class ImageGrid {
 	/**
 	 * 批量渲染图片
 	 */
-	async renderImages(objects: MinioObject[], batchSize = 10): Promise<void> {
+	async renderImages(objects: OssImage[], batchSize = 10): Promise<void> {
 		// 清理旧的图片元素
 		this.cleanup();
 
 		for (let i = 0; i < objects.length; i += batchSize) {
 			const batch = objects.slice(i, i + batchSize);
 			await Promise.all(
-				batch.map((obj, idx) => this.renderImageItem(obj.name, i + idx))
+				batch.map((obj, idx) => this.renderImageItem(obj.key, i + idx))
 			);
 
 			// 让出 UI 线程
