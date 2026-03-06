@@ -3,7 +3,7 @@
 	"name": "OSS Gallery",
 	"version": "1.0.2",
 	"minAppVersion": "0.15.0",
-	"description": "Upload and manage files to Minio OSS with ease.",
+	"description": "Upload and manage files to multiple OSS providers (MinIO, SM.MS, GitHub, Aliyun, Tencent, Qiniu, Upyun, Imgur) with gallery view.",
 	"author": "stmoonar",
 	"authorUrl": "https://blog.stmoonar.me",
 	"isDesktopOnly": false
