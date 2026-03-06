@@ -20,14 +20,61 @@ export interface GithubSettings {
     customUrl: string;
 }
 
+export interface AliyunSettings {
+    accessKeyId: string;
+    accessKeySecret: string;
+    bucket: string;
+    area: string;
+    path: string;
+    customUrl: string;
+}
+
+export interface TencentSettings {
+    secretId: string;
+    secretKey: string;
+    bucket: string;
+    region: string;
+    path: string;
+    customUrl: string;
+}
+
+export interface QiniuSettings {
+    accessKey: string;
+    secretKey: string;
+    bucket: string;
+    url: string;
+    area: string;
+    path: string;
+}
+
+export interface UpyunSettings {
+    operator: string;
+    password: string;
+    bucket: string;
+    url: string;
+    path: string;
+    suffix: string;
+}
+
+export interface ImgurSettings {
+    clientId: string;
+    proxy: string;
+}
+
+export interface ProviderSettingsMap {
+    minio: MinioSettings;
+    smms: SmMsSettings;
+    github: GithubSettings;
+    aliyun: AliyunSettings;
+    tencent: TencentSettings;
+    qiniu: QiniuSettings;
+    upyun: UpyunSettings;
+    imgur: ImgurSettings;
+}
+
 export interface PluginSettings {
     activeProvider: string;
-    providers: {
-        minio: MinioSettings;
-        smms: SmMsSettings;
-        github: GithubSettings;
-        [key: string]: any;
-    };
+    providers: ProviderSettingsMap;
     // Global settings
     basepath: string;
     imgPreview: boolean;
@@ -60,12 +107,58 @@ export const DEFAULT_GITHUB_SETTINGS: GithubSettings = {
     customUrl: '',
 };
 
+export const DEFAULT_ALIYUN_SETTINGS: AliyunSettings = {
+    accessKeyId: '',
+    accessKeySecret: '',
+    bucket: '',
+    area: 'oss-cn-hangzhou',
+    path: '',
+    customUrl: '',
+};
+
+export const DEFAULT_TENCENT_SETTINGS: TencentSettings = {
+    secretId: '',
+    secretKey: '',
+    bucket: '',
+    region: 'ap-shanghai',
+    path: '',
+    customUrl: '',
+};
+
+export const DEFAULT_QINIU_SETTINGS: QiniuSettings = {
+    accessKey: '',
+    secretKey: '',
+    bucket: '',
+    url: '',
+    area: 'z0',
+    path: '',
+};
+
+export const DEFAULT_UPYUN_SETTINGS: UpyunSettings = {
+    operator: '',
+    password: '',
+    bucket: '',
+    url: '',
+    path: '',
+    suffix: '',
+};
+
+export const DEFAULT_IMGUR_SETTINGS: ImgurSettings = {
+    clientId: '',
+    proxy: '',
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
     activeProvider: 'minio',
     providers: {
         minio: DEFAULT_MINIO_SETTINGS,
         smms: DEFAULT_SMMS_SETTINGS,
         github: DEFAULT_GITHUB_SETTINGS,
+        aliyun: DEFAULT_ALIYUN_SETTINGS,
+        tencent: DEFAULT_TENCENT_SETTINGS,
+        qiniu: DEFAULT_QINIU_SETTINGS,
+        upyun: DEFAULT_UPYUN_SETTINGS,
+        imgur: DEFAULT_IMGUR_SETTINGS,
     },
     basepath: '',
     imgPreview: true,

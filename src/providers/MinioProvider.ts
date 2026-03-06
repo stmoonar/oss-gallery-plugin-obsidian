@@ -103,10 +103,6 @@ export class MinioProvider implements IOssProvider {
             delete headers['Host'];
 
             const url = this.getUrl(path);
-            console.log('Minio ListImages Request:', {
-                url,
-                headers: headers
-            });
 
             const response = await requestUrl({
                 url: url,
@@ -146,10 +142,6 @@ export class MinioProvider implements IOssProvider {
             delete headers['Host'];
 
             const url = this.getUrl(path);
-            console.log('Minio DeleteImage Request:', {
-                url,
-                headers: headers
-            });
 
             const response = await requestUrl({
                 url: url,

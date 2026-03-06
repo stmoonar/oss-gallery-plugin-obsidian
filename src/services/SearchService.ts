@@ -132,11 +132,13 @@ export class SearchService {
                 const innerPattern = pattern.slice(1, -1);
                 return `.*${innerPattern}.*`;
             } else if (pattern.startsWith('*')) {
+                // *foo -> match anything ending with foo
                 const innerPattern = pattern.slice(1);
-                return `${innerPattern}.*`;
-            } else if (pattern.endsWith('*')) {
-                const innerPattern = pattern.slice(0, -1);
                 return `.*${innerPattern}`;
+            } else if (pattern.endsWith('*')) {
+                // foo* -> match anything starting with foo
+                const innerPattern = pattern.slice(0, -1);
+                return `${innerPattern}.*`;
             }
         }
 

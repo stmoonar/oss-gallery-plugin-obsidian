@@ -5,9 +5,8 @@
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"build": "rimraf dist main.js && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"clean": "rimraf dist main.js",
-		"dist": "npm run clean && npm run build",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
 	"keywords": [],
@@ -29,6 +28,7 @@
 	},
 	"dependencies": {
 		"aws4": "^1.13.2",
-		"mime": "^3.0.0"
+		"mime": "^3.0.0",
+		"js-base64": "^3.7.7"
 	}
 }

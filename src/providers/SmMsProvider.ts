@@ -73,13 +73,7 @@ export class SmMsProvider implements IOssProvider {
                 setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
             }
 
-            // Log the request for debugging
-            console.log('SM.MS Request Headers:', requestParams.headers);
-            console.log('SM.MS Request Body size:', bodyArrayBuffer.byteLength);
-
             const response = await requestUrl(requestParams);
-            console.log('SM.MS Response status:', response.status);
-            console.log('SM.MS Response:', response.json);
 
             const data = response.json;
 

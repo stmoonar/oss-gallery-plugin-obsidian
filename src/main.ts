@@ -10,6 +10,11 @@ import { OssProviderManager } from "./providers/OssProviderManager";
 import { MinioProvider } from "./providers/MinioProvider";
 import { SmMsProvider } from "./providers/SmMsProvider";
 import { GithubProvider } from "./providers/GithubProvider";
+import { AliyunProvider } from "./providers/AliyunProvider";
+import { TencentProvider } from "./providers/TencentProvider";
+import { QiniuProvider } from "./providers/QiniuProvider";
+import { UpyunProvider } from "./providers/UpyunProvider";
+import { ImgurProvider } from "./providers/ImgurProvider";
 
 interface Position {
 	line: number;
@@ -33,7 +38,11 @@ export default class OssGalleryPlugin extends Plugin {
 		this.providerManager.registerProvider(new MinioProvider(this.settings.providers.minio));
 		this.providerManager.registerProvider(new SmMsProvider(this.settings.providers.smms));
 		this.providerManager.registerProvider(new GithubProvider(this.settings.providers.github));
-		// Register other providers here...
+		this.providerManager.registerProvider(new AliyunProvider(this.settings.providers.aliyun));
+		this.providerManager.registerProvider(new TencentProvider(this.settings.providers.tencent));
+		this.providerManager.registerProvider(new QiniuProvider(this.settings.providers.qiniu));
+		this.providerManager.registerProvider(new UpyunProvider(this.settings.providers.upyun));
+		this.providerManager.registerProvider(new ImgurProvider(this.settings.providers.imgur));
 
 		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager));
 		this.addCommands();
@@ -132,22 +141,76 @@ export default class OssGalleryPlugin extends Plugin {
 		input.setAttribute("type", "file");
 		input.setAttribute(
 			"accept",
-			"image/*,video/*,.doc,.docx,.pdf,.pptx,.xlsx,.xls"
+			"image/*,video/*,audio/*,.doc,.docx,.pdf,.pptx,.xlsx,.xls"
 		);
 
 		input.onchange = async (event: Event) => {
 			const file = (event.target as HTMLInputElement)?.files?.[0];
 			if (file) {
-				await this.handleUploader(
-					new ClipboardEvent("paste", {
-						clipboardData: new DataTransfer(),
-					}),
-					editor
-				);
+				await this.uploadFileToEditor(editor, file);
 			}
 		};
 
 		input.click();
+	}
+
+	/**
+	 * Upload a file directly (used by command palette file picker)
+	 */
+	private async uploadFileToEditor(editor: Editor, file: File): Promise<void> {
+		if (!file || !this.fileProcessor.getFileType(file)) return;
+
+		const cursor = editor.getCursor();
+		const startPos: Position = { line: cursor.line, ch: cursor.ch };
+		let previewText = await this.showUploadPreview(editor, startPos, file);
+
+		try {
+			if (!this.uploadService) {
+				throw new Error("Upload service not initialized. Check settings.");
+			}
+
+			const objectName = this.fileProcessor.generateObjectName(file);
+			const fileType = this.fileProcessor.getFileType(file);
+
+			const url = await this.uploadService.uploadFile(
+				file,
+				objectName,
+				(progress: UploadProgress) => {
+					previewText = this.updateUploadProgress(
+						editor,
+						startPos,
+						previewText,
+						progress.percentage
+					);
+				}
+			);
+
+			setTimeout(() => {
+				const finalText = this.fileProcessor.wrapFileDependingOnType(
+					fileType,
+					url,
+					file.name
+				);
+				const endPos = editor.offsetToPos(
+					editor.posToOffset(startPos) + previewText.length
+				);
+				editor.replaceRange(finalText, startPos, endPos);
+				const newCursorPos = editor.offsetToPos(
+					editor.posToOffset(startPos) + finalText.length
+				);
+				editor.setCursor(newCursorPos);
+				editor.focus();
+				this.refreshGalleryViews();
+			}, 500);
+		} catch (error) {
+			handleUploadError(error, file.name);
+			const endPos = editor.offsetToPos(
+				editor.posToOffset(startPos) + previewText.length
+			);
+			editor.replaceRange("", startPos, endPos);
+			editor.setCursor(startPos);
+			new Notice(t("Upload failed"));
+		}
 	}
 
 	async handleUploader(
@@ -321,28 +384,42 @@ export default class OssGalleryPlugin extends Plugin {
 			await this.saveData(DEFAULT_SETTINGS);
 			this.settings = { ...DEFAULT_SETTINGS };
 		} else {
-			this.settings = Object.assign({}, DEFAULT_SETTINGS, existingData);
-			
-			// Migration logic for old settings if needed
-			if (!this.settings.providers) {
-				// It's likely old settings structure
+			// Migration logic for old settings (pre-multi-provider)
+			if (!existingData.providers) {
 				const oldSettings = existingData as any;
-				this.settings.providers = {
-					minio: {
-						accessKey: oldSettings.accessKey || '',
-						secretKey: oldSettings.secretKey || '',
-						region: oldSettings.region || '',
-						bucket: oldSettings.bucket || '',
-						endpoint: oldSettings.endpoint || '',
-						port: oldSettings.port || 9000,
-						customDomain: oldSettings.customDomain || '',
-						useSSL: oldSettings.useSSL ?? true,
+				this.settings = {
+					...DEFAULT_SETTINGS,
+					activeProvider: 'minio',
+					basepath: oldSettings.basepath || '',
+					providers: {
+						...DEFAULT_SETTINGS.providers,
+						minio: {
+							accessKey: oldSettings.accessKey || '',
+							secretKey: oldSettings.secretKey || '',
+							region: oldSettings.region || '',
+							bucket: oldSettings.bucket || '',
+							endpoint: oldSettings.endpoint || '',
+							port: oldSettings.port || 9000,
+							customDomain: oldSettings.customDomain || '',
+							useSSL: oldSettings.useSSL ?? true,
+						},
 					},
-                    smms: { token: '' },
-                    github: { repo: '', branch: 'main', token: '', customUrl: '' }
 				};
-                this.settings.basepath = oldSettings.basepath || '';
-				this.settings.activeProvider = 'minio';
+			} else {
+				// Deep merge providers: ensure all provider keys exist with defaults
+				const mergedProviders = { ...DEFAULT_SETTINGS.providers };
+				for (const key of Object.keys(DEFAULT_SETTINGS.providers) as Array<keyof typeof DEFAULT_SETTINGS.providers>) {
+					mergedProviders[key] = {
+						...DEFAULT_SETTINGS.providers[key],
+						...(existingData.providers[key] || {}),
+					} as any;
+				}
+
+				this.settings = {
+					...DEFAULT_SETTINGS,
+					...existingData,
+					providers: mergedProviders,
+				};
 			}
 		}
 	}

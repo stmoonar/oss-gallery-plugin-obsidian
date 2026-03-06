@@ -325,6 +325,7 @@ export class OssGalleryView extends ItemView {
 
                 // Update gallery if user hasn't changed anything
                 if (!this.state.isSearching) {
+                    this.cleanupImageGrid();
                     this.createImageGrid();
                     await this.imageGrid!.renderImages(objects);
                     this.state.visibleImages = objects;
