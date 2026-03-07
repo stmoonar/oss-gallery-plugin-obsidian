@@ -1,5 +1,6 @@
 import { IOssProvider } from "../types/oss";
 import { PluginSettings } from "../types/settings";
+import { providerRegistry } from "./registry";
 
 export class OssProviderManager {
     private providers: Map<string, IOssProvider> = new Map();
@@ -7,10 +8,19 @@ export class OssProviderManager {
 
     constructor(private settings: PluginSettings) {
         this.activeProviderName = settings.activeProvider;
+        this.initializeProviders();
     }
 
-    registerProvider(provider: IOssProvider) {
-        this.providers.set(provider.name, provider);
+    /**
+     * Create all provider instances from registry
+     */
+    private initializeProviders(): void {
+        for (const entry of providerRegistry.getAll()) {
+            const providerSettings = this.settings.providers[entry.id];
+            if (providerSettings) {
+                this.providers.set(entry.id, entry.create(providerSettings));
+            }
+        }
     }
 
     getProvider(name: string): IOssProvider | undefined {
@@ -32,9 +42,12 @@ export class OssProviderManager {
     getAllProviders(): IOssProvider[] {
         return Array.from(this.providers.values());
     }
-    
+
     updateSettings(settings: PluginSettings) {
         this.settings = settings;
         this.activeProviderName = settings.activeProvider;
+        // Re-create providers with new settings
+        this.providers.clear();
+        this.initializeProviders();
     }
 }

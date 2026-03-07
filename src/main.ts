@@ -3,18 +3,13 @@ import { t } from "./i18n";
 import { OssGalleryView, GALLERY_VIEW_TYPE } from "./views/OssGalleryView";
 import { PluginSettings, DEFAULT_SETTINGS } from "./types/settings";
 import { SettingsManager } from "./settings/SettingsManager";
-import { FileProcessor } from "./services/FileProcessor";
+import { ObjectKeyBuilder } from "./services/ObjectKeyBuilder";
+import { EmbedRenderer } from "./services/EmbedRenderer";
 import { UploadService, UploadProgress } from "./services/UploadService";
+import { getFileTypeByMime } from "./utils/FileUtils";
 import { handleUploadError } from "./utils/ErrorHandler";
 import { OssProviderManager } from "./providers/OssProviderManager";
-import { MinioProvider } from "./providers/MinioProvider";
-import { SmMsProvider } from "./providers/SmMsProvider";
-import { GithubProvider } from "./providers/GithubProvider";
-import { AliyunProvider } from "./providers/AliyunProvider";
-import { TencentProvider } from "./providers/TencentProvider";
-import { QiniuProvider } from "./providers/QiniuProvider";
-import { UpyunProvider } from "./providers/UpyunProvider";
-import { ImgurProvider } from "./providers/ImgurProvider";
+import { providerRegistry } from "./providers/registry";
 
 interface Position {
 	line: number;
@@ -26,23 +21,14 @@ export default class OssGalleryPlugin extends Plugin {
 	providerManager: OssProviderManager;
 
 	// Services
-	private fileProcessor: FileProcessor;
+	private keyBuilder: ObjectKeyBuilder;
+	private embedRenderer: EmbedRenderer;
 	private uploadService: UploadService;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
 		this.providerManager = new OssProviderManager(this.settings);
-		
-		// Register Providers
-		this.providerManager.registerProvider(new MinioProvider(this.settings.providers.minio));
-		this.providerManager.registerProvider(new SmMsProvider(this.settings.providers.smms));
-		this.providerManager.registerProvider(new GithubProvider(this.settings.providers.github));
-		this.providerManager.registerProvider(new AliyunProvider(this.settings.providers.aliyun));
-		this.providerManager.registerProvider(new TencentProvider(this.settings.providers.tencent));
-		this.providerManager.registerProvider(new QiniuProvider(this.settings.providers.qiniu));
-		this.providerManager.registerProvider(new UpyunProvider(this.settings.providers.upyun));
-		this.providerManager.registerProvider(new ImgurProvider(this.settings.providers.imgur));
 
 		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager));
 		this.addCommands();
@@ -53,7 +39,8 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	private initializeServices(): void {
-		this.fileProcessor = new FileProcessor(this.settings);
+		this.keyBuilder = new ObjectKeyBuilder(this.settings);
+		this.embedRenderer = new EmbedRenderer(this.settings);
 		
 		const activeProvider = this.providerManager.getActiveProvider();
 		if (activeProvider) {
@@ -158,7 +145,7 @@ export default class OssGalleryPlugin extends Plugin {
 	 * Upload a file directly (used by command palette file picker)
 	 */
 	private async uploadFileToEditor(editor: Editor, file: File): Promise<void> {
-		if (!file || !this.fileProcessor.getFileType(file)) return;
+		if (!file || !getFileTypeByMime(file)) return;
 
 		const cursor = editor.getCursor();
 		const startPos: Position = { line: cursor.line, ch: cursor.ch };
@@ -169,8 +156,8 @@ export default class OssGalleryPlugin extends Plugin {
 				throw new Error("Upload service not initialized. Check settings.");
 			}
 
-			const objectName = this.fileProcessor.generateObjectName(file);
-			const fileType = this.fileProcessor.getFileType(file);
+			const objectName = this.keyBuilder.generateObjectName(file);
+			const fileType = getFileTypeByMime(file);
 
 			const url = await this.uploadService.uploadFile(
 				file,
@@ -186,7 +173,7 @@ export default class OssGalleryPlugin extends Plugin {
 			);
 
 			setTimeout(() => {
-				const finalText = this.fileProcessor.wrapFileDependingOnType(
+				const finalText = this.embedRenderer.render(
 					fileType,
 					url,
 					file.name
@@ -220,7 +207,7 @@ export default class OssGalleryPlugin extends Plugin {
 		if (evt.defaultPrevented) return;
 
 		const file = this.extractFileFromEvent(evt);
-		if (!file || !this.fileProcessor.getFileType(file)) return;
+		if (!file || !getFileTypeByMime(file)) return;
 
 		evt.preventDefault();
 
@@ -233,8 +220,8 @@ export default class OssGalleryPlugin extends Plugin {
 				throw new Error("Upload service not initialized. Check settings.");
 			}
 
-			const objectName = this.fileProcessor.generateObjectName(file);
-			const fileType = this.fileProcessor.getFileType(file);
+			const objectName = this.keyBuilder.generateObjectName(file);
+			const fileType = getFileTypeByMime(file);
 
 			const url = await this.uploadService.uploadFile(
 				file,
@@ -251,7 +238,7 @@ export default class OssGalleryPlugin extends Plugin {
 
 			// Wait a bit for the progress bar to complete visually
 			setTimeout(() => {
-				const finalText = this.fileProcessor.wrapFileDependingOnType(
+				const finalText = this.embedRenderer.render(
 					fileType,
 					url,
 					file.name
@@ -300,7 +287,7 @@ export default class OssGalleryPlugin extends Plugin {
 		startPos: Position,
 		file: File
 	): Promise<string> {
-		const fileType = this.fileProcessor.getFileType(file);
+		const fileType = getFileTypeByMime(file);
 		let previewText = `<div class="upload-preview-container uploading"><div class="upload-progress"><div class="upload-progress-bar" style="width: 0%"></div></div></div>\n`;
 
 		if (fileType === "image") {
@@ -406,11 +393,12 @@ export default class OssGalleryPlugin extends Plugin {
 					},
 				};
 			} else {
-				// Deep merge providers: ensure all provider keys exist with defaults
-				const mergedProviders = { ...DEFAULT_SETTINGS.providers };
-				for (const key of Object.keys(DEFAULT_SETTINGS.providers) as Array<keyof typeof DEFAULT_SETTINGS.providers>) {
+				// Deep merge providers: ensure all provider keys exist with defaults from registry
+				const registryDefaults = providerRegistry.buildDefaultProviderSettings();
+				const mergedProviders = { ...registryDefaults };
+				for (const key of Object.keys(registryDefaults) as Array<keyof typeof registryDefaults>) {
 					mergedProviders[key] = {
-						...DEFAULT_SETTINGS.providers[key],
+						...registryDefaults[key],
 						...(existingData.providers[key] || {}),
 					} as any;
 				}
@@ -427,7 +415,8 @@ export default class OssGalleryPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 
-		this.fileProcessor?.updateSettings(this.settings);
+		this.keyBuilder?.updateSettings(this.settings);
+		this.embedRenderer?.updateSettings(this.settings);
 		this.providerManager?.updateSettings(this.settings);
 		
 		const activeProvider = this.providerManager.getActiveProvider();

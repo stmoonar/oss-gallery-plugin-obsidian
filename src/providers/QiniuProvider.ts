@@ -1,9 +1,13 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { QiniuSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import * as Base64 from 'js-base64';
+import { buildMultipartBody, generateBoundary } from './shared/multipart';
+import { simulateProgress } from './shared/progress';
+import { isImageFile } from './shared/image';
+import { buildObjectKey } from './shared/path';
 
 export class QiniuProvider implements IOssProvider {
     name = 'qiniu';
@@ -16,24 +20,17 @@ export class QiniuProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.accessKey || !this.settings.secretKey || !this.settings.bucket) {
             throw new Error(t('Please configure Qiniu settings first'));
         }
 
         // Simulate progress since requestUrl doesn't support it
-        if (onProgress) {
-            setTimeout(() => onProgress({ loaded: 0, total: file.size, percentage: 0 }), 0);
-            setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
-        }
-
-        // Normalize path prefix - remove leading slash, trim trailing slash
-        let normalizedPath = this.settings.path ? this.settings.path.trim() : '';
-        normalizedPath = normalizedPath.replace(/^\/+/, '').replace(/\/+$/, '');
+        simulateProgress(onProgress, file.size);
 
         // Build key
-        const key = normalizedPath ? `${normalizedPath}/${path}` : path;
+        const key = buildObjectKey(this.settings.path, path);
 
         // Generate upload token
         const token = this.generateUploadToken(key);
@@ -45,42 +42,12 @@ export class QiniuProvider implements IOssProvider {
         else if (this.settings.area === 'as0') uploadUrl = 'https://upload-as0.qiniup.com';
 
         // Create form data
-        const boundary = '----ObsidianFormBoundary' + Math.random().toString(36).substr(2, 16);
-        const encoder = new TextEncoder();
-
-        const parts: Uint8Array[] = [];
-
-        // Add token
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="token"\r\n\r\n`));
-        parts.push(encoder.encode(`${token}\r\n`));
-
-        // Add key
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="key"\r\n\r\n`));
-        parts.push(encoder.encode(`${key}\r\n`));
-
-        // Add file
-        const fileArrayBuffer = await file.arrayBuffer();
-        const fileBytes = new Uint8Array(fileArrayBuffer);
-
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="file"; filename="${encodeURIComponent(file.name)}"\r\n`));
-        parts.push(encoder.encode(`Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`));
-        parts.push(fileBytes);
-        parts.push(encoder.encode('\r\n'));
-
-        parts.push(encoder.encode(`--${boundary}--\r\n`));
-
-        // Combine all parts
-        const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-        const bodyArrayBuffer = new ArrayBuffer(totalLength);
-        const bodyView = new Uint8Array(bodyArrayBuffer);
-        let offset = 0;
-        for (const part of parts) {
-            bodyView.set(part, offset);
-            offset += part.length;
-        }
+        const boundary = generateBoundary();
+        const bodyArrayBuffer = buildMultipartBody([
+            { name: 'token', value: token },
+            { name: 'key', value: key },
+            { name: 'file', value: new Uint8Array(await file.arrayBuffer()), filename: file.name, contentType: file.type || 'application/octet-stream' }
+        ], boundary);
 
         const requestParams: RequestUrlParam = {
             url: uploadUrl,
@@ -150,7 +117,7 @@ export class QiniuProvider implements IOssProvider {
 
                     for (const item of data.items) {
                         // Filter for image files
-                        if (this.isImageFile(item.key)) {
+                        if (isImageFile(item.key)) {
                             images.push({
                                 key: item.key,
                                 url: `${baseUrl}/${item.key}`,
@@ -223,7 +190,7 @@ export class QiniuProvider implements IOssProvider {
         return `QBox ${this.settings.accessKey}:${signature}`;
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Access Key'))
             .setDesc(t('Qiniu Access Key'))
@@ -351,9 +318,4 @@ export class QiniuProvider implements IOssProvider {
                 }));
     }
 
-    private isImageFile(key: string): boolean {
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
-        const ext = key.toLowerCase().substring(key.lastIndexOf('.'));
-        return imageExtensions.includes(ext);
-    }
 }

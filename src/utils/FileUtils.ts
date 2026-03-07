@@ -57,6 +57,19 @@ export function getFileType(filename: string): 'image' | 'video' | 'audio' | 'do
 }
 
 /**
+ * 根据 MIME 类型获取文件分类
+ * @param file File 对象
+ * @returns 文件类型分类，空字符串表示不支持
+ */
+export function getFileTypeByMime(file: File): string {
+    if (file?.type.match(/video.*/)) return 'video';
+    if (file?.type.match(/audio.*/)) return 'audio';
+    if (file?.type.match(/application\/(vnd.*|pdf)/)) return 'doc';
+    if (file?.type.match(/image.*/)) return 'image';
+    return '';
+}
+
+/**
  * 获取文件扩展名
  * @param filename 文件名
  * @returns 文件扩展名（包含点号）

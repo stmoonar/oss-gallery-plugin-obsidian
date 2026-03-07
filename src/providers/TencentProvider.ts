@@ -1,9 +1,12 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { TencentSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import { createHash } from 'crypto';
+import { simulateProgress } from './shared/progress';
+import { isImageFile } from './shared/image';
+import { buildObjectKey } from './shared/path';
 
 export class TencentProvider implements IOssProvider {
     name = 'tencent';
@@ -16,24 +19,16 @@ export class TencentProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
             throw new Error(t('Please configure Tencent COS settings first'));
         }
 
         // Simulate progress since requestUrl doesn't support it
-        if (onProgress) {
-            setTimeout(() => onProgress({ loaded: 0, total: file.size, percentage: 0 }), 0);
-            setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
-        }
+        simulateProgress(onProgress, file.size);
 
-        // Normalize path prefix - remove leading slash, trim trailing slash
-        let normalizedPath = this.settings.path ? this.settings.path.trim() : '';
-        normalizedPath = normalizedPath.replace(/^\/+/, '').replace(/\/+$/, '');
-
-        // Build object key
-        const objectKey = normalizedPath ? `${normalizedPath}/${path}` : path;
+        const objectKey = buildObjectKey(this.settings.path, path);
         const host = `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
         const url = `https://${host}/${objectKey}`;
 
@@ -97,7 +92,7 @@ export class TencentProvider implements IOssProvider {
                     for (const item of data.ListBucketResult.Contents) {
                         // Filter for image files
                         const key = item.Key;
-                        if (this.isImageFile(key)) {
+                        if (isImageFile(key)) {
                             images.push({
                                 key: key,
                                 url: `https://${host}/${key}`,
@@ -192,7 +187,7 @@ export class TencentProvider implements IOssProvider {
         return `QCLOUD ${authorization}`;
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Secret ID'))
             .setDesc(t('Tencent COS Secret ID'))
@@ -320,9 +315,4 @@ export class TencentProvider implements IOssProvider {
                 }));
     }
 
-    private isImageFile(key: string): boolean {
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
-        const ext = key.toLowerCase().substring(key.lastIndexOf('.'));
-        return imageExtensions.includes(ext);
-    }
 }

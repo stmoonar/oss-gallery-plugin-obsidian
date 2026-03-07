@@ -1,7 +1,8 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { GithubSettings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting, Notice } from 'obsidian';
 import { t } from '../i18n';
+import { isImageFile } from './shared/image';
 
 export class GithubProvider implements IOssProvider {
     name = 'github';
@@ -14,7 +15,7 @@ export class GithubProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.repo || !this.settings.token) {
             throw new Error(t('Please configure OSS settings first'));
@@ -137,7 +138,7 @@ export class GithubProvider implements IOssProvider {
 
         if (treeData.tree && Array.isArray(treeData.tree)) {
             for (const item of treeData.tree) {
-                if (item.type === 'blob' && this.isImage(item.path)) {
+                if (item.type === 'blob' && isImageFile(item.path)) {
                     images.push({
                         key: item.path,
                         url: this.buildCustomUrl(item.path),
@@ -174,7 +175,7 @@ export class GithubProvider implements IOssProvider {
 
                 // Handle single file
                 if (data && !Array.isArray(data) && data.type === 'file') {
-                    if (this.isImage(data.name)) {
+                    if (isImageFile(data.name)) {
                         return [{
                             key: data.path,
                             url: data.download_url || this.buildCustomUrl(data.path),
@@ -188,7 +189,7 @@ export class GithubProvider implements IOssProvider {
                 // Handle directory
                 if (Array.isArray(data)) {
                     return data
-                        .filter(item => item.type === 'file' && this.isImage(item.name))
+                        .filter(item => item.type === 'file' && isImageFile(item.name))
                         .map(item => ({
                             key: item.path,
                             url: item.download_url || this.buildCustomUrl(item.path),
@@ -295,7 +296,7 @@ export class GithubProvider implements IOssProvider {
         }
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Repo Name'))
             .setDesc(t('username/reponame'))
@@ -355,7 +356,4 @@ export class GithubProvider implements IOssProvider {
         });
     }
 
-    private isImage(filename: string): boolean {
-        return /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|tiff|tif)$/i.test(filename);
-    }
 }

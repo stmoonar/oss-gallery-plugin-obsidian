@@ -1,7 +1,8 @@
 import { App, Plugin, PluginSettingTab, Setting } from 'obsidian';
-import { PluginSettings } from '../types/settings';
+import { PluginSettings, ProviderName, NameRule, PathRule } from '../types/settings';
 import { t } from '../i18n';
 import { OssProviderManager } from '../providers/OssProviderManager';
+import { providerRegistry } from '../providers/registry';
 
 export class SettingsManager extends PluginSettingTab {
     plugin: Plugin & {
@@ -32,11 +33,11 @@ export class SettingsManager extends PluginSettingTab {
             .setName(t('Select Provider'))
             .setDesc(t('Choose the OSS provider you want to use'))
             .addDropdown(dropdown => {
-                const providers = this.providerManager.getAllProviders();
-                providers.forEach(p => dropdown.addOption(p.name, p.name));
+                const entries = providerRegistry.getAll();
+                entries.forEach(e => dropdown.addOption(e.id, e.label));
                 dropdown.setValue(this.plugin.settings.activeProvider)
                     .onChange(async (value) => {
-                        this.plugin.settings.activeProvider = value;
+                        this.plugin.settings.activeProvider = value as ProviderName;
                         this.providerManager.setActiveProvider(value);
                         await this.plugin.saveSettings();
                         this.display(); // Refresh to show new provider settings
@@ -45,14 +46,15 @@ export class SettingsManager extends PluginSettingTab {
 
         // Active Provider Settings
         const activeProvider = this.providerManager.getActiveProvider();
-        if (activeProvider) {
+        const registryEntry = providerRegistry.get(this.plugin.settings.activeProvider);
+        if (activeProvider && registryEntry) {
             new Setting(containerEl)
-                .setName(`${activeProvider.name} Settings`)
+                .setName(`${registryEntry.label} Settings`)
                 .setHeading();
-            
-            activeProvider.getSettingsTab(
-                containerEl, 
-                this.plugin.settings, 
+
+            activeProvider.renderSettings(
+                containerEl,
+                this.plugin.settings,
                 async () => await this.plugin.saveSettings()
             );
         }
@@ -82,7 +84,7 @@ export class SettingsManager extends PluginSettingTab {
                 .addOption('timeAndLocal', t('Time and local file name'))
                 .setValue(this.plugin.settings.nameRule)
                 .onChange(async value => {
-                    this.plugin.settings.nameRule = value;
+                    this.plugin.settings.nameRule = value as NameRule;
                     await this.plugin.saveSettings();
                 }));
 
@@ -97,7 +99,7 @@ export class SettingsManager extends PluginSettingTab {
                 .addOption('typeAndDate', t('File type and date directory'))
                 .setValue(this.plugin.settings.pathRule)
                 .onChange(async value => {
-                    this.plugin.settings.pathRule = value;
+                    this.plugin.settings.pathRule = value as PathRule;
                     await this.plugin.saveSettings();
                 }));
     }

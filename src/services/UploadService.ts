@@ -1,28 +1,20 @@
-import { IOssProvider } from '../types/oss';
-import { Notice } from 'obsidian';
+import { IStorageProvider, UploadProgressInfo } from '../types/oss';
 import { t } from '../i18n';
 
-export interface UploadProgress {
-    loaded: number;
-    total: number;
-    percentage: number;
-}
+// Re-export for backward compatibility
+export type UploadProgress = UploadProgressInfo;
 
 export class UploadService {
-    private provider: IOssProvider;
+    private provider: IStorageProvider;
 
-    constructor(provider: IOssProvider) {
+    constructor(provider: IStorageProvider) {
         this.provider = provider;
     }
 
-    updateProvider(provider: IOssProvider) {
+    updateProvider(provider: IStorageProvider) {
         this.provider = provider;
     }
 
-    /**
-     * Upload file using the current provider
-     * Returns the access URL
-     */
     async uploadFile(
         file: File,
         objectName: string,

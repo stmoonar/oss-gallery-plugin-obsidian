@@ -1,7 +1,8 @@
-import { IOssProvider, OssImage } from "../types/oss";
+import { IOssProvider, OssImage, UploadProgressInfo } from "../types/oss";
 import { MinioSettings, PluginSettings } from "../types/settings";
 import { Setting, Notice, requestUrl, RequestUrlParam } from "obsidian";
 import { handleUploadError } from "../utils/ErrorHandler";
+import { isImageFile } from './shared/image';
 import mime from 'mime';
 import * as aws4 from "aws4";
 
@@ -17,7 +18,7 @@ export class MinioProvider implements IOssProvider {
     async upload(
         file: File, 
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         try {
             const arrayBuffer = await file.arrayBuffer();
@@ -187,7 +188,7 @@ export class MinioProvider implements IOssProvider {
             const lastModified = item.getElementsByTagName("LastModified")[0]?.textContent;
             const size = item.getElementsByTagName("Size")[0]?.textContent;
 
-            if (key && this.isImage(key)) {
+            if (key && isImageFile(key)) {
                 images.push({
                     key: key,
                     url: this.generateAccessUrl(key),
@@ -197,11 +198,6 @@ export class MinioProvider implements IOssProvider {
             }
         }
         return images;
-    }
-
-    private isImage(filename: string): boolean {
-        const ext = filename.split('.').pop()?.toLowerCase();
-        return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext || '');
     }
 
     private generateAccessUrl(objectName: string): string {
@@ -220,7 +216,7 @@ export class MinioProvider implements IOssProvider {
         return `${protocol}://${endpoint}${portStr}/${bucket}/${objectName}`;
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         const minioSettings = settings.providers.minio;
 
         new Setting(containerEl)

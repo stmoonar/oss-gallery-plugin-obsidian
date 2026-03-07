@@ -1,7 +1,9 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { SmMsSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
+import { buildMultipartBody, generateBoundary } from './shared/multipart';
+import { simulateProgress } from './shared/progress';
 
 export class SmMsProvider implements IOssProvider {
     name = 'smms';
@@ -14,47 +16,18 @@ export class SmMsProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.token) {
             throw new Error(t('Please configure OSS settings first'));
         }
 
-        // Get file as ArrayBuffer (binary data) - NOT base64
-        const fileArrayBuffer = await file.arrayBuffer();
-        const fileBytes = new Uint8Array(fileArrayBuffer);
+        const boundary = generateBoundary();
 
-        // Use requestUrl like MinIO does, but with proper multipart encoding
-        const boundary = '----ObsidianFormBoundary' + Math.random().toString(36).substr(2, 16);
-        const encoder = new TextEncoder();
-
-        // Build the multipart body with binary file data
-        const parts: Uint8Array[] = [];
-
-        // Add boundary and headers
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="smfile"; filename="${encodeURIComponent(file.name)}"\r\n`));
-        parts.push(encoder.encode(`Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`));
-
-        // Add the actual file data (binary)
-        parts.push(fileBytes);
-        parts.push(encoder.encode('\r\n'));
-
-        // Add format field
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="format"\r\n\r\n`));
-        parts.push(encoder.encode('json\r\n'));
-        parts.push(encoder.encode(`--${boundary}--\r\n`));
-
-        // Combine all parts into a single ArrayBuffer
-        const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-        const bodyArrayBuffer = new ArrayBuffer(totalLength);
-        const bodyView = new Uint8Array(bodyArrayBuffer);
-        let offset = 0;
-        for (const part of parts) {
-            bodyView.set(part, offset);
-            offset += part.length;
-        }
+        const bodyArrayBuffer = buildMultipartBody([
+            { name: 'smfile', value: new Uint8Array(await file.arrayBuffer()), filename: file.name, contentType: file.type || 'application/octet-stream' },
+            { name: 'format', value: 'json' }
+        ], boundary);
 
         const requestParams: RequestUrlParam = {
             url: 'https://sm.ms/api/v2/upload',
@@ -67,11 +40,7 @@ export class SmMsProvider implements IOssProvider {
         };
 
         try {
-            // Simulate progress since requestUrl doesn't support it
-            if (onProgress) {
-                setTimeout(() => onProgress({ loaded: 0, total: file.size, percentage: 0 }), 0);
-                setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
-            }
+            simulateProgress(onProgress, file.size);
 
             const response = await requestUrl(requestParams);
 
@@ -143,7 +112,7 @@ export class SmMsProvider implements IOssProvider {
         }
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Token'))
             .setDesc(t('SM.MS Secret Token'))

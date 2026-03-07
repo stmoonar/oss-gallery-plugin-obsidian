@@ -1,7 +1,9 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { ImgurSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
+import { buildMultipartBody, generateBoundary } from './shared/multipart';
+import { simulateProgress } from './shared/progress';
 
 export class ImgurProvider implements IOssProvider {
     name = 'imgur';
@@ -14,22 +16,19 @@ export class ImgurProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.clientId) {
             throw new Error(t('Please configure Imgur settings first'));
         }
 
         // Simulate progress since requestUrl doesn't support it
-        if (onProgress) {
-            setTimeout(() => onProgress({ loaded: 0, total: file.size, percentage: 0 }), 0);
-            setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
-        }
+        simulateProgress(onProgress, file.size);
 
         // Convert file to base64
         const base64 = await this.fileToBase64(file);
 
-        const boundary = '----ObsidianFormBoundary' + Math.random().toString(36).substr(2, 16);
+        const boundary = generateBoundary();
         const requestParams: RequestUrlParam = {
             url: this.settings.proxy || 'https://api.imgur.com/3/image',
             method: 'POST',
@@ -37,7 +36,11 @@ export class ImgurProvider implements IOssProvider {
                 'Authorization': `Client-ID ${this.settings.clientId}`,
                 'Content-Type': `multipart/form-data; boundary=${boundary}`
             },
-            body: this.createFormData(base64, file.name, file.type, boundary)
+            body: buildMultipartBody([
+                { name: 'image', value: base64 },
+                { name: 'type', value: 'base64' },
+                { name: 'name', value: file.name }
+            ], boundary)
         };
 
         try {
@@ -88,45 +91,7 @@ export class ImgurProvider implements IOssProvider {
         });
     }
 
-    private createFormData(base64: string, fileName: string, mimeType: string, boundary: string): ArrayBuffer {
-        const encoder = new TextEncoder();
-
-        const parts: Uint8Array[] = [];
-
-        // Add image data
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="image"\r\n\r\n`));
-        parts.push(encoder.encode(base64));
-        parts.push(encoder.encode('\r\n'));
-
-        // Add type
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="type"\r\n\r\n`));
-        parts.push(encoder.encode('base64'));
-        parts.push(encoder.encode('\r\n'));
-
-        // Add name
-        parts.push(encoder.encode(`--${boundary}\r\n`));
-        parts.push(encoder.encode(`Content-Disposition: form-data; name="name"\r\n\r\n`));
-        parts.push(encoder.encode(fileName));
-        parts.push(encoder.encode('\r\n'));
-
-        parts.push(encoder.encode(`--${boundary}--\r\n`));
-
-        // Combine all parts
-        const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-        const bodyArrayBuffer = new ArrayBuffer(totalLength);
-        const bodyView = new Uint8Array(bodyArrayBuffer);
-        let offset = 0;
-        for (const part of parts) {
-            bodyView.set(part, offset);
-            offset += part.length;
-        }
-
-        return bodyArrayBuffer;
-    }
-
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Client ID'))
             .setDesc(t('Imgur OAuth Client ID'))

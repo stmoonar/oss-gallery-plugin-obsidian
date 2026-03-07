@@ -72,8 +72,12 @@ export interface ProviderSettingsMap {
     imgur: ImgurSettings;
 }
 
+export type ProviderName = keyof ProviderSettingsMap;
+export type NameRule = 'local' | 'time' | 'timeAndLocal';
+export type PathRule = 'root' | 'type' | 'date' | 'typeAndDate';
+
 export interface PluginSettings {
-    activeProvider: string;
+    activeProvider: ProviderName;
     providers: ProviderSettingsMap;
     // Global settings
     basepath: string;
@@ -81,8 +85,8 @@ export interface PluginSettings {
     videoPreview: boolean;
     audioPreview: boolean;
     docsPreview: string;
-    nameRule: string;
-    pathRule: string;
+    nameRule: NameRule;
+    pathRule: PathRule;
 }
 
 export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
@@ -168,6 +172,3 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     nameRule: 'local',
     pathRule: 'root',
 };
-
-export type NameRule = 'local' | 'time' | 'timeAndLocal';
-export type PathRule = 'root' | 'type' | 'date' | 'typeAndDate';

@@ -1,8 +1,11 @@
-import { IOssProvider, OssImage } from '../types/oss';
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { AliyunSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
+import { simulateProgress } from './shared/progress';
+import { isImageFile } from './shared/image';
+import { buildObjectKey, normalizeBaseUrl } from './shared/path';
 
 export class AliyunProvider implements IOssProvider {
     name = 'aliyun';
@@ -15,24 +18,17 @@ export class AliyunProvider implements IOssProvider {
     async upload(
         file: File,
         path: string,
-        onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+        onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
         if (!this.settings.accessKeyId || !this.settings.accessKeySecret || !this.settings.bucket) {
             throw new Error(t('Please configure Aliyun OSS settings first'));
         }
 
         // Simulate progress since requestUrl doesn't support it
-        if (onProgress) {
-            setTimeout(() => onProgress({ loaded: 0, total: file.size, percentage: 0 }), 0);
-            setTimeout(() => onProgress({ loaded: file.size, total: file.size, percentage: 100 }), 100);
-        }
-
-        // Normalize path prefix - remove leading slash, trim trailing slash
-        let normalizedPath = this.settings.path ? this.settings.path.trim() : '';
-        normalizedPath = normalizedPath.replace(/^\/+/, '').replace(/\/+$/, '');
+        simulateProgress(onProgress, file.size);
 
         // Build object key
-        const objectKey = normalizedPath ? `${normalizedPath}/${path}` : path;
+        const objectKey = buildObjectKey(this.settings.path, path);
         // Always use the OSS API endpoint for upload requests
         const apiEndpoint = `${this.settings.bucket}.${this.settings.area}.aliyuncs.com`;
         const url = `https://${apiEndpoint}/${objectKey}`;
@@ -154,7 +150,7 @@ export class AliyunProvider implements IOssProvider {
                         const key = keyElement.textContent;
 
                         // Filter for image files
-                        if (this.isImageFile(key)) {
+                        if (isImageFile(key)) {
                             images.push({
                                 key: key,
                                 url: `https://${publicEndpoint}/${key}`,
@@ -214,7 +210,7 @@ export class AliyunProvider implements IOssProvider {
         }
     }
 
-    getSettingsTab(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
             .setName(t('Access Key ID'))
             .setDesc(t('Aliyun OSS Access Key ID'))
@@ -341,11 +337,5 @@ export class AliyunProvider implements IOssProvider {
                     await saveSettings();
                 }));
 
-    }
-
-    private isImageFile(key: string): boolean {
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg'];
-        const ext = key.toLowerCase().substring(key.lastIndexOf('.'));
-        return imageExtensions.includes(ext);
     }
 }
