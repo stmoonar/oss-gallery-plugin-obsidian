@@ -21,6 +21,7 @@ export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = key
     label: string;
     capabilities: ProviderCapabilities;
     defaultSettings: ProviderSettingsMap[K];
+    isConfigured(settings: ProviderSettingsMap[K]): boolean;
     create(settings: ProviderSettingsMap[K]): IOssProvider;
 }
 
@@ -30,6 +31,7 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'SM.MS',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_SMMS_SETTINGS,
+        isConfigured: (settings) => Boolean((settings as SmMsSettings).token),
         create: (settings) => new SmMsProvider(settings as SmMsSettings),
     },
     {
@@ -37,6 +39,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'GitHub',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_GITHUB_SETTINGS,
+        isConfigured: (settings) => {
+            const github = settings as GithubSettings;
+            return Boolean(github.repo && github.token);
+        },
         create: (settings) => new GithubProvider(settings as GithubSettings),
     },
     {
@@ -44,6 +50,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Aliyun OSS',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_ALIYUN_SETTINGS,
+        isConfigured: (settings) => {
+            const aliyun = settings as AliyunSettings;
+            return Boolean(aliyun.accessKeyId && aliyun.accessKeySecret && aliyun.bucket);
+        },
         create: (settings) => new AliyunProvider(settings as AliyunSettings),
     },
     {
@@ -51,6 +61,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Tencent COS',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_TENCENT_SETTINGS,
+        isConfigured: (settings) => {
+            const tencent = settings as TencentSettings;
+            return Boolean(tencent.secretId && tencent.secretKey && tencent.bucket);
+        },
         create: (settings) => new TencentProvider(settings as TencentSettings),
     },
     {
@@ -58,6 +72,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Qiniu',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_QINIU_SETTINGS,
+        isConfigured: (settings) => {
+            const qiniu = settings as QiniuSettings;
+            return Boolean(qiniu.accessKey && qiniu.secretKey && qiniu.bucket);
+        },
         create: (settings) => new QiniuProvider(settings as QiniuSettings),
     },
     {
@@ -65,6 +83,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Upyun',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_UPYUN_SETTINGS,
+        isConfigured: (settings) => {
+            const upyun = settings as UpyunSettings;
+            return Boolean(upyun.operator && upyun.password && upyun.bucket);
+        },
         create: (settings) => new UpyunProvider(settings as UpyunSettings),
     },
     {
@@ -72,6 +94,7 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Imgur',
         capabilities: { upload: true, list: false, delete: false },
         defaultSettings: DEFAULT_IMGUR_SETTINGS,
+        isConfigured: (settings) => Boolean((settings as ImgurSettings).clientId),
         create: (settings) => new ImgurProvider(settings as ImgurSettings),
     },
     {
@@ -79,6 +102,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Cloudflare R2',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_R2_SETTINGS,
+        isConfigured: (settings) => {
+            const r2 = settings as R2Settings;
+            return Boolean(r2.accountId && r2.accessKeyId && r2.secretAccessKey && r2.bucket);
+        },
         create: (settings) => new R2Provider(settings as R2Settings),
     },
     {
@@ -86,6 +113,10 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'MinIO',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_MINIO_SETTINGS,
+        isConfigured: (settings) => {
+            const minio = settings as MinioSettings;
+            return Boolean(minio.endpoint && minio.accessKey && minio.secretKey && minio.bucket);
+        },
         create: (settings) => new MinioProvider(settings as MinioSettings),
     },
 ];
@@ -117,6 +148,18 @@ export class ProviderRegistry {
 
     getCapabilities(id: string): ProviderCapabilities | undefined {
         return this.entries.get(id)?.capabilities;
+    }
+
+    supports(id: string, capability: keyof ProviderCapabilities): boolean {
+        return Boolean(this.entries.get(id)?.capabilities[capability]);
+    }
+
+    isConfigured(id: string, settings: ProviderSettingsMap[keyof ProviderSettingsMap] | undefined): boolean {
+        const entry = this.entries.get(id);
+        if (!entry || !settings) {
+            return false;
+        }
+        return entry.isConfigured(settings as never);
     }
 
     /**

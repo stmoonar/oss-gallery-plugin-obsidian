@@ -42,7 +42,7 @@ export default {
 	'Office online': '微軟檔案預覽',
 
 	'Uploading': '上傳中',
-	'Minio gallery': 'Minio 圖庫',
+	'Minio gallery': 'OSS 圖庫',
 	'Loading...': '加載中...',
 	'Load failed': '加載失敗',
 	'Upload failed': '上傳失敗',
@@ -58,7 +58,7 @@ export default {
 	'Confirm delete?': '確認刪除該圖片嗎？',
 	'Please configure Minio settings first': '請先配置 Minio 設置',
 	'Invalid regex pattern': '無效的正則表達式',
-	'Open Minio gallery': '開啟Minio圖庫',
+	'Open Minio gallery': '開啟 OSS 圖庫',
 	"Toggle regex search": "切換正則搜尋",
 
 	// Cloudflare R2

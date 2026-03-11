@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-oss-gallery",
 	"version": "1.0.2",
-	"description": "Upload images, videos, audio, pdf, and other files to Minio OSS.",
+	"description": "Upload and manage media and documents across multiple OSS providers for Obsidian.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

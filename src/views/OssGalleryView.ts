@@ -10,6 +10,7 @@ import { ImageGrid } from '../components/ImageGrid';
 import { SearchComponent } from '../components/SearchComponent';
 import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
+import { providerRegistry } from '../providers/registry';
 
 export const GALLERY_VIEW_TYPE = 'oss-gallery-view';
 
@@ -108,6 +109,21 @@ export class OssGalleryView extends ItemView {
     async loadGallery(forceRefresh = false): Promise<void> {
         if (this.state.isLoading) return;
 
+        if (!providerRegistry.supports(this.provider.name, 'list')) {
+            this.cleanupImageGrid();
+            this.state.remoteObjects = [];
+            this.state.visibleImages = [];
+
+            const existingMessages = this.container.querySelectorAll('.minio-loading-spinner, .minio-gallery-error');
+            existingMessages.forEach(el => el.remove());
+
+            this.container.createEl('div', {
+                cls: 'minio-gallery-error',
+                text: t('Image listing is not available'),
+            });
+            return;
+        }
+
         const currentTime = Date.now();
         // Increase cache time to 5 minutes to reduce frequent API calls
         if (!forceRefresh && (currentTime - this.lastLoadTime < 300000)) {
@@ -175,6 +191,7 @@ export class OssGalleryView extends ItemView {
 
         this.imageGrid = new ImageGrid(gridContainer, {
             getObjectUrl: async (objectName) => await this.getObjectUrl(objectName),
+            canDelete: providerRegistry.supports(this.provider.name, 'delete'),
             onPreview: (index) => this.openImagePreview(index),
             onDelete: async (objectName, element) => {
                 await this.handleDelete(objectName, element);
@@ -283,6 +300,11 @@ export class OssGalleryView extends ItemView {
     }
 
     private async handleDelete(objectName: string, element: HTMLElement): Promise<void> {
+        if (!providerRegistry.supports(this.provider.name, 'delete')) {
+            new Notice(t('Delete failed'));
+            return;
+        }
+
         const modal = new ConfirmModal(this.app, async () => {
             try {
                 await this.syncService.deleteObject(objectName);

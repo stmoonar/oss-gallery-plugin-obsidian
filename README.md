@@ -2,118 +2,139 @@
 
 ### English | [中文](./README-zh.md)
 
-This repository is forked from [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and extended with multi-provider support and new features.
+This plugin uploads files from Obsidian to multiple object storage providers and offers a gallery view for providers that support listing.
 
-## Supported Providers
-- **SM.MS** — Free image hosting
-- **GitHub** — Upload to GitHub repository
-- **Aliyun OSS** — Alibaba Cloud Object Storage Service
-- **Tencent COS** — Tencent Cloud Object Storage
-- **Qiniu Kodo** — Qiniu Cloud Storage
-- **Upyun USS** — Upyun Cloud Storage
-- **Imgur** — Anonymous image hosting
-- **Cloudflare R2** — Cloudflare R2 object storage (S3-compatible)
-- **MinIO** — Self-hosted S3-compatible object storage
+It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and now supports a broader multi-provider workflow.
+
+## Supported providers
+
+- **MinIO**: self-hosted S3-compatible object storage
+- **Cloudflare R2**: S3-compatible object storage
+- **SM.MS**: image hosting
+- **GitHub**: repository-backed uploads
+- **Aliyun OSS**
+- **Tencent COS**
+- **Qiniu Kodo**
+- **Upyun USS**
+- **Imgur**: image upload only, no gallery listing or deletion in this plugin
 
 ## Features
-- Supports dragging and dropping files to the editor and directly uploading them to your configured provider
-- Support for directly uploading files after pasting them into the editor
-- Command palette file upload (supports image, video, audio, and document files)
-- Support preview for various file types:
-  - Image preview
-  - Video preview
-  - Audio preview
-  - Document preview (Google Docs/Office Online)
-- Image gallery view:
-  - View all uploaded images in a grid layout
-  - Search images by URL (supports regex and wildcard patterns)
-  - Copy image URL with one click
-  - Delete images directly from the gallery
-  - Preview images in full screen
-- Smart gallery optimization:
-  - LRU caching strategy for improved performance
-  - Lazy loading with Intersection Observer
-  - Back to top button
-  - Batch rendering optimization
-  - Memory management and cleanup
-- Enhanced image preview:
-  - Smooth animations with hardware acceleration
-  - Click background to close
-  - ESC key to exit
-  - Optimized drag performance
+
+- Upload files from the command palette, paste, or drag and drop
+- Supported file types: images, video, audio, `.doc`, `.docx`, `.pdf`, `.pptx`, `.xls`, `.xlsx`
+- Global object naming and path rules
+- Optional base path prefix for all uploads
+- Configurable embed output for image, video, audio, and document preview
+- Gallery view for providers that support listing
+- URL search with plain text or regex mode
+- One-click URL copy
+- Delete from the gallery for providers that support deletion
+- Full-screen image preview
+- Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
 
 ![upload](./upload.gif)
+
 ---
+
 ![delete](./delete.gif)
 
-## Setting
+## Settings
 
-Select your preferred storage provider in the plugin settings, then configure the corresponding provider settings.
+Choose an active provider in the plugin settings, then configure:
 
-### SM.MS
-- API Token
+### Global settings
 
-### GitHub
-- Repository (format: `owner/repo`)
+- **Base path**: optional prefix applied to every uploaded object key
+- **Object naming rules**
+  - `local`
+  - `time`
+  - `timeAndLocal`
+- **Object path rules**
+  - `root`
+  - `type`
+  - `date`
+  - `typeAndDate`
+- **Preview**
+  - image preview on or off
+  - video preview on or off
+  - audio preview on or off
+  - document preview provider: disabled, Google Docs, or Office Online
+
+### Provider settings
+
+#### SM.MS
+
+- API token
+
+#### GitHub
+
+- Repository: `owner/repo`
 - Branch
-- Token (Personal Access Token)
-- Custom URL (Optional, for CDN like jsDelivr)
+- Personal access token
+- Custom URL: optional, for CDN such as jsDelivr
 
-### Aliyun OSS
+#### Aliyun OSS
+
 - Access Key ID
 - Access Key Secret
 - Bucket
-- Region (e.g., `oss-cn-hangzhou`)
-- Path prefix (Optional)
-- Custom domain (Optional, for CDN)
+- Region, for example `oss-cn-hangzhou`
+- Path prefix: optional
+- Custom domain: optional
 
-### Tencent COS
+#### Tencent COS
+
 - Secret ID
 - Secret Key
 - Bucket
-- Region (e.g., `ap-shanghai`)
-- Path prefix (Optional)
-- Custom domain (Optional)
+- Region, for example `ap-shanghai`
+- Path prefix: optional
+- Custom domain: optional
 
-### Qiniu Kodo
+#### Qiniu Kodo
+
 - Access Key
 - Secret Key
 - Bucket
 - CDN domain URL
 - Storage area
-- Path prefix (Optional)
+- Path prefix: optional
 
-### Upyun USS
+#### Upyun USS
+
 - Operator name
 - Password
-- Service name (Bucket)
+- Service name
 - Acceleration domain URL
-- Path prefix (Optional)
-- Image processing suffix (Optional)
+- Path prefix: optional
+- Image processing suffix: optional
 
-### Imgur
+#### Imgur
+
 - Client ID
-- Proxy URL (Optional, required in some regions)
+- Proxy URL: optional, required in some regions
 
-### Cloudflare R2
+Note: Imgur uploads are supported, but gallery listing and deletion are not.
+
+#### Cloudflare R2
+
 - Account ID
-- Access Key ID (R2 API Token)
-- Secret Access Key (R2 API Token)
+- Access Key ID
+- Secret Access Key
 - Bucket
-- Public URL (custom domain or r2.dev URL)
+- Public URL: custom domain or `r2.dev` URL
 
-### MinIO
+#### MinIO
 
-> Tip: Port is the API data access port for MinIO
+- Endpoint
+- Port
+- Use SSL
+- Access Key
+- Secret Key
+- Bucket
+- Region: optional
+- Custom domain: optional
 
-- accessKey
-- secretKey
-- bucket
-- endpoint
-- port
-- SSL
-- Custom domain (Optional)
-
-You also need to enable anonymous file access in the MinIO console Bucket settings so files can be accessed directly via URL.
+For MinIO public access, enable anonymous or otherwise publicly accessible object URLs in your bucket policy.
 
 ![Settings](./minio-bucket-setting.png)

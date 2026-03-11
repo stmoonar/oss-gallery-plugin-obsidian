@@ -10,22 +10,34 @@ export class ObjectKeyBuilder {
     }
 
     private generatePath(file: File): string {
+        const segments: string[] = [];
+        const basePath = this.settings.basepath.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+
+        if (basePath) {
+            segments.push(basePath);
+        }
+
         switch (this.settings.pathRule) {
             case 'root':
-                return '';
+                break;
             case 'type':
-                return `${getFileTypeByMime(file)}/`;
+                segments.push(getFileTypeByMime(file));
+                break;
             case 'date':
-                return `${moment().format('YYYY/MM/DD')}/`;
+                segments.push(moment().format('YYYY/MM/DD'));
+                break;
             case 'typeAndDate':
-                return `${getFileTypeByMime(file)}/${moment().format('YYYY/MM/DD')}/`;
+                segments.push(getFileTypeByMime(file), moment().format('YYYY/MM/DD'));
+                break;
             default:
-                return '';
+                break;
         }
+
+        return segments.length > 0 ? `${segments.join('/')}/` : '';
     }
 
     private generateFileName(file: File): string {
-        const timestamp = moment().format('YYYYMMDDHHmmSS');
+        const timestamp = moment().format('YYYYMMDDHHmmssSSS');
         const extension = file.name.substring(file.name.lastIndexOf('.'));
 
         switch (this.settings.nameRule) {

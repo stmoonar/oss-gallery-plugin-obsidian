@@ -29,7 +29,7 @@ export class TencentProvider implements IOssProvider {
         simulateProgress(onProgress, file.size);
 
         const objectKey = buildObjectKey(this.settings.path, path);
-        const host = `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+        const host = this.getHost();
         const url = `https://${host}/${objectKey}`;
 
         // Generate authorization header for Tencent COS
@@ -49,11 +49,7 @@ export class TencentProvider implements IOssProvider {
             const response = await requestUrl(requestParams);
 
             if (response.status === 200) {
-                // Return custom URL if configured, otherwise use default endpoint
-                if (this.settings.customUrl) {
-                    return `${this.settings.customUrl}/${objectKey}`;
-                }
-                return url;
+                return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
@@ -70,14 +66,13 @@ export class TencentProvider implements IOssProvider {
         }
 
         try {
-            const prefixParam = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
-            const objectKey = `/${prefixParam}`;
-            const authorization = await this.generateAuthorization('GET', objectKey);
-
-            const host = `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+            const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
+            const requestPath = `/${query}`;
+            const authorization = await this.generateAuthorization('GET', requestPath);
+            const host = this.getHost();
 
             const response = await requestUrl({
-                url: `https://${host}${prefixParam}`,
+                url: `https://${host}/${query}`,
                 method: 'GET',
                 headers: {
                     'Authorization': authorization
@@ -85,25 +80,7 @@ export class TencentProvider implements IOssProvider {
             });
 
             if (response.status === 200) {
-                const data = response.json;
-                const images: OssImage[] = [];
-
-                if (data.ListBucketResult && data.ListBucketResult.Contents) {
-                    for (const item of data.ListBucketResult.Contents) {
-                        // Filter for image files
-                        const key = item.Key;
-                        if (isImageFile(key)) {
-                            images.push({
-                                key: key,
-                                url: `https://${host}/${key}`,
-                                lastModified: new Date(item.LastModified),
-                                size: parseInt(item.Size)
-                            });
-                        }
-                    }
-                }
-
-                return images;
+                return this.parseListResponse(response.text);
             }
         } catch (error) {
             console.error('Failed to list Tencent COS images:', error);
@@ -137,6 +114,43 @@ export class TencentProvider implements IOssProvider {
             console.error('Failed to delete Tencent COS image:', error);
             throw new Error(`Delete failed: ${error.message}`);
         }
+    }
+
+    private getHost(): string {
+        return `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+    }
+
+    private buildPublicUrl(objectKey: string): string {
+        const customUrl = this.settings.customUrl?.replace(/\/+$/, '');
+        if (customUrl) {
+            return `${customUrl}/${objectKey}`;
+        }
+        return `https://${this.getHost()}/${objectKey}`;
+    }
+
+    private parseListResponse(xml: string): OssImage[] {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xml, 'text/xml');
+        const contents = xmlDoc.getElementsByTagName('Contents');
+        const images: OssImage[] = [];
+
+        for (let i = 0; i < contents.length; i++) {
+            const item = contents[i];
+            const key = item.getElementsByTagName('Key')[0]?.textContent;
+            const lastModified = item.getElementsByTagName('LastModified')[0]?.textContent;
+            const size = item.getElementsByTagName('Size')[0]?.textContent;
+
+            if (key && isImageFile(key)) {
+                images.push({
+                    key,
+                    url: this.buildPublicUrl(key),
+                    lastModified: lastModified ? new Date(lastModified) : new Date(),
+                    size: size ? parseInt(size, 10) : 0,
+                });
+            }
+        }
+
+        return images;
     }
 
     private async generateAuthorization(method: string, pathname: string, contentType?: string): Promise<string> {

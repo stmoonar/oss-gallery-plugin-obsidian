@@ -47,7 +47,7 @@ export default {
 	"Office online": "微软文档预览",
 
 	Uploading: "上传中",
-	"Minio gallery": "Minio 图库",
+	"Minio gallery": "OSS 图库",
 	"Loading...": "加载中...",
 	"Load failed": "加载失败",
 	"Upload failed": "上传失败",
@@ -63,7 +63,7 @@ export default {
 	"Confirm delete?": "确认删除该图片吗？",
 	"Please configure Minio settings first": "请先配置 Minio 设置",
 	"Invalid regex pattern": "无效的正则表达式",
-	"Open Minio gallery": "打开Minio图库",
+	"Open Minio gallery": "打开 OSS 图库",
 	"Toggle regex search": "切换正则搜索",
 
 	// OSS Provider names

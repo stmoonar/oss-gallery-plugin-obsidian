@@ -74,6 +74,17 @@ export class SettingsManager extends PluginSettingTab {
             .setName(t('Object rules'))
             .setHeading();
 
+        new Setting(containerEl)
+            .setName(t('Base path'))
+            .setDesc(t('Enter your base path(e.g. /path)'))
+            .addText(text => text
+                .setPlaceholder(t('Enter your base path(e.g. /path)'))
+                .setValue(this.plugin.settings.basepath || '')
+                .onChange(async value => {
+                    this.plugin.settings.basepath = value;
+                    await this.plugin.saveSettings();
+                }));
+
         // Naming rules
         new Setting(containerEl)
             .setName(t('Object naming rules'))

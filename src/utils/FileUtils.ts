@@ -64,7 +64,7 @@ export function getFileType(filename: string): 'image' | 'video' | 'audio' | 'do
 export function getFileTypeByMime(file: File): string {
     if (file?.type.match(/video.*/)) return 'video';
     if (file?.type.match(/audio.*/)) return 'audio';
-    if (file?.type.match(/application\/(vnd.*|pdf)/)) return 'doc';
+    if (file?.type.match(/application\/(vnd.*|pdf|msword)/)) return 'doc';
     if (file?.type.match(/image.*/)) return 'image';
     return '';
 }

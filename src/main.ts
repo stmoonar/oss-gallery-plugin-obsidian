@@ -70,7 +70,13 @@ export default class OssGalleryPlugin extends Plugin {
 			id: "open-oss-gallery",
 			name: t("Open Minio gallery"), // Keep name for familiarity or update
 			icon: "image-file",
-			callback: () => this.openGalleryView(),
+			callback: () => {
+				if (!this.supportsActiveProviderCapability("list")) {
+					new Notice(t("Image listing is not available"));
+					return;
+				}
+				void this.openGalleryView();
+			},
 		});
 	}
 
@@ -97,11 +103,20 @@ export default class OssGalleryPlugin extends Plugin {
 		);
 
 		this.addRibbonIcon("image-file", t("Minio gallery"), () => {
-			this.openGalleryView();
+			if (!this.supportsActiveProviderCapability("list")) {
+				new Notice(t("Image listing is not available"));
+				return;
+			}
+			void this.openGalleryView();
 		});
 	}
 
 	async openGalleryView(): Promise<void> {
+		if (!this.supportsActiveProviderCapability("list")) {
+			new Notice(t("Image listing is not available"));
+			return;
+		}
+
 		const { workspace } = this.app;
 		let leaf: WorkspaceLeaf | null = null;
 		const currentView = workspace.getActiveViewOfType(OssGalleryView);
@@ -208,6 +223,7 @@ export default class OssGalleryPlugin extends Plugin {
 
 		const file = this.extractFileFromEvent(evt);
 		if (!file || !getFileTypeByMime(file)) return;
+		if (!this.validateSettings()) return;
 
 		evt.preventDefault();
 
@@ -342,9 +358,16 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	validateSettings(): boolean {
-		const activeProvider = this.providerManager.getActiveProvider();
-		return !!activeProvider;
-		// We might want to add a validate method to IOssProvider
+		return providerRegistry.isConfigured(
+			this.settings.activeProvider,
+			this.settings.providers[this.settings.activeProvider]
+		);
+	}
+
+	private supportsActiveProviderCapability(
+		capability: "upload" | "list" | "delete"
+	): boolean {
+		return providerRegistry.supports(this.settings.activeProvider, capability);
 	}
 
 	/**

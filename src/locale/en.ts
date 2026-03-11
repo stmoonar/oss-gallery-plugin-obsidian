@@ -9,6 +9,7 @@ export default {
 	"Enter your region": "Enter your region",
 	"Enter your bucket": "Enter your bucket",
 	"Enter your port": "Enter your port",
+	"Base path": "Base path",
 
 
 	"Enter your custom domain(e.g. https://minio.example.com)":
@@ -48,7 +49,7 @@ export default {
 
 	Uploading: "Uploading",
 
-	"Minio gallery": "Minio gallery",
+	"Minio gallery": "OSS Gallery",
 	"Loading...": "Loading...",
 	"Load failed": "Load failed",
 	"Upload failed": "Upload failed",
@@ -56,7 +57,7 @@ export default {
 	"Delete success": "Delete successfully",
 	"Delete failed": "Delete failed",
 	"Search by URL...": "Search by URL...",
-	"Open Minio gallery": "Open Minio gallery",
+	"Open Minio gallery": "Open OSS Gallery",
 	"Please configure Minio settings first":
 		"Please configure Minio settings first",
 	"URL copied": "URL copied",
