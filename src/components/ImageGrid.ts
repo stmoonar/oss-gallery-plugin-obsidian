@@ -50,16 +50,18 @@ export class ImageGrid {
 			cls: "minio-gallery-item",
 		});
 
-		const img = imgDiv.createEl("img", {
-			attr: {
-				"data-src": objectUrl,
-				src: this.getPlaceholderUrl(),
-				loading: "lazy",
-				alt: objectName,
-				decoding: "async",
-				crossorigin: "anonymous",
-			},
-		});
+		const isRemoteUrl = /^https?:\/\//i.test(objectUrl);
+		const imgAttrs: Record<string, string> = {
+			"data-src": objectUrl,
+			src: this.getPlaceholderUrl(),
+			loading: "lazy",
+			alt: objectName,
+			decoding: "async",
+		};
+		if (isRemoteUrl) {
+			imgAttrs.crossorigin = "anonymous";
+		}
+		const img = imgDiv.createEl("img", { attr: imgAttrs });
 		img.dataset.originalUrl = objectUrl;
 
 		this.imageElements.add(img);

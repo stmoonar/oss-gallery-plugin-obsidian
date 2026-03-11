@@ -1,3 +1,4 @@
+import { App } from "obsidian";
 import { IOssProvider } from "../types/oss";
 import { PluginSettings } from "../types/settings";
 import { providerRegistry } from "./registry";
@@ -6,7 +7,7 @@ export class OssProviderManager {
     private providers: Map<string, IOssProvider> = new Map();
     private activeProviderName: string;
 
-    constructor(private settings: PluginSettings) {
+    constructor(private settings: PluginSettings, private app: App) {
         this.activeProviderName = settings.activeProvider;
         this.initializeProviders();
     }
@@ -15,10 +16,10 @@ export class OssProviderManager {
      * Create all provider instances from registry
      */
     private initializeProviders(): void {
-        for (const entry of providerRegistry.getAll()) {
+        for (const entry of providerRegistry.getAll(this.app)) {
             const providerSettings = this.settings.providers[entry.id];
             if (providerSettings) {
-                this.providers.set(entry.id, entry.create(providerSettings));
+                this.providers.set(entry.id, entry.create(providerSettings, this.app));
             }
         }
     }

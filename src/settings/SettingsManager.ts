@@ -33,7 +33,7 @@ export class SettingsManager extends PluginSettingTab {
             .setName(t('Select Provider'))
             .setDesc(t('Choose the OSS provider you want to use'))
             .addDropdown(dropdown => {
-                const entries = providerRegistry.getAll();
+                const entries = providerRegistry.getAll(this.app);
                 entries.forEach(e => dropdown.addOption(e.id, e.label));
                 dropdown.setValue(this.plugin.settings.activeProvider)
                     .onChange(async (value) => {
@@ -46,7 +46,7 @@ export class SettingsManager extends PluginSettingTab {
 
         // Active Provider Settings
         const activeProvider = this.providerManager.getActiveProvider();
-        const registryEntry = providerRegistry.get(this.plugin.settings.activeProvider);
+        const registryEntry = providerRegistry.get(this.plugin.settings.activeProvider, this.app);
         if (activeProvider && registryEntry) {
             new Setting(containerEl)
                 .setName(`${registryEntry.label} Settings`)

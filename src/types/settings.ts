@@ -69,7 +69,25 @@ export interface R2Settings {
     publicUrl: string;
 }
 
+export interface S3Settings {
+    endpoint: string;
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucket: string;
+    useSSL: boolean;
+    forcePathStyle: boolean;
+    publicUrl: string;
+}
+
+export interface LocalSettings {
+    storagePath: string;
+    useRelativePath: boolean;
+    deleteToTrash: boolean;
+}
+
 export interface ProviderSettingsMap {
+    local: LocalSettings;
     smms: SmMsSettings;
     github: GithubSettings;
     aliyun: AliyunSettings;
@@ -78,6 +96,7 @@ export interface ProviderSettingsMap {
     upyun: UpyunSettings;
     imgur: ImgurSettings;
     r2: R2Settings;
+    s3: S3Settings;
     minio: MinioSettings;
 }
 
@@ -169,9 +188,27 @@ export const DEFAULT_R2_SETTINGS: R2Settings = {
     publicUrl: '',
 };
 
+export const DEFAULT_S3_SETTINGS: S3Settings = {
+    endpoint: '',
+    region: 'us-east-1',
+    accessKeyId: '',
+    secretAccessKey: '',
+    bucket: '',
+    useSSL: true,
+    forcePathStyle: true,
+    publicUrl: '',
+};
+
+export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
+    storagePath: 'attachments',
+    useRelativePath: true,
+    deleteToTrash: true,
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
     activeProvider: 'smms',
     providers: {
+        local: DEFAULT_LOCAL_SETTINGS,
         smms: DEFAULT_SMMS_SETTINGS,
         github: DEFAULT_GITHUB_SETTINGS,
         aliyun: DEFAULT_ALIYUN_SETTINGS,
@@ -180,6 +217,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
         upyun: DEFAULT_UPYUN_SETTINGS,
         imgur: DEFAULT_IMGUR_SETTINGS,
         r2: DEFAULT_R2_SETTINGS,
+        s3: DEFAULT_S3_SETTINGS,
         minio: DEFAULT_MINIO_SETTINGS,
     },
     basepath: '',

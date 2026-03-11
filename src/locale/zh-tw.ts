@@ -71,4 +71,33 @@ export default {
 	"Public URL": "公開存取URL",
 	"R2 public access URL (custom domain or r2.dev URL)": "R2公開存取URL(自訂網域或r2.dev位址)",
 	"Please configure Cloudflare R2 settings first": "請先配置Cloudflare R2設定",
+
+	// S3
+	"S3": "S3",
+	"Endpoint": "端點",
+	"S3-compatible endpoint (e.g. s3.amazonaws.com)": "S3相容端點(例如: s3.amazonaws.com)",
+	"S3 region": "S3區域",
+	"S3 Access Key ID": "S3 Access Key ID",
+	"S3 Secret Access Key": "S3 Secret Access Key",
+	"S3 Bucket name": "S3儲存桶名稱",
+	"Use SSL": "使用SSL",
+	"Use HTTPS for S3 requests": "S3請求使用HTTPS",
+	"Force path style": "強制路徑風格",
+	"Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted-style (bucket.endpoint/key)": "使用路徑風格URL(endpoint/bucket/key)而非虛擬主機風格(bucket.endpoint/key)",
+	"Custom public URL for accessing files (optional)": "自訂檔案存取URL(可選)",
+	"Please configure S3 settings first": "請先配置S3設定",
+
+	// Local
+	"Local": "本地儲存",
+	"Storage path": "儲存路徑",
+	"Local directory for storing images": "本地圖片儲存目錄",
+	"Vault-relative directory or absolute directory inserted as file:/// links": "倉庫相對目錄，或會插入為 file:/// 連結的絕對目錄",
+	"Use vault-relative path": "使用倉庫相對路徑",
+	"Resolve storage path relative to vault root": "儲存路徑相對於倉庫根目錄解析",
+	"Resolve storage path relative to vault root (desktop file-system vault only)": "儲存路徑相對於倉庫根目錄解析（僅桌面端本機檔案倉庫）",
+	"Delete to trash": "刪除到資源回收筒",
+	"Move deleted files to system trash instead of permanent deletion": "刪除檔案時移到系統資源回收筒而非永久刪除",
+	"Please configure local storage path first": "請先配置本地儲存路徑",
+	"Vault-relative local storage requires a file-system vault": "倉庫相對路徑模式僅支援桌面端本機檔案倉庫",
+
 }

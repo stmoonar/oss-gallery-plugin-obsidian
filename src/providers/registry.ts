@@ -1,4 +1,5 @@
-import { MinioSettings, SmMsSettings, GithubSettings, AliyunSettings, TencentSettings, QiniuSettings, UpyunSettings, ImgurSettings, R2Settings, DEFAULT_MINIO_SETTINGS, DEFAULT_SMMS_SETTINGS, DEFAULT_GITHUB_SETTINGS, DEFAULT_ALIYUN_SETTINGS, DEFAULT_TENCENT_SETTINGS, DEFAULT_QINIU_SETTINGS, DEFAULT_UPYUN_SETTINGS, DEFAULT_IMGUR_SETTINGS, DEFAULT_R2_SETTINGS, ProviderSettingsMap } from '../types/settings';
+import { App, FileSystemAdapter, Platform } from 'obsidian';
+import { MinioSettings, SmMsSettings, GithubSettings, AliyunSettings, TencentSettings, QiniuSettings, UpyunSettings, ImgurSettings, R2Settings, S3Settings, LocalSettings, DEFAULT_MINIO_SETTINGS, DEFAULT_SMMS_SETTINGS, DEFAULT_GITHUB_SETTINGS, DEFAULT_ALIYUN_SETTINGS, DEFAULT_TENCENT_SETTINGS, DEFAULT_QINIU_SETTINGS, DEFAULT_UPYUN_SETTINGS, DEFAULT_IMGUR_SETTINGS, DEFAULT_R2_SETTINGS, DEFAULT_S3_SETTINGS, DEFAULT_LOCAL_SETTINGS, ProviderSettingsMap } from '../types/settings';
 import { IOssProvider } from '../types/oss';
 import { MinioProvider } from './MinioProvider';
 import { SmMsProvider } from './SmMsProvider';
@@ -9,6 +10,8 @@ import { QiniuProvider } from './QiniuProvider';
 import { UpyunProvider } from './UpyunProvider';
 import { ImgurProvider } from './ImgurProvider';
 import { R2Provider } from './R2Provider';
+import { S3Provider } from './S3Provider';
+import { LocalProvider } from './LocalProvider';
 
 export interface ProviderCapabilities {
     upload: boolean;
@@ -21,11 +24,32 @@ export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = key
     label: string;
     capabilities: ProviderCapabilities;
     defaultSettings: ProviderSettingsMap[K];
-    isConfigured(settings: ProviderSettingsMap[K]): boolean;
-    create(settings: ProviderSettingsMap[K]): IOssProvider;
+    isAvailable?(app?: App): boolean;
+    isConfigured(settings: ProviderSettingsMap[K], app?: App): boolean;
+    create(settings: ProviderSettingsMap[K], app?: App): IOssProvider;
 }
 
 const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
+    {
+        id: 'local',
+        label: 'Local',
+        capabilities: { upload: true, list: true, delete: true },
+        defaultSettings: DEFAULT_LOCAL_SETTINGS,
+        isAvailable: () => Platform.isDesktopApp,
+        isConfigured: (settings, app) => {
+            const local = settings as LocalSettings;
+            if (!Platform.isDesktopApp || !local.storagePath) {
+                return false;
+            }
+
+            if (!local.useRelativePath) {
+                return true;
+            }
+
+            return Boolean(app?.vault.adapter instanceof FileSystemAdapter);
+        },
+        create: (settings, app) => new LocalProvider(settings as LocalSettings, app!),
+    },
     {
         id: 'smms',
         label: 'SM.MS',
@@ -109,6 +133,17 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         create: (settings) => new R2Provider(settings as R2Settings),
     },
     {
+        id: 's3',
+        label: 'S3',
+        capabilities: { upload: true, list: true, delete: true },
+        defaultSettings: DEFAULT_S3_SETTINGS,
+        isConfigured: (settings) => {
+            const s3 = settings as S3Settings;
+            return Boolean(s3.endpoint && s3.accessKeyId && s3.secretAccessKey && s3.bucket);
+        },
+        create: (settings) => new S3Provider(settings as S3Settings),
+    },
+    {
         id: 'minio',
         label: 'MinIO',
         capabilities: { upload: true, list: true, delete: true },
@@ -134,32 +169,46 @@ export class ProviderRegistry {
         }
     }
 
-    get(id: string): ProviderRegistryEntry | undefined {
-        return this.entries.get(id);
+    private isEntryAvailable(entry: ProviderRegistryEntry, app?: App): boolean {
+        return entry.isAvailable ? entry.isAvailable(app) : true;
     }
 
-    getAll(): ProviderRegistryEntry[] {
-        return Array.from(this.entries.values());
-    }
-
-    getAllIds(): string[] {
-        return Array.from(this.entries.keys());
-    }
-
-    getCapabilities(id: string): ProviderCapabilities | undefined {
-        return this.entries.get(id)?.capabilities;
-    }
-
-    supports(id: string, capability: keyof ProviderCapabilities): boolean {
-        return Boolean(this.entries.get(id)?.capabilities[capability]);
-    }
-
-    isConfigured(id: string, settings: ProviderSettingsMap[keyof ProviderSettingsMap] | undefined): boolean {
+    get(id: string, app?: App): ProviderRegistryEntry | undefined {
         const entry = this.entries.get(id);
+        if (!entry || !this.isEntryAvailable(entry, app)) {
+            return undefined;
+        }
+        return entry;
+    }
+
+    getAll(app?: App): ProviderRegistryEntry[] {
+        return Array.from(this.entries.values()).filter((entry) =>
+            this.isEntryAvailable(entry, app)
+        );
+    }
+
+    getAllIds(app?: App): string[] {
+        return this.getAll(app).map((entry) => entry.id);
+    }
+
+    getCapabilities(id: string, app?: App): ProviderCapabilities | undefined {
+        return this.get(id, app)?.capabilities;
+    }
+
+    supports(id: string, capability: keyof ProviderCapabilities, app?: App): boolean {
+        return Boolean(this.get(id, app)?.capabilities[capability]);
+    }
+
+    isConfigured(
+        id: string,
+        settings: ProviderSettingsMap[keyof ProviderSettingsMap] | undefined,
+        app?: App
+    ): boolean {
+        const entry = this.get(id, app);
         if (!entry || !settings) {
             return false;
         }
-        return entry.isConfigured(settings as never);
+        return entry.isConfigured(settings as never, app);
     }
 
     /**
@@ -176,12 +225,12 @@ export class ProviderRegistry {
     /**
      * Create a provider instance by id with settings.
      */
-    createProvider(id: string, settings: any): IOssProvider {
-        const entry = this.entries.get(id);
+    createProvider(id: string, settings: any, app?: App): IOssProvider {
+        const entry = this.get(id, app);
         if (!entry) {
             throw new Error(`Unknown provider: ${id}`);
         }
-        return entry.create(settings);
+        return entry.create(settings, app);
     }
 }
 

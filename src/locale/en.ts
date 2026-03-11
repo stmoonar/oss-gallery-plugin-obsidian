@@ -164,6 +164,34 @@ export default {
 	"R2 public access URL (custom domain or r2.dev URL)": "R2 public access URL (custom domain or r2.dev URL)",
 	"Please configure Cloudflare R2 settings first": "Please configure Cloudflare R2 settings first",
 
+	// S3
+	"S3": "S3",
+	"Endpoint": "Endpoint",
+	"S3-compatible endpoint (e.g. s3.amazonaws.com)": "S3-compatible endpoint (e.g. s3.amazonaws.com)",
+	"S3 region": "S3 region",
+	"S3 Access Key ID": "S3 Access Key ID",
+	"S3 Secret Access Key": "S3 Secret Access Key",
+	"S3 Bucket name": "S3 Bucket name",
+	"Use SSL": "Use SSL",
+	"Use HTTPS for S3 requests": "Use HTTPS for S3 requests",
+	"Force path style": "Force path style",
+	"Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted-style (bucket.endpoint/key)": "Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted-style (bucket.endpoint/key)",
+	"Custom public URL for accessing files (optional)": "Custom public URL for accessing files (optional)",
+	"Please configure S3 settings first": "Please configure S3 settings first",
+
+	// Local
+	"Local": "Local",
+	"Storage path": "Storage path",
+	"Local directory for storing images": "Local directory for storing images",
+	"Vault-relative directory or absolute directory inserted as file:/// links": "Vault-relative directory or absolute directory inserted as file:/// links",
+	"Use vault-relative path": "Use vault-relative path",
+	"Resolve storage path relative to vault root": "Resolve storage path relative to vault root",
+	"Resolve storage path relative to vault root (desktop file-system vault only)": "Resolve storage path relative to vault root (desktop file-system vault only)",
+	"Delete to trash": "Delete to trash",
+	"Move deleted files to system trash instead of permanent deletion": "Move deleted files to system trash instead of permanent deletion",
+	"Please configure local storage path first": "Please configure local storage path first",
+	"Vault-relative local storage requires a file-system vault": "Vault-relative local storage requires a file-system vault",
+
 	// GitHub (avoid duplication)
 	"GitHub Custom Domain": "GitHub Custom Domain",
 	"Imgur image deletion is not supported in this version": "Imgur image deletion is not supported in this version",

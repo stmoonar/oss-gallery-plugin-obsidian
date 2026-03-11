@@ -149,6 +149,34 @@ export default {
 	"R2 public access URL (custom domain or r2.dev URL)": "R2公开访问URL(自定义域名或r2.dev地址)",
 	"Please configure Cloudflare R2 settings first": "请先配置Cloudflare R2设置",
 
+	// S3
+	"S3": "S3",
+	"Endpoint": "端点",
+	"S3-compatible endpoint (e.g. s3.amazonaws.com)": "S3兼容端点(例如: s3.amazonaws.com)",
+	"S3 region": "S3区域",
+	"S3 Access Key ID": "S3 Access Key ID",
+	"S3 Secret Access Key": "S3 Secret Access Key",
+	"S3 Bucket name": "S3存储桶名称",
+	"Use SSL": "使用SSL",
+	"Use HTTPS for S3 requests": "S3请求使用HTTPS",
+	"Force path style": "强制路径风格",
+	"Use path-style URLs (endpoint/bucket/key) instead of virtual-hosted-style (bucket.endpoint/key)": "使用路径风格URL(endpoint/bucket/key)而非虚拟主机风格(bucket.endpoint/key)",
+	"Custom public URL for accessing files (optional)": "自定义文件访问URL(可选)",
+	"Please configure S3 settings first": "请先配置S3设置",
+
+	// Local
+	"Local": "本地存储",
+	"Storage path": "存储路径",
+	"Local directory for storing images": "本地图片存储目录",
+	"Vault-relative directory or absolute directory inserted as file:/// links": "仓库相对目录，或会插入为 file:/// 链接的绝对目录",
+	"Use vault-relative path": "使用仓库相对路径",
+	"Resolve storage path relative to vault root": "存储路径相对于仓库根目录解析",
+	"Resolve storage path relative to vault root (desktop file-system vault only)": "存储路径相对于仓库根目录解析（仅桌面端本地文件仓库）",
+	"Delete to trash": "删除到回收站",
+	"Move deleted files to system trash instead of permanent deletion": "删除文件时移到系统回收站而非永久删除",
+	"Please configure local storage path first": "请先配置本地存储路径",
+	"Vault-relative local storage requires a file-system vault": "仓库相对路径模式仅支持桌面端本地文件仓库",
+
 	// GitHub
 	"Repo Name": "仓库名称",
 	"username/reponame": "用户名/仓库名",

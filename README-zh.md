@@ -8,8 +8,7 @@
 
 ## 支持的存储服务
 
-- **MinIO**：自托管 S3 兼容对象存储
-- **Cloudflare R2**：S3 兼容对象存储
+- **本地存储**：仅桌面端可用的本地文件管理，支持图库预览、删除到回收站
 - **SM.MS**：图床
 - **GitHub**：上传到仓库
 - **阿里云 OSS**
@@ -17,6 +16,9 @@
 - **七牛 Kodo**
 - **又拍云 USS**
 - **Imgur**：仅支持图片上传，不支持图库列举和删除
+- **Cloudflare R2**：S3 兼容对象存储
+- **S3**：通用 S3 兼容提供商（AWS S3、DigitalOcean Spaces、Backblaze B2 等）
+- **MinIO**：自托管 S3 兼容对象存储
 
 ## 功能
 
@@ -61,6 +63,13 @@
   - 文档预览服务：禁用、Google Docs、Office Online
 
 ### Provider 设置
+
+#### 本地存储
+
+- 仅支持 Obsidian 桌面端
+- 存储路径：仓库相对路径，或会插入为 `file:///` 链接的绝对路径
+- 使用仓库相对路径：开关（默认开启，仅支持本地文件仓库）
+- 删除到回收站：删除文件时移到系统回收站（默认开启）
 
 #### SM.MS
 
@@ -123,6 +132,17 @@
 - Secret Access Key
 - Bucket
 - Public URL：自定义域名或 `r2.dev` 地址
+
+#### S3（通用）
+
+- Endpoint：S3 兼容端点（例如 `s3.amazonaws.com`）
+- Region
+- Access Key ID
+- Secret Access Key
+- Bucket
+- 使用 SSL：开关（默认开启）
+- 强制路径风格：使用 `endpoint/bucket/key` 而非 `bucket.endpoint/key`（默认开启）
+- Public URL：可选，自定义文件访问 URL
 
 #### MinIO
 

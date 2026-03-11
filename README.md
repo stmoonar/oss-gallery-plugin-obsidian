@@ -8,8 +8,7 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 
 ## Supported providers
 
-- **MinIO**: self-hosted S3-compatible object storage
-- **Cloudflare R2**: S3-compatible object storage
+- **Local**: desktop-only local file storage with gallery management
 - **SM.MS**: image hosting
 - **GitHub**: repository-backed uploads
 - **Aliyun OSS**
@@ -17,6 +16,9 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 - **Qiniu Kodo**
 - **Upyun USS**
 - **Imgur**: image upload only, no gallery listing or deletion in this plugin
+- **Cloudflare R2**: S3-compatible object storage
+- **S3**: generic S3-compatible provider (AWS S3, DigitalOcean Spaces, Backblaze B2, etc.)
+- **MinIO**: self-hosted S3-compatible object storage
 
 ## Features
 
@@ -61,6 +63,13 @@ Choose an active provider in the plugin settings, then configure:
   - document preview provider: disabled, Google Docs, or Office Online
 
 ### Provider settings
+
+#### Local
+
+- Available in Obsidian desktop only
+- Storage path: vault-relative directory, or absolute directory inserted as `file:///` links
+- Use vault-relative path: toggle (default on, requires a local file-system vault)
+- Delete to trash: move deleted files to system trash (default on)
 
 #### SM.MS
 
@@ -123,6 +132,17 @@ Note: Imgur uploads are supported, but gallery listing and deletion are not.
 - Secret Access Key
 - Bucket
 - Public URL: custom domain or `r2.dev` URL
+
+#### S3 (Generic)
+
+- Endpoint: S3-compatible endpoint (e.g. `s3.amazonaws.com`)
+- Region
+- Access Key ID
+- Secret Access Key
+- Bucket
+- Use SSL: toggle (default on)
+- Force path style: use `endpoint/bucket/key` instead of `bucket.endpoint/key` (default on)
+- Public URL: optional custom URL for file access
 
 #### MinIO
 

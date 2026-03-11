@@ -28,7 +28,7 @@ export default class OssGalleryPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.providerManager = new OssProviderManager(this.settings);
+		this.providerManager = new OssProviderManager(this.settings, this.app);
 
 		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager));
 		this.addCommands();
@@ -68,7 +68,7 @@ export default class OssGalleryPlugin extends Plugin {
 
 		this.addCommand({
 			id: "open-oss-gallery",
-			name: t("Open Minio gallery"), // Keep name for familiarity or update
+			name: t("Open Minio gallery"),
 			icon: "image-file",
 			callback: () => {
 				if (!this.supportsActiveProviderCapability("list")) {
@@ -360,14 +360,19 @@ export default class OssGalleryPlugin extends Plugin {
 	validateSettings(): boolean {
 		return providerRegistry.isConfigured(
 			this.settings.activeProvider,
-			this.settings.providers[this.settings.activeProvider]
+			this.settings.providers[this.settings.activeProvider],
+			this.app
 		);
 	}
 
 	private supportsActiveProviderCapability(
 		capability: "upload" | "list" | "delete"
 	): boolean {
-		return providerRegistry.supports(this.settings.activeProvider, capability);
+		return providerRegistry.supports(
+			this.settings.activeProvider,
+			capability,
+			this.app
+		);
 	}
 
 	/**
@@ -431,6 +436,10 @@ export default class OssGalleryPlugin extends Plugin {
 					...existingData,
 					providers: mergedProviders,
 				};
+			}
+
+			if (!providerRegistry.get(this.settings.activeProvider, this.app)) {
+				this.settings.activeProvider = DEFAULT_SETTINGS.activeProvider;
 			}
 		}
 	}
