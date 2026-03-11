@@ -41,9 +41,9 @@ This repository is forked from [Obsidian Minio Uploader Plugin](https://github.c
   - ESC key to exit
   - Optimized drag performance
 
-![upload](./minio-upload.gif)
+![upload](./upload.gif)
 ---
-![delete](./minio-delete.gif)
+![delete](./delete.gif)
 
 ## Setting
 

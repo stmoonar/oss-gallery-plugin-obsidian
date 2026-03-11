@@ -41,9 +41,9 @@
   - ESC 键退出预览
   - 优化拖拽性能
 
-![上传](./minio-upload.gif)
+![上传](./upload.gif)
 ---
-![删除](./minio-delete.gif)
+![删除](./delete.gif)
 
 ## 设置
 
