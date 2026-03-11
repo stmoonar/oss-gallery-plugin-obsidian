@@ -3,6 +3,7 @@ import { MinioSettings, PluginSettings } from "../types/settings";
 import { Setting, Notice, requestUrl, RequestUrlParam } from "obsidian";
 import { handleUploadError } from "../utils/ErrorHandler";
 import { isImageFile } from './shared/image';
+import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
 import mime from 'mime';
 import * as aws4 from "aws4";
 
@@ -10,6 +11,20 @@ export class MinioProvider implements IOssProvider {
     name = "minio";
 
     constructor(private settings: MinioSettings) {}
+
+    private getEndpointUrl(): URL {
+        const protocol = this.settings.useSSL ? 'https' : 'http';
+        const host = normalizeEndpointHost(this.settings.endpoint, protocol);
+        const url = new URL(`${protocol}://${host}`);
+        if (!url.port) {
+            url.port = String(this.settings.port);
+        }
+        return url;
+    }
+
+    private getSignedHost(): string {
+        return this.getEndpointUrl().host;
+    }
 
     updateSettings(settings: MinioSettings) {
         this.settings = settings;
@@ -25,16 +40,17 @@ export class MinioProvider implements IOssProvider {
             const buffer = Buffer.from(arrayBuffer);
             const contentType = file.type || mime.getType(file.name) || 'application/octet-stream';
 
+            const bucket = this.settings.bucket.trim();
+            const encodedPath = encodeObjectKeyForUrl(path);
             const opts = {
-                host: `${this.settings.endpoint}:${this.settings.port}`,
-                path: `/${this.settings.bucket}/${path}`,
+                host: this.getSignedHost(),
+                path: `/${bucket}/${encodedPath}`,
                 service: 's3',
                 region: this.settings.region || 'us-east-1',
                 method: 'PUT',
                 body: buffer,
                 headers: {
                     'Content-Type': contentType,
-                    'Content-Length': String(buffer.length)
                 }
             };
 
@@ -42,6 +58,9 @@ export class MinioProvider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
+            delete headers['Content-Length'];
+            delete headers['content-length'];
 
             const requestParams: RequestUrlParam = {
                 url: this.getUrl(opts.path),
@@ -54,7 +73,7 @@ export class MinioProvider implements IOssProvider {
             // If progress is critical, we might need a different approach or accept the limitation.
             // For now, we simulate 0% -> 100%
             if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
-            
+             
             const response = await requestUrl(requestParams);
 
             if (response.status >= 200 && response.status < 300) {
@@ -72,6 +91,7 @@ export class MinioProvider implements IOssProvider {
 
     async listImages(prefix?: string): Promise<OssImage[]> {
         try {
+            const bucket = this.settings.bucket.trim();
             // Construct query parameters for ListObjects V2
             const queryParams = new URLSearchParams({
                 'list-type': '2'
@@ -82,13 +102,10 @@ export class MinioProvider implements IOssProvider {
             }
 
             const queryString = queryParams.toString();
-            const path = `/${this.settings.bucket}${queryString ? '?' + queryString : ''}`;
-
-            // Ensure endpoint doesn't have protocol
-            const cleanEndpoint = this.settings.endpoint.replace(/^https?:\/\//, '');
+            const path = `/${bucket}${queryString ? '?' + queryString : ''}`;
 
             const opts = {
-                host: `${cleanEndpoint}:${this.settings.port}`,
+                host: this.getSignedHost(),
                 path: path,
                 service: 's3',
                 region: this.settings.region || 'us-east-1',
@@ -102,6 +119,7 @@ export class MinioProvider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
 
             const url = this.getUrl(path);
 
@@ -125,11 +143,10 @@ export class MinioProvider implements IOssProvider {
 
     async deleteImage(key: string): Promise<void> {
         try {
-            const path = `/${this.settings.bucket}/${key}`;
-            const cleanEndpoint = this.settings.endpoint.replace(/^https?:\/\//, '');
-            
+            const bucket = this.settings.bucket.trim();
+            const path = `/${bucket}/${encodeObjectKeyForUrl(key)}`;
             const opts = {
-                host: `${cleanEndpoint}:${this.settings.port}`,
+                host: this.getSignedHost(),
                 path: path,
                 service: 's3',
                 region: this.settings.region || 'us-east-1',
@@ -169,11 +186,7 @@ export class MinioProvider implements IOssProvider {
     }
 
     private getUrl(path: string): string {
-        const protocol = this.settings.useSSL ? 'https' : 'http';
-        // Ensure endpoint doesn't have protocol
-        const cleanEndpoint = this.settings.endpoint.replace(/^https?:\/\//, '');
-        const portStr = (this.settings.port === 443 || this.settings.port === 80) ? '' : `:${this.settings.port}`;
-        return `${protocol}://${cleanEndpoint}${portStr}${path}`;
+        return `${this.getEndpointUrl().origin}${path}`;
     }
 
     private parseListObjectsResponse(xml: string): OssImage[] {
@@ -201,19 +214,19 @@ export class MinioProvider implements IOssProvider {
     }
 
     private generateAccessUrl(objectName: string): string {
-        const { endpoint, port, useSSL, bucket, customDomain } = this.settings;
+        const { customDomain } = this.settings;
+        const bucket = this.settings.bucket.trim();
+        const encodedObjectName = encodeObjectKeyForUrl(objectName);
         
         if (customDomain) {
              let url = customDomain.replace(/\/+$/, '');
              if (!/^https?:\/\//i.test(url)) {
                  url = `https://${url}`;
              }
-             return `${url}/${bucket}/${objectName}`;
+             return `${url}/${bucket}/${encodedObjectName}`;
         }
 
-        const protocol = useSSL ? 'https' : 'http';
-        const portStr = (port === 443 || port === 80) ? '' : `:${port}`;
-        return `${protocol}://${endpoint}${portStr}/${bucket}/${objectName}`;
+        return `${this.getEndpointUrl().origin}/${bucket}/${encodedObjectName}`;
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {

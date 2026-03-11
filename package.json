@@ -3,10 +3,11 @@
 	"version": "1.0.2",
 	"description": "Upload and manage media and documents across multiple OSS providers for Obsidian.",
 	"main": "main.js",
+	"packageManager": "pnpm@10.12.1",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "rimraf dist main.js && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"clean": "rimraf dist main.js",
+		"build": "node -e \"const fs=require('node:fs'); for (const p of ['dist','main.js']) fs.rmSync(p,{ recursive:true, force:true });\" && node node_modules/typescript/lib/tsc.js -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"clean": "node -e \"const fs=require('node:fs'); for (const p of ['dist','main.js']) fs.rmSync(p,{ recursive:true, force:true });\"",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
 	"keywords": [],
@@ -15,20 +16,18 @@
 	"devDependencies": {
 		"@types/aws4": "^1.11.6",
 		"@types/mime": "^3.0.3",
-		"@types/minio": "7.1.1",
 		"@types/node": "^16.11.6",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
 		"builtin-modules": "3.3.0",
 		"esbuild": "0.17.3",
 		"obsidian": "latest",
-		"rimraf": "^3.0.2",
 		"tslib": "2.4.0",
 		"typescript": "4.7.4"
 	},
 	"dependencies": {
 		"aws4": "^1.13.2",
-		"mime": "^3.0.0",
-		"js-base64": "^3.7.7"
+		"js-base64": "^3.7.7",
+		"mime": "^3.0.0"
 	}
 }

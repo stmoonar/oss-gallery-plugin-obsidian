@@ -3,7 +3,7 @@ import { R2Settings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
-import { buildObjectKey } from './shared/path';
+import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
 import mime from 'mime';
 import * as aws4 from 'aws4';
 
@@ -15,8 +15,22 @@ export class R2Provider implements IOssProvider {
         this.settings = settings;
     }
 
+    private getAccountId(): string {
+        return normalizeEndpointHost(this.settings.accountId)
+            .replace(/\.r2\.cloudflarestorage\.com$/i, '')
+            .split(':')[0];
+    }
+
+    private getBucketName(): string {
+        return this.settings.bucket.trim();
+    }
+
     private getApiHost(): string {
-        return `${this.settings.accountId}.r2.cloudflarestorage.com`;
+        return `${this.getAccountId()}.r2.cloudflarestorage.com`;
+    }
+
+    private getObjectPath(objectKey: string): string {
+        return `/${this.getBucketName()}/${encodeObjectKeyForUrl(objectKey)}`;
     }
 
     private signRequest(opts: any) {
@@ -31,15 +45,16 @@ export class R2Provider implements IOssProvider {
     }
 
     private generateAccessUrl(objectKey: string): string {
+        const encodedKey = encodeObjectKeyForUrl(objectKey);
         if (this.settings.publicUrl) {
             let url = this.settings.publicUrl.replace(/\/+$/, '');
             if (!/^https?:\/\//i.test(url)) {
                 url = `https://${url}`;
             }
-            return `${url}/${objectKey}`;
+            return `${url}/${encodedKey}`;
         }
         // Fallback to S3 API URL (won't work for public access without configured public URL)
-        return `https://${this.getApiHost()}/${this.settings.bucket}/${objectKey}`;
+        return `https://${this.getApiHost()}/${this.getBucketName()}/${encodedKey}`;
     }
 
     async upload(
@@ -55,16 +70,16 @@ export class R2Provider implements IOssProvider {
         const buffer = Buffer.from(arrayBuffer);
         const contentType = file.type || mime.getType(file.name) || 'application/octet-stream';
 
+        const requestPath = this.getObjectPath(path);
         const opts = {
             host: this.getApiHost(),
-            path: `/${this.settings.bucket}/${path}`,
+            path: requestPath,
             service: 's3',
             region: 'auto',
             method: 'PUT',
             body: buffer,
             headers: {
                 'Content-Type': contentType,
-                'Content-Length': String(buffer.length),
             },
         };
 
@@ -72,12 +87,15 @@ export class R2Provider implements IOssProvider {
 
         const headers = { ...opts.headers } as any;
         delete headers['Host'];
+        delete headers['host'];
+        delete headers['Content-Length'];
+        delete headers['content-length'];
 
         if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
 
         try {
             const response = await requestUrl({
-                url: this.getApiUrl(opts.path),
+                url: this.getApiUrl(requestPath),
                 method: 'PUT',
                 headers: headers as Record<string, string>,
                 body: arrayBuffer,
@@ -91,6 +109,9 @@ export class R2Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('Cloudflare R2 upload error:', error);
+            if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
+                throw new Error('Upload failed: invalid R2 request. Check Account ID, bucket name, and file path/name for unsupported characters.');
+            }
             throw new Error(`Upload failed: ${error.message}`);
         }
     }
@@ -107,7 +128,7 @@ export class R2Provider implements IOssProvider {
             }
 
             const queryString = queryParams.toString();
-            const path = `/${this.settings.bucket}${queryString ? '?' + queryString : ''}`;
+            const path = `/${this.getBucketName()}${queryString ? '?' + queryString : ''}`;
 
             const opts = {
                 host: this.getApiHost(),
@@ -124,6 +145,7 @@ export class R2Provider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
 
             const response = await requestUrl({
                 url: this.getApiUrl(path),
@@ -149,7 +171,7 @@ export class R2Provider implements IOssProvider {
         }
 
         try {
-            const path = `/${this.settings.bucket}/${key}`;
+            const path = this.getObjectPath(key);
 
             const opts = {
                 host: this.getApiHost(),
@@ -164,6 +186,7 @@ export class R2Provider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
 
             const response = await requestUrl({
                 url: this.getApiUrl(path),
@@ -176,6 +199,9 @@ export class R2Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete R2 image:', error);
+            if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
+                throw new Error('Delete failed: invalid R2 request. Check Account ID, bucket name, and object key.');
+            }
             throw new Error(`Delete failed: ${error.message}`);
         }
     }

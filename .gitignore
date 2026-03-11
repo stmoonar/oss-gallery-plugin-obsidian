@@ -40,3 +40,5 @@ data.json
 # Temporary files
 *.tmp
 *.temp
+
+*.zip

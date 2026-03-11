@@ -50,7 +50,6 @@ export class ImageGrid {
 			cls: "minio-gallery-item",
 		});
 
-		const isRemoteUrl = /^https?:\/\//i.test(objectUrl);
 		const imgAttrs: Record<string, string> = {
 			"data-src": objectUrl,
 			src: this.getPlaceholderUrl(),
@@ -58,9 +57,6 @@ export class ImageGrid {
 			alt: objectName,
 			decoding: "async",
 		};
-		if (isRemoteUrl) {
-			imgAttrs.crossorigin = "anonymous";
-		}
 		const img = imgDiv.createEl("img", { attr: imgAttrs });
 		img.dataset.originalUrl = objectUrl;
 
@@ -83,6 +79,12 @@ export class ImageGrid {
 
 	private async optimizeLargeImage(img: HTMLImageElement): Promise<void> {
 		if (img.dataset.optimized === "true") return;
+
+		const originalUrl = img.dataset.originalUrl ?? img.currentSrc ?? img.src;
+		// Remote images can display without CORS, but canvas-based downscaling cannot.
+		if (/^https?:\/\//i.test(originalUrl)) {
+			return;
+		}
 
 		const naturalWidth = img.naturalWidth;
 		const naturalHeight = img.naturalHeight;

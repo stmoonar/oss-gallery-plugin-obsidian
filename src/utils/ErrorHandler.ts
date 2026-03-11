@@ -152,7 +152,9 @@ export function createUserFriendlyMessage(
             'Forbidden': '权限不足，请检查访问权限',
             'Not Found': '资源不存在',
             'ECONNREFUSED': '连接被拒绝，请检查服务器地址',
-            'ENOTFOUND': '服务器地址无法解析，请检查 DNS 设置'
+            'ENOTFOUND': '服务器地址无法解析，请检查 DNS 设置',
+            'ERR_INVALID_ARGUMENT': '请求参数无效，请检查存储配置以及文件名或路径中的特殊字符',
+            'ERR_SSL_PROTOCOL_ERROR': 'SSL 握手失败，请检查 Use SSL、端口以及 HTTPS 反向代理或证书配置'
         };
 
         for (const [key, value] of Object.entries(errorMap)) {

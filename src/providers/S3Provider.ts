@@ -3,6 +3,7 @@ import { S3Settings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
+import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
 import mime from 'mime';
 import * as aws4 from 'aws4';
 
@@ -12,15 +13,15 @@ export class S3Provider implements IOssProvider {
     constructor(private settings: S3Settings) {}
 
     private getHost(): string {
-        const clean = this.settings.endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+        const clean = normalizeEndpointHost(this.settings.endpoint);
         return this.settings.forcePathStyle
             ? clean
-            : `${this.settings.bucket}.${clean}`;
+            : `${this.settings.bucket.trim()}.${clean}`;
     }
 
     private getRequestPath(objectPath: string): string {
         return this.settings.forcePathStyle
-            ? `/${this.settings.bucket}${objectPath}`
+            ? `/${this.settings.bucket.trim()}${objectPath}`
             : objectPath;
     }
 
@@ -38,14 +39,15 @@ export class S3Provider implements IOssProvider {
     }
 
     private generateAccessUrl(objectKey: string): string {
+        const encodedKey = encodeObjectKeyForUrl(objectKey);
         if (this.settings.publicUrl) {
             let url = this.settings.publicUrl.replace(/\/+$/, '');
             if (!/^https?:\/\//i.test(url)) {
                 url = `https://${url}`;
             }
-            return `${url}/${objectKey}`;
+            return `${url}/${encodedKey}`;
         }
-        const path = this.getRequestPath(`/${objectKey}`);
+        const path = this.getRequestPath(`/${encodedKey}`);
         return this.getUrl(path);
     }
 
@@ -62,7 +64,7 @@ export class S3Provider implements IOssProvider {
         const buffer = Buffer.from(arrayBuffer);
         const contentType = file.type || mime.getType(file.name) || 'application/octet-stream';
 
-        const requestPath = this.getRequestPath(`/${path}`);
+        const requestPath = this.getRequestPath(`/${encodeObjectKeyForUrl(path)}`);
         const opts = {
             host: this.getHost(),
             path: requestPath,
@@ -72,7 +74,6 @@ export class S3Provider implements IOssProvider {
             body: buffer,
             headers: {
                 'Content-Type': contentType,
-                'Content-Length': String(buffer.length),
             },
         };
 
@@ -80,6 +81,9 @@ export class S3Provider implements IOssProvider {
 
         const headers = { ...opts.headers } as any;
         delete headers['Host'];
+        delete headers['host'];
+        delete headers['Content-Length'];
+        delete headers['content-length'];
 
         if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
 
@@ -133,6 +137,7 @@ export class S3Provider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
 
             const response = await requestUrl({
                 url: this.getUrl(requestPath),
@@ -157,7 +162,7 @@ export class S3Provider implements IOssProvider {
         }
 
         try {
-            const requestPath = this.getRequestPath(`/${key}`);
+            const requestPath = this.getRequestPath(`/${encodeObjectKeyForUrl(key)}`);
             const opts = {
                 host: this.getHost(),
                 path: requestPath,
@@ -171,6 +176,7 @@ export class S3Provider implements IOssProvider {
 
             const headers = { ...opts.headers } as any;
             delete headers['Host'];
+            delete headers['host'];
 
             const response = await requestUrl({
                 url: this.getUrl(requestPath),
