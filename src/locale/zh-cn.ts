@@ -68,7 +68,6 @@ export default {
 
 	// OSS Provider names
 	"Select Provider": "选择存储提供商",
-	"Minio Provider": "Minio OSS",
 	"SM.MS": "SM.MS图床",
 	"GitHub": "GitHub仓库",
 	"Aliyun OSS": "阿里云OSS",
@@ -76,6 +75,8 @@ export default {
 	"Qiniu": "七牛云",
 	"Upyun": "又拍云",
 	"Imgur": "Imgur图床",
+	"Cloudflare R2": "Cloudflare R2",
+	"Minio Provider": "Minio OSS",
 
 	// Aliyun OSS
 	"Access Key ID": "Access Key ID",
@@ -136,6 +137,17 @@ export default {
 	"Image listing is not available": "图片列表功能不可用",
 	"Image deletion requires OAuth authentication": "图片删除需要OAuth认证",
 	"In some regions, a proxy may be required to access Imgur API": "在某些地区，可能需要代理来访问Imgur API",
+
+	// Cloudflare R2
+	"Account ID": "账户ID",
+	"Cloudflare Account ID": "Cloudflare 账户ID",
+	"Secret Access Key": "Secret Access Key",
+	"R2 API Token Access Key ID": "R2 API令牌 Access Key ID",
+	"R2 API Token Secret Access Key": "R2 API令牌 Secret Access Key",
+	"R2 Bucket name": "R2 存储桶名称",
+	"Public URL": "公开访问URL",
+	"R2 public access URL (custom domain or r2.dev URL)": "R2公开访问URL(自定义域名或r2.dev地址)",
+	"Please configure Cloudflare R2 settings first": "请先配置Cloudflare R2设置",
 
 	// GitHub
 	"Repo Name": "仓库名称",

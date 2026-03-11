@@ -61,8 +61,15 @@ export interface ImgurSettings {
     proxy: string;
 }
 
+export interface R2Settings {
+    accountId: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucket: string;
+    publicUrl: string;
+}
+
 export interface ProviderSettingsMap {
-    minio: MinioSettings;
     smms: SmMsSettings;
     github: GithubSettings;
     aliyun: AliyunSettings;
@@ -70,6 +77,8 @@ export interface ProviderSettingsMap {
     qiniu: QiniuSettings;
     upyun: UpyunSettings;
     imgur: ImgurSettings;
+    r2: R2Settings;
+    minio: MinioSettings;
 }
 
 export type ProviderName = keyof ProviderSettingsMap;
@@ -152,10 +161,17 @@ export const DEFAULT_IMGUR_SETTINGS: ImgurSettings = {
     proxy: '',
 };
 
+export const DEFAULT_R2_SETTINGS: R2Settings = {
+    accountId: '',
+    accessKeyId: '',
+    secretAccessKey: '',
+    bucket: '',
+    publicUrl: '',
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
-    activeProvider: 'minio',
+    activeProvider: 'smms',
     providers: {
-        minio: DEFAULT_MINIO_SETTINGS,
         smms: DEFAULT_SMMS_SETTINGS,
         github: DEFAULT_GITHUB_SETTINGS,
         aliyun: DEFAULT_ALIYUN_SETTINGS,
@@ -163,6 +179,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
         qiniu: DEFAULT_QINIU_SETTINGS,
         upyun: DEFAULT_UPYUN_SETTINGS,
         imgur: DEFAULT_IMGUR_SETTINGS,
+        r2: DEFAULT_R2_SETTINGS,
+        minio: DEFAULT_MINIO_SETTINGS,
     },
     basepath: '',
     imgPreview: true,

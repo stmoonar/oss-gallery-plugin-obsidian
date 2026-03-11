@@ -83,7 +83,6 @@ export default {
 	"e.g. https://cdn.jsdelivr.net/gh/user/repo": "e.g. https://cdn.jsdelivr.net/gh/user/repo",
 
 	// OSS Provider names
-	"Minio Provider": "Minio OSS",
 	"SM.MS": "SM.MS",
 	"GitHub": "GitHub",
 	"Aliyun OSS": "Aliyun OSS",
@@ -91,6 +90,8 @@ export default {
 	"Qiniu": "Qiniu",
 	"Upyun": "Upyun",
 	"Imgur": "Imgur",
+	"Cloudflare R2": "Cloudflare R2",
+	"Minio Provider": "Minio OSS",
 
 	// Aliyun OSS
 	"Access Key ID": "Access Key ID",
@@ -150,6 +151,17 @@ export default {
 	"Image listing is not available": "Image listing is not available",
 	"Image deletion requires OAuth authentication": "Image deletion requires OAuth authentication",
 	"In some regions, a proxy may be required to access Imgur API": "In some regions, a proxy may be required to access Imgur API",
+
+	// Cloudflare R2
+	"Account ID": "Account ID",
+	"Cloudflare Account ID": "Cloudflare Account ID",
+	"Secret Access Key": "Secret Access Key",
+	"R2 API Token Access Key ID": "R2 API Token Access Key ID",
+	"R2 API Token Secret Access Key": "R2 API Token Secret Access Key",
+	"R2 Bucket name": "R2 Bucket name",
+	"Public URL": "Public URL",
+	"R2 public access URL (custom domain or r2.dev URL)": "R2 public access URL (custom domain or r2.dev URL)",
+	"Please configure Cloudflare R2 settings first": "Please configure Cloudflare R2 settings first",
 
 	// GitHub (avoid duplication)
 	"GitHub Custom Domain": "GitHub Custom Domain",

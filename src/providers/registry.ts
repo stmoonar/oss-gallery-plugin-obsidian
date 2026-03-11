@@ -1,4 +1,4 @@
-import { MinioSettings, SmMsSettings, GithubSettings, AliyunSettings, TencentSettings, QiniuSettings, UpyunSettings, ImgurSettings, DEFAULT_MINIO_SETTINGS, DEFAULT_SMMS_SETTINGS, DEFAULT_GITHUB_SETTINGS, DEFAULT_ALIYUN_SETTINGS, DEFAULT_TENCENT_SETTINGS, DEFAULT_QINIU_SETTINGS, DEFAULT_UPYUN_SETTINGS, DEFAULT_IMGUR_SETTINGS, ProviderSettingsMap } from '../types/settings';
+import { MinioSettings, SmMsSettings, GithubSettings, AliyunSettings, TencentSettings, QiniuSettings, UpyunSettings, ImgurSettings, R2Settings, DEFAULT_MINIO_SETTINGS, DEFAULT_SMMS_SETTINGS, DEFAULT_GITHUB_SETTINGS, DEFAULT_ALIYUN_SETTINGS, DEFAULT_TENCENT_SETTINGS, DEFAULT_QINIU_SETTINGS, DEFAULT_UPYUN_SETTINGS, DEFAULT_IMGUR_SETTINGS, DEFAULT_R2_SETTINGS, ProviderSettingsMap } from '../types/settings';
 import { IOssProvider } from '../types/oss';
 import { MinioProvider } from './MinioProvider';
 import { SmMsProvider } from './SmMsProvider';
@@ -8,6 +8,7 @@ import { TencentProvider } from './TencentProvider';
 import { QiniuProvider } from './QiniuProvider';
 import { UpyunProvider } from './UpyunProvider';
 import { ImgurProvider } from './ImgurProvider';
+import { R2Provider } from './R2Provider';
 
 export interface ProviderCapabilities {
     upload: boolean;
@@ -24,13 +25,6 @@ export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = key
 }
 
 const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
-    {
-        id: 'minio',
-        label: 'MinIO',
-        capabilities: { upload: true, list: true, delete: true },
-        defaultSettings: DEFAULT_MINIO_SETTINGS,
-        create: (settings) => new MinioProvider(settings as MinioSettings),
-    },
     {
         id: 'smms',
         label: 'SM.MS',
@@ -79,6 +73,20 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         capabilities: { upload: true, list: false, delete: false },
         defaultSettings: DEFAULT_IMGUR_SETTINGS,
         create: (settings) => new ImgurProvider(settings as ImgurSettings),
+    },
+    {
+        id: 'r2',
+        label: 'Cloudflare R2',
+        capabilities: { upload: true, list: true, delete: true },
+        defaultSettings: DEFAULT_R2_SETTINGS,
+        create: (settings) => new R2Provider(settings as R2Settings),
+    },
+    {
+        id: 'minio',
+        label: 'MinIO',
+        capabilities: { upload: true, list: true, delete: true },
+        defaultSettings: DEFAULT_MINIO_SETTINGS,
+        create: (settings) => new MinioProvider(settings as MinioSettings),
     },
 ];
 

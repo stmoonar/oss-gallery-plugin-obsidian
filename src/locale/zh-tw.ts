@@ -60,4 +60,15 @@ export default {
 	'Invalid regex pattern': '無效的正則表達式',
 	'Open Minio gallery': '開啟Minio圖庫',
 	"Toggle regex search": "切換正則搜尋",
+
+	// Cloudflare R2
+	"Account ID": "帳戶ID",
+	"Cloudflare Account ID": "Cloudflare 帳戶ID",
+	"Secret Access Key": "Secret Access Key",
+	"R2 API Token Access Key ID": "R2 API權杖 Access Key ID",
+	"R2 API Token Secret Access Key": "R2 API權杖 Secret Access Key",
+	"R2 Bucket name": "R2 儲存桶名稱",
+	"Public URL": "公開存取URL",
+	"R2 public access URL (custom domain or r2.dev URL)": "R2公開存取URL(自訂網域或r2.dev位址)",
+	"Please configure Cloudflare R2 settings first": "請先配置Cloudflare R2設定",
 }

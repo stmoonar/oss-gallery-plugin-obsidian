@@ -5,7 +5,6 @@
 这个仓库是从 [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) fork 过来的，扩展了多存储提供商支持并添加了新功能。
 
 ## 支持的存储提供商
-- **MinIO** — 自托管的 S3 兼容对象存储
 - **SM.MS** — 免费图床
 - **GitHub** — 上传到 GitHub 仓库
 - **阿里云 OSS** — 阿里云对象存储服务
@@ -13,6 +12,8 @@
 - **七牛云 Kodo** — 七牛云存储
 - **又拍云 USS** — 又拍云存储
 - **Imgur** — 匿名图床
+- **Cloudflare R2** — Cloudflare R2 对象存储（S3 兼容）
+- **MinIO** — 自托管的 S3 兼容对象存储
 
 ## 特性
 - 支持拖拽文件到编辑器后直接上传到已配置的存储提供商
@@ -48,22 +49,6 @@
 ## 设置
 
 在插件设置中选择你偏好的存储提供商，然后配置对应的提供商设置。
-
-### MinIO
-
-> 提示：端口号为 MinIO 的 API 数据访问端口号
-
-- accessKey
-- secretKey
-- bucket
-- endpoint
-- port
-- SSL
-- 自定义域名（可选）
-
-需要在 MinIO 控制台的 Bucket 设置中开启文件匿名访问能力，即通过 URL 可直接访问文件。
-
-![设置](./minio-bucket-setting.png)
 
 ### SM.MS
 - API Token
@@ -109,3 +94,26 @@
 ### Imgur
 - Client ID
 - 代理 URL（可选，部分地区需要）
+
+### Cloudflare R2
+- Account ID（Cloudflare 账户 ID）
+- Access Key ID（R2 API 令牌）
+- Secret Access Key（R2 API 令牌）
+- Bucket
+- 公开访问 URL（自定义域名或 r2.dev 地址）
+
+### MinIO
+
+> 提示：端口号为 MinIO 的 API 数据访问端口号
+
+- accessKey
+- secretKey
+- bucket
+- endpoint
+- port
+- SSL
+- 自定义域名（可选）
+
+需要在 MinIO 控制台的 Bucket 设置中开启文件匿名访问能力，即通过 URL 可直接访问文件。
+
+![设置](./minio-bucket-setting.png)

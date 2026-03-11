@@ -5,7 +5,6 @@
 This repository is forked from [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and extended with multi-provider support and new features.
 
 ## Supported Providers
-- **MinIO** — Self-hosted S3-compatible object storage
 - **SM.MS** — Free image hosting
 - **GitHub** — Upload to GitHub repository
 - **Aliyun OSS** — Alibaba Cloud Object Storage Service
@@ -13,6 +12,8 @@ This repository is forked from [Obsidian Minio Uploader Plugin](https://github.c
 - **Qiniu Kodo** — Qiniu Cloud Storage
 - **Upyun USS** — Upyun Cloud Storage
 - **Imgur** — Anonymous image hosting
+- **Cloudflare R2** — Cloudflare R2 object storage (S3-compatible)
+- **MinIO** — Self-hosted S3-compatible object storage
 
 ## Features
 - Supports dragging and dropping files to the editor and directly uploading them to your configured provider
@@ -48,22 +49,6 @@ This repository is forked from [Obsidian Minio Uploader Plugin](https://github.c
 ## Setting
 
 Select your preferred storage provider in the plugin settings, then configure the corresponding provider settings.
-
-### MinIO
-
-> Tip: Port is the API data access port for MinIO
-
-- accessKey
-- secretKey
-- bucket
-- endpoint
-- port
-- SSL
-- Custom domain (Optional)
-
-You also need to enable anonymous file access in the MinIO console Bucket settings so files can be accessed directly via URL.
-
-![Settings](./minio-bucket-setting.png)
 
 ### SM.MS
 - API Token
@@ -109,3 +94,26 @@ You also need to enable anonymous file access in the MinIO console Bucket settin
 ### Imgur
 - Client ID
 - Proxy URL (Optional, required in some regions)
+
+### Cloudflare R2
+- Account ID
+- Access Key ID (R2 API Token)
+- Secret Access Key (R2 API Token)
+- Bucket
+- Public URL (custom domain or r2.dev URL)
+
+### MinIO
+
+> Tip: Port is the API data access port for MinIO
+
+- accessKey
+- secretKey
+- bucket
+- endpoint
+- port
+- SSL
+- Custom domain (Optional)
+
+You also need to enable anonymous file access in the MinIO console Bucket settings so files can be accessed directly via URL.
+
+![Settings](./minio-bucket-setting.png)

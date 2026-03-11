@@ -1,0 +1,265 @@
+import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { R2Settings, PluginSettings } from '../types/settings';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
+import { t } from '../i18n';
+import { isImageFile } from './shared/image';
+import { buildObjectKey } from './shared/path';
+import mime from 'mime';
+import * as aws4 from 'aws4';
+
+export class R2Provider implements IOssProvider {
+    name = 'r2';
+    private settings: R2Settings;
+
+    constructor(settings: R2Settings) {
+        this.settings = settings;
+    }
+
+    private getApiHost(): string {
+        return `${this.settings.accountId}.r2.cloudflarestorage.com`;
+    }
+
+    private signRequest(opts: any) {
+        aws4.sign(opts, {
+            accessKeyId: this.settings.accessKeyId,
+            secretAccessKey: this.settings.secretAccessKey,
+        });
+    }
+
+    private getApiUrl(path: string): string {
+        return `https://${this.getApiHost()}${path}`;
+    }
+
+    private generateAccessUrl(objectKey: string): string {
+        if (this.settings.publicUrl) {
+            let url = this.settings.publicUrl.replace(/\/+$/, '');
+            if (!/^https?:\/\//i.test(url)) {
+                url = `https://${url}`;
+            }
+            return `${url}/${objectKey}`;
+        }
+        // Fallback to S3 API URL (won't work for public access without configured public URL)
+        return `https://${this.getApiHost()}/${this.settings.bucket}/${objectKey}`;
+    }
+
+    async upload(
+        file: File,
+        path: string,
+        onProgress?: (progress: UploadProgressInfo) => void
+    ): Promise<string> {
+        if (!this.settings.accountId || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
+            throw new Error(t('Please configure Cloudflare R2 settings first'));
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const contentType = file.type || mime.getType(file.name) || 'application/octet-stream';
+
+        const opts = {
+            host: this.getApiHost(),
+            path: `/${this.settings.bucket}/${path}`,
+            service: 's3',
+            region: 'auto',
+            method: 'PUT',
+            body: buffer,
+            headers: {
+                'Content-Type': contentType,
+                'Content-Length': String(buffer.length),
+            },
+        };
+
+        this.signRequest(opts);
+
+        const headers = { ...opts.headers } as any;
+        delete headers['Host'];
+
+        if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
+
+        try {
+            const response = await requestUrl({
+                url: this.getApiUrl(opts.path),
+                method: 'PUT',
+                headers: headers as Record<string, string>,
+                body: arrayBuffer,
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                if (onProgress) onProgress({ loaded: buffer.length, total: buffer.length, percentage: 100 });
+                return this.generateAccessUrl(path);
+            } else {
+                throw new Error(`Upload failed with status: ${response.status}`);
+            }
+        } catch (error) {
+            console.error('Cloudflare R2 upload error:', error);
+            throw new Error(`Upload failed: ${error.message}`);
+        }
+    }
+
+    async listImages(prefix?: string): Promise<OssImage[]> {
+        if (!this.settings.accountId || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
+            return [];
+        }
+
+        try {
+            const queryParams = new URLSearchParams({ 'list-type': '2' });
+            if (prefix) {
+                queryParams.append('prefix', prefix);
+            }
+
+            const queryString = queryParams.toString();
+            const path = `/${this.settings.bucket}${queryString ? '?' + queryString : ''}`;
+
+            const opts = {
+                host: this.getApiHost(),
+                path: path,
+                service: 's3',
+                region: 'auto',
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/xml',
+                },
+            };
+
+            this.signRequest(opts);
+
+            const headers = { ...opts.headers } as any;
+            delete headers['Host'];
+
+            const response = await requestUrl({
+                url: this.getApiUrl(path),
+                method: 'GET',
+                headers: headers as Record<string, string>,
+            });
+
+            if (response.status === 200) {
+                return this.parseListObjectsResponse(response.text);
+            } else {
+                console.error('R2 list objects failed:', response.status, response.text);
+                throw new Error(`List objects failed with status ${response.status}`);
+            }
+        } catch (error) {
+            console.error('Failed to list R2 images:', error);
+            throw error;
+        }
+    }
+
+    async deleteImage(key: string): Promise<void> {
+        if (!this.settings.accountId || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
+            throw new Error(t('Please configure Cloudflare R2 settings first'));
+        }
+
+        try {
+            const path = `/${this.settings.bucket}/${key}`;
+
+            const opts = {
+                host: this.getApiHost(),
+                path: path,
+                service: 's3',
+                region: 'auto',
+                method: 'DELETE',
+                headers: {},
+            };
+
+            this.signRequest(opts);
+
+            const headers = { ...opts.headers } as any;
+            delete headers['Host'];
+
+            const response = await requestUrl({
+                url: this.getApiUrl(path),
+                method: 'DELETE',
+                headers: headers as Record<string, string>,
+            });
+
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(`Delete failed with status: ${response.status}`);
+            }
+        } catch (error) {
+            console.error('Failed to delete R2 image:', error);
+            throw new Error(`Delete failed: ${error.message}`);
+        }
+    }
+
+    private parseListObjectsResponse(xml: string): OssImage[] {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xml, 'text/xml');
+        const contents = xmlDoc.getElementsByTagName('Contents');
+        const images: OssImage[] = [];
+
+        for (let i = 0; i < contents.length; i++) {
+            const item = contents[i];
+            const key = item.getElementsByTagName('Key')[0]?.textContent;
+            const lastModified = item.getElementsByTagName('LastModified')[0]?.textContent;
+            const size = item.getElementsByTagName('Size')[0]?.textContent;
+
+            if (key && isImageFile(key)) {
+                images.push({
+                    key: key,
+                    url: this.generateAccessUrl(key),
+                    lastModified: lastModified ? new Date(lastModified) : new Date(),
+                    size: size ? parseInt(size) : 0,
+                });
+            }
+        }
+        return images;
+    }
+
+    renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
+        const r2 = settings.providers.r2;
+
+        new Setting(containerEl)
+            .setName(t('Account ID'))
+            .setDesc(t('Cloudflare Account ID'))
+            .addText(text => text
+                .setPlaceholder('Enter your Cloudflare Account ID')
+                .setValue(r2?.accountId || '')
+                .onChange(async (value) => {
+                    settings.providers.r2.accountId = value;
+                    await saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('Access Key ID'))
+            .setDesc(t('R2 API Token Access Key ID'))
+            .addText(text => text
+                .setPlaceholder('Enter your Access Key ID')
+                .setValue(r2?.accessKeyId || '')
+                .onChange(async (value) => {
+                    settings.providers.r2.accessKeyId = value;
+                    await saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('Secret Access Key'))
+            .setDesc(t('R2 API Token Secret Access Key'))
+            .addText(text => text
+                .setPlaceholder('Enter your Secret Access Key')
+                .setValue(r2?.secretAccessKey || '')
+                .onChange(async (value) => {
+                    settings.providers.r2.secretAccessKey = value;
+                    await saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('Bucket'))
+            .setDesc(t('R2 Bucket name'))
+            .addText(text => text
+                .setPlaceholder('my-bucket')
+                .setValue(r2?.bucket || '')
+                .onChange(async (value) => {
+                    settings.providers.r2.bucket = value;
+                    await saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName(t('Public URL'))
+            .setDesc(t('R2 public access URL (custom domain or r2.dev URL)'))
+            .addText(text => text
+                .setPlaceholder('https://pub-xxx.r2.dev')
+                .setValue(r2?.publicUrl || '')
+                .onChange(async (value) => {
+                    settings.providers.r2.publicUrl = value;
+                    await saveSettings();
+                }));
+    }
+}
