@@ -98,7 +98,7 @@ export function handleError(
     }
 
     // 输出上下文信息（仅在开发环境）
-    if (process.env.NODE_ENV === 'development') {
+    if (typeof process !== 'undefined' && process.env.NODE_ENV === 'development') {
         console.debug('Error context:', safeContext);
     }
 }

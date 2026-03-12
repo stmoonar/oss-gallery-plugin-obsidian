@@ -1,6 +1,6 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { ImgurSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
@@ -58,7 +58,7 @@ export class ImgurProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Imgur upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

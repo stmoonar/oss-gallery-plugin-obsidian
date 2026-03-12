@@ -3,27 +3,31 @@
 	"version": "1.0.2",
 	"description": "Upload and manage media and documents across multiple OSS providers for Obsidian.",
 	"main": "main.js",
+	"type": "module",
 	"packageManager": "pnpm@10.12.1",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "node -e \"const fs=require('node:fs'); for (const p of ['dist','main.js']) fs.rmSync(p,{ recursive:true, force:true });\" && node node_modules/typescript/lib/tsc.js -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"clean": "node -e \"const fs=require('node:fs'); for (const p of ['dist','main.js']) fs.rmSync(p,{ recursive:true, force:true });\"",
-		"version": "node version-bump.mjs && git add manifest.json versions.json"
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"lint": "eslint ."
 	},
 	"keywords": [],
 	"author": "",
 	"license": "MIT",
 	"devDependencies": {
+		"@eslint/js": "9.30.1",
 		"@types/aws4": "^1.11.6",
 		"@types/mime": "^3.0.3",
 		"@types/node": "^16.11.6",
-		"@typescript-eslint/eslint-plugin": "5.29.0",
-		"@typescript-eslint/parser": "5.29.0",
-		"builtin-modules": "3.3.0",
-		"esbuild": "0.17.3",
+		"esbuild": "0.25.5",
+		"eslint": "^9.30.0",
+		"eslint-plugin-obsidianmd": "0.1.9",
+		"globals": "14.0.0",
+		"jiti": "2.6.1",
 		"obsidian": "latest",
 		"tslib": "2.4.0",
-		"typescript": "4.7.4"
+		"typescript": "~5.8.3",
+		"typescript-eslint": "8.35.1"
 	},
 	"dependencies": {
 		"aws4": "^1.13.2",

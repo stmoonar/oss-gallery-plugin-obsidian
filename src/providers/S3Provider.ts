@@ -98,7 +98,7 @@ export class S3Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('S3 upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -176,7 +176,7 @@ export class S3Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete S3 image:', error);
-            throw new Error(`Delete failed: ${error.message}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

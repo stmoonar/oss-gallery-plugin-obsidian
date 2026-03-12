@@ -1,6 +1,6 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { SmMsSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
@@ -55,7 +55,7 @@ export class SmMsProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('SM.MS upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -108,7 +108,7 @@ export class SmMsProvider implements IOssProvider {
                 throw new Error(response.json.message || 'Delete failed');
             }
         } catch (e) {
-            throw new Error(`Delete failed: ${e.message}`);
+            throw new Error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 

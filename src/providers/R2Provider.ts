@@ -107,7 +107,7 @@ export class R2Provider implements IOssProvider {
             if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
                 throw new Error('Upload failed: invalid R2 request. Check Account ID, bucket name, and file path/name for unsupported characters.');
             }
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -189,7 +189,7 @@ export class R2Provider implements IOssProvider {
             if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
                 throw new Error('Delete failed: invalid R2 request. Check Account ID, bucket name, and object key.');
             }
-            throw new Error(`Delete failed: ${error.message}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

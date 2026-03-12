@@ -127,7 +127,7 @@ export class AliyunProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Aliyun OSS upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -210,7 +210,7 @@ export class AliyunProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete Aliyun OSS image:', error);
-            throw new Error(`Delete failed: ${error.message}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

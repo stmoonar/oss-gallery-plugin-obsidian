@@ -147,7 +147,7 @@ export default class OssGalleryPlugin extends Plugin {
 			});
 		}
 
-		workspace.revealLeaf(leaf);
+		void workspace.revealLeaf(leaf);
 	}
 
 	private triggerFileUpload(editor: Editor): void {
@@ -337,7 +337,7 @@ export default class OssGalleryPlugin extends Plugin {
 		this.app.workspace.getLeavesOfType('oss-gallery-view').forEach(leaf => {
 			if (leaf.view instanceof OssGalleryView) {
 				// Force refresh by calling loadGallery with true
-				(leaf.view as OssGalleryView).loadGallery(true);
+				void leaf.view.loadGallery(true);
 			}
 		});
 	}
@@ -352,11 +352,11 @@ export default class OssGalleryPlugin extends Plugin {
 		if (!existingData) {
 			await this.saveData(DEFAULT_SETTINGS);
 			this.settings = { ...DEFAULT_SETTINGS };
-		} else {
-			// Migration logic for old settings (pre-multi-provider)
-			if (!existingData.providers) {
-				const oldSettings = existingData as any;
-				this.settings = {
+			} else {
+				// Migration logic for old settings (pre-multi-provider)
+				if (!existingData.providers) {
+					const oldSettings = existingData;
+					this.settings = {
 					...DEFAULT_SETTINGS,
 					activeProvider: 'minio',
 					basepath: oldSettings.basepath || '',
@@ -377,13 +377,13 @@ export default class OssGalleryPlugin extends Plugin {
 			} else {
 				// Deep merge providers: ensure all provider keys exist with defaults from registry
 				const registryDefaults = providerRegistry.buildDefaultProviderSettings();
-				const mergedProviders = { ...registryDefaults };
-				for (const key of Object.keys(registryDefaults) as Array<keyof typeof registryDefaults>) {
-					mergedProviders[key] = {
-						...registryDefaults[key],
-						...(existingData.providers[key] || {}),
-					} as any;
-				}
+					const mergedProviders = { ...registryDefaults };
+					for (const key of Object.keys(registryDefaults) as Array<keyof typeof registryDefaults>) {
+						mergedProviders[key] = {
+							...registryDefaults[key],
+							...(existingData.providers[key] || {}),
+						};
+					}
 
 				this.settings = {
 					...DEFAULT_SETTINGS,

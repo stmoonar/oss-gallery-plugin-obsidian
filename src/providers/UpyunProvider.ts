@@ -185,7 +185,7 @@ export class UpyunProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Upyun upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -242,7 +242,7 @@ export class UpyunProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete Upyun image:', error);
-            throw new Error(`Delete failed: ${error.message}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

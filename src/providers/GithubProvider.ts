@@ -1,6 +1,6 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { GithubSettings, PluginSettings } from '../types/settings';
-import { requestUrl, Setting, Notice } from 'obsidian';
+import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
 
@@ -70,14 +70,14 @@ export class GithubProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('GitHub upload error:', error);
-            if (error.status === 401) {
+            if ((error as any).status === 401) {
                 throw new Error('GitHub authentication failed. Please check your token.');
-            } else if (error.status === 403) {
+            } else if ((error as any).status === 403) {
                 throw new Error('GitHub permission denied. Please ensure your token has write access to the repository.');
-            } else if (error.status === 404) {
+            } else if ((error as any).status === 404) {
                 throw new Error('GitHub repository or file not found. Please check the repository name and path.');
             } else {
-                throw new Error(`Upload failed: ${error.message || error}`);
+                throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
             }
         }
     }
@@ -100,7 +100,7 @@ export class GithubProvider implements IOssProvider {
         try {
             const treeData = await this.getRepositoryTree(repo);
             return this.extractImagesFromTree(treeData);
-        } catch (error) {
+        } catch {
             // Fallback to directory-based search if tree API fails
             console.warn('Tree API failed, falling back to directory search');
             return await this.searchCommonDirectories(repo);
@@ -289,7 +289,7 @@ export class GithubProvider implements IOssProvider {
                 throw new Error('Delete failed');
             }
         } catch (e) {
-            throw new Error(`Delete failed: ${e.message}`);
+            throw new Error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
 
@@ -349,7 +349,7 @@ export class GithubProvider implements IOssProvider {
                 const base64 = result.split(',')[1];
                 resolve(base64);
             };
-            reader.onerror = error => reject(error);
+            reader.onerror = () => reject(new Error('Failed to read file'));
         });
     }
 

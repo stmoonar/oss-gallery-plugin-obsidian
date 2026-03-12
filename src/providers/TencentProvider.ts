@@ -93,7 +93,7 @@ export class TencentProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Tencent COS upload error:', error);
-            throw new Error(`Upload failed: ${error.message}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 
@@ -179,7 +179,7 @@ export class TencentProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete Tencent COS image:', error);
-            throw new Error(`Delete failed: ${error.message}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
         }
     }
 

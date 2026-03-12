@@ -1,8 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import fs from "fs";
-import path from "path";
-import builtins from "builtin-modules";
+import { builtinModules } from 'node:module';
 
 const banner =
 `/*
@@ -13,76 +11,39 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
-// 确保输出目录存在
-const outputDir = "dist";
-if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-}
-
 const context = await esbuild.context({
-    banner: {
-        js: banner,
-    },
-    entryPoints: ["src/main.ts"],
-    bundle: true,
-    external: [
-        "obsidian",
-        "electron",
-        "@codemirror/autocomplete",
-        "@codemirror/collab",
-        "@codemirror/commands",
-        "@codemirror/language",
-        "@codemirror/lint",
-        "@codemirror/search",
-        "@codemirror/state",
-        "@codemirror/view",
-        "@lezer/common",
-        "@lezer/highlight",
-        "@lezer/lr",
-        ...builtins],
-    format: "cjs",
-    target: "es2018",
-    logLevel: "info",
-    sourcemap: prod ? false : "inline",
-    treeShaking: true,
-    outfile: path.join(outputDir, "main.js"),
+	banner: {
+		js: banner,
+	},
+	entryPoints: ["src/main.ts"],
+	bundle: true,
+	external: [
+		"obsidian",
+		"electron",
+		"@codemirror/autocomplete",
+		"@codemirror/collab",
+		"@codemirror/commands",
+		"@codemirror/language",
+		"@codemirror/lint",
+		"@codemirror/search",
+		"@codemirror/state",
+		"@codemirror/view",
+		"@lezer/common",
+		"@lezer/highlight",
+		"@lezer/lr",
+		...builtinModules],
+	format: "cjs",
+	target: "es2018",
+	logLevel: "info",
+	sourcemap: prod ? false : "inline",
+	treeShaking: true,
+	outfile: "main.js",
+	minify: prod,
 });
 
 if (prod) {
-    try {
-        // 构建主文件
-        await context.rebuild();
-
-        // 复制 manifest.json
-        fs.copyFileSync("manifest.json", path.join(outputDir, "manifest.json"));
-
-        // 复制 styles.css
-        if (fs.existsSync("styles.css")) {
-            fs.copyFileSync("styles.css", path.join(outputDir, "styles.css"));
-        }
-
-  
-        // 复制 LICENSE 文件（可选）
-        if (fs.existsSync("LICENSE")) {
-            fs.copyFileSync("LICENSE", path.join(outputDir, "LICENSE"));
-        }
-
-        console.log("✅ Build completed successfully!");
-        console.log(`📦 Output directory: ${outputDir}`);
-        console.log("📄 Generated files:");
-        console.log(`   - manifest.json`);
-        console.log(`   - main.js`);
-        if (fs.existsSync("styles.css")) {
-            console.log(`   - styles.css`);
-        }
-
-        process.exit(0);
-    } catch (error) {
-        console.error("❌ Build failed:", error);
-        process.exit(1);
-    }
+	await context.rebuild();
+	process.exit(0);
 } else {
-    console.log("👀 Watching for changes...");
-    console.log(`📂 Output directory: ${outputDir}`);
-    await context.watch();
+	await context.watch();
 }

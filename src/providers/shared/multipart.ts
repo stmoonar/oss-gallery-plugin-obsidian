@@ -52,5 +52,5 @@ export function buildMultipartBody(fields: MultipartField[], boundary: string): 
 }
 
 export function generateBoundary(): string {
-    return '----ObsidianFormBoundary' + Math.random().toString(36).substr(2, 16);
+    return '----ObsidianFormBoundary' + Math.random().toString(36).slice(2, 18);
 }

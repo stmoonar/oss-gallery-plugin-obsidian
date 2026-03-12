@@ -6,9 +6,13 @@ export class ImageCache {
     private static saveTimeout: number | null = null;
     private static dirty = false;
 
+    private static getStorage(): Storage {
+        return window.localStorage;
+    }
+
     static async init() {
         try {
-            const savedCache = localStorage.getItem(this.CACHE_KEY);
+            const savedCache = this.getStorage().getItem(this.CACHE_KEY);
             if (savedCache) {
                 const {data, timestamp} = JSON.parse(savedCache);
                 if (Date.now() - timestamp < this.CACHE_EXPIRY) {
@@ -75,7 +79,7 @@ export class ImageCache {
 
     static clear(): void {
         this.imageCache.clear();
-        localStorage.removeItem(this.CACHE_KEY);
+        this.getStorage().removeItem(this.CACHE_KEY);
     }
 
     private static getTotalCacheSize(): number {
@@ -119,7 +123,7 @@ export class ImageCache {
 
         try {
             const data = Object.fromEntries(this.imageCache);
-            localStorage.setItem(this.CACHE_KEY, JSON.stringify({
+            this.getStorage().setItem(this.CACHE_KEY, JSON.stringify({
                 data,
                 timestamp: Date.now()
             }));

@@ -137,7 +137,7 @@ export class ImagePreviewModal extends Modal {
 		try {
 			const urlObj = new URL(url);
 			return decodeURIComponent(urlObj.pathname).substring(1); // 去掉开头的 /
-		} catch (e) {
+		} catch {
 			return url;
 		}
 	}
