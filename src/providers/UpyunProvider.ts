@@ -1,12 +1,21 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { UpyunSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { createHmac } from 'crypto';
-import { createHash } from 'crypto';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
-import { normalizePath } from './shared/path';
+import {
+    buildObjectKey,
+    encodeObjectKeyForUrl,
+    normalizeBaseUrl,
+    normalizePath,
+} from './shared/path';
+import {
+    createUpyunAuthorization,
+    createUpyunContentMd5,
+    isUpyunDirectory,
+    parseUpyunListPage,
+} from './shared/upyun';
 
 export class UpyunProvider implements IOssProvider {
     name = 'upyun';
@@ -14,6 +23,96 @@ export class UpyunProvider implements IOssProvider {
 
     constructor(settings: UpyunSettings) {
         this.settings = settings;
+    }
+
+    private getApiBaseUrl(): string {
+        return `https://v0.api.upyun.com/${this.settings.bucket}`;
+    }
+
+    private getSignedUri(path: string): string {
+        const normalized = normalizePath(path);
+        return normalized
+            ? `/${this.settings.bucket}/${encodeObjectKeyForUrl(normalized)}`
+            : `/${this.settings.bucket}`;
+    }
+
+    private getRequestUrl(path: string): string {
+        const normalized = normalizePath(path);
+        return normalized
+            ? `${this.getApiBaseUrl()}/${encodeObjectKeyForUrl(normalized)}`
+            : this.getApiBaseUrl();
+    }
+
+    private getPublicBaseUrl(): string {
+        if (this.settings.url) {
+            return normalizeBaseUrl(this.settings.url);
+        }
+        return `https://${this.settings.bucket}.test.upcdn.net`;
+    }
+
+    private buildPublicUrl(key: string): string {
+        return `${this.getPublicBaseUrl()}/${encodeObjectKeyForUrl(key)}${this.settings.suffix || ''}`;
+    }
+
+    private async listDirectory(directory: string, filterPrefix: string): Promise<OssImage[]> {
+        const images: OssImage[] = [];
+        let iter = '';
+
+        while (true) {
+            const date = new Date().toUTCString();
+            const signedUri = this.getSignedUri(directory);
+            const authorization = createUpyunAuthorization(
+                this.settings.operator,
+                this.settings.password,
+                'GET',
+                signedUri,
+                date
+            );
+
+            const response = await requestUrl({
+                url: this.getRequestUrl(directory),
+                method: 'GET',
+                headers: {
+                    'Authorization': authorization,
+                    'Date': date,
+                    'Accept': 'application/json',
+                    'x-list-limit': '1000',
+                    ...(iter ? { 'x-list-iter': iter } : {}),
+                },
+            });
+
+            if (response.status !== 200) {
+                throw new Error(`List failed with status: ${response.status}`);
+            }
+
+            const page = parseUpyunListPage(response.json, response.headers['x-list-iter']);
+            for (const entry of page.entries) {
+                const entryPath = directory ? `${directory}/${entry.name}` : entry.name;
+                if (!entry.name) {
+                    continue;
+                }
+                if (isUpyunDirectory(entry.type)) {
+                    images.push(...await this.listDirectory(entryPath, filterPrefix));
+                    continue;
+                }
+                if (filterPrefix && !entryPath.startsWith(filterPrefix)) {
+                    continue;
+                }
+                if (isImageFile(entryPath)) {
+                    images.push({
+                        key: entryPath,
+                        url: this.buildPublicUrl(entryPath),
+                        lastModified: entry.lastModified,
+                        size: entry.size,
+                    });
+                }
+            }
+
+            if (!page.iter || page.iter === iter) {
+                return images;
+            }
+            iter = page.iter;
+        }
     }
 
     async upload(
@@ -28,39 +127,39 @@ export class UpyunProvider implements IOssProvider {
         // Simulate progress since requestUrl doesn't support it
         simulateProgress(onProgress, file.size);
 
-        // Normalize path prefix - remove leading and trailing slashes, then add one leading slash
-        const normalizedPath = normalizePath(this.settings.path);
-
-        // Build URI - always start with slash
-        const uri = normalizedPath ? `/${normalizedPath}/${path}` : `/${path}`;
+        const objectKey = buildObjectKey(this.settings.path, path);
+        const arrayBuffer = await file.arrayBuffer();
+        const contentMd5 = createUpyunContentMd5(arrayBuffer);
+        const signedUri = this.getSignedUri(objectKey);
 
         // Generate authorization header
         const date = new Date().toUTCString();
-        const passwordMd5 = createHash('md5').update(this.settings.password).digest('hex');
-        const signStr = `PUT${uri}${date}`;
-        const signature = createHmac('sha1', passwordMd5).update(signStr).digest('base64');
-        const authorization = `UPYUN ${this.settings.operator}:${signature}`;
-
-        const url = `https://v0.api.upyun.com/${this.settings.bucket}${uri}`;
+        const authorization = createUpyunAuthorization(
+            this.settings.operator,
+            this.settings.password,
+            'PUT',
+            signedUri,
+            date,
+            contentMd5
+        );
 
         const requestParams: RequestUrlParam = {
-            url: url,
+            url: this.getRequestUrl(objectKey),
             method: 'PUT',
             headers: {
                 'Authorization': authorization,
                 'Date': date,
-                'Content-Type': file.type || 'application/octet-stream'
+                'Content-Type': file.type || 'application/octet-stream',
+                'Content-MD5': contentMd5,
             },
-            body: await file.arrayBuffer()
+            body: arrayBuffer,
         };
 
         try {
             const response = await requestUrl(requestParams);
 
-            if (response.status === 200) {
-                const baseUrl = this.settings.url || `https://${this.settings.bucket}.test.upcdn.net`;
-                const finalUrl = `${baseUrl}${uri}${this.settings.suffix || ''}`;
-                return finalUrl;
+            if (response.status >= 200 && response.status < 300) {
+                return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
@@ -77,47 +176,11 @@ export class UpyunProvider implements IOssProvider {
         }
 
         try {
-            const uri = prefix ? `/?prefix=${encodeURIComponent(prefix)}` : '/';
-            const date = new Date().toUTCString();
-            const passwordMd5 = createHash('md5').update(this.settings.password).digest('hex');
-            const signStr = `GET${uri}${date}`;
-            const signature = createHmac('sha1', passwordMd5).update(signStr).digest('base64');
-            const authorization = `UPYUN ${this.settings.operator}:${signature}`;
-
-            const url = `https://v0.api.upyun.com/${this.settings.bucket}${uri}`;
-
-            const response = await requestUrl({
-                url: url,
-                method: 'GET',
-                headers: {
-                    'Authorization': authorization,
-                    'Date': date
-                }
-            });
-
-            if (response.status === 200) {
-                const data = response.json;
-                const images: OssImage[] = [];
-
-                if (data.files) {
-                    const baseUrl = this.settings.url || `https://${this.settings.bucket}.test.upcdn.net`;
-
-                    for (const item of data.files) {
-                        // Filter for image files and exclude directories
-                        if (!item.type && isImageFile(item.name)) {
-                            const filePath = prefix ? `${prefix}/${item.name}` : item.name;
-                            images.push({
-                                key: filePath,
-                                url: `${baseUrl}/${filePath}${this.settings.suffix || ''}`,
-                                lastModified: new Date(item.last_update * 1000), // Upyun uses timestamp
-                                size: item.size
-                            });
-                        }
-                    }
-                }
-
-                return images;
-            }
+            const normalizedPrefix = normalizePath(prefix);
+            const rootDirectory = normalizedPrefix.includes('/')
+                ? normalizedPrefix.split('/').slice(0, -1).join('/')
+                : '';
+            return await this.listDirectory(rootDirectory, normalizedPrefix);
         } catch (error) {
             console.error('Failed to list Upyun images:', error);
         }
@@ -130,25 +193,26 @@ export class UpyunProvider implements IOssProvider {
         }
 
         try {
-            const uri = `/${key}`;
+            const signedUri = this.getSignedUri(key);
             const date = new Date().toUTCString();
-            const passwordMd5 = createHash('md5').update(this.settings.password).digest('hex');
-            const signStr = `DELETE${uri}${date}`;
-            const signature = createHmac('sha1', passwordMd5).update(signStr).digest('base64');
-            const authorization = `UPYUN ${this.settings.operator}:${signature}`;
-
-            const url = `https://v0.api.upyun.com/${this.settings.bucket}${uri}`;
+            const authorization = createUpyunAuthorization(
+                this.settings.operator,
+                this.settings.password,
+                'DELETE',
+                signedUri,
+                date
+            );
 
             const response = await requestUrl({
-                url: url,
+                url: this.getRequestUrl(key),
                 method: 'DELETE',
                 headers: {
                     'Authorization': authorization,
-                    'Date': date
-                }
+                    'Date': date,
+                },
             });
 
-            if (response.status !== 200) {
+            if (response.status < 200 || response.status >= 300) {
                 throw new Error(`Delete failed with status: ${response.status}`);
             }
         } catch (error) {

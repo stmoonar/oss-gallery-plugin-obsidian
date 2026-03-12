@@ -1,12 +1,12 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { TencentSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { createHmac } from 'crypto';
-import { createHash } from 'crypto';
 import { simulateProgress } from './shared/progress';
-import { buildObjectKey } from './shared/path';
-import { parseS3ListObjectsXml } from './shared/s3xml';
+import { buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import { parseS3ListObjectsPage } from './shared/s3xml';
+import { isImageFile } from './shared/image';
+import { createTencentCosAuthorization } from './shared/tencentcos';
 
 export class TencentProvider implements IOssProvider {
     name = 'tencent';
@@ -14,6 +14,40 @@ export class TencentProvider implements IOssProvider {
 
     constructor(settings: TencentSettings) {
         this.settings = settings;
+    }
+
+    private getHost(): string {
+        return `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+    }
+
+    private getObjectPath(objectKey: string): string {
+        return `/${encodeObjectKeyForUrl(objectKey)}`;
+    }
+
+    private buildPublicUrl(objectKey: string): string {
+        const customUrl = this.settings.customUrl
+            ? normalizeBaseUrl(this.settings.customUrl)
+            : '';
+        if (customUrl) {
+            return `${customUrl}/${encodeObjectKeyForUrl(objectKey)}`;
+        }
+        return `https://${this.getHost()}/${encodeObjectKeyForUrl(objectKey)}`;
+    }
+
+    private generateAuthorization(
+        method: string,
+        pathname: string,
+        query?: Record<string, string | number | boolean | undefined>,
+        headers?: Record<string, string | number | undefined>
+    ): string {
+        return createTencentCosAuthorization({
+            secretId: this.settings.secretId,
+            secretKey: this.settings.secretKey,
+            method,
+            pathname,
+            query,
+            headers,
+        });
     }
 
     async upload(
@@ -30,25 +64,29 @@ export class TencentProvider implements IOssProvider {
 
         const objectKey = buildObjectKey(this.settings.path, path);
         const host = this.getHost();
-        const url = `https://${host}/${objectKey}`;
+        const objectPath = this.getObjectPath(objectKey);
+        const url = `https://${host}${objectPath}`;
+        const contentType = file.type || 'application/octet-stream';
 
-        // Generate authorization header for Tencent COS
-        const authorization = await this.generateAuthorization('PUT', `/${objectKey}`, file.type || 'application/octet-stream');
+        const authorization = this.generateAuthorization('PUT', objectPath, undefined, {
+            host,
+            'content-type': contentType,
+        });
 
         const requestParams: RequestUrlParam = {
             url: url,
             method: 'PUT',
             headers: {
                 'Authorization': authorization,
-                'Content-Type': file.type || 'application/octet-stream'
+                'Content-Type': contentType,
             },
-            body: await file.arrayBuffer()
+            body: await file.arrayBuffer(),
         };
 
         try {
             const response = await requestUrl(requestParams);
 
-            if (response.status === 200) {
+            if (response.status >= 200 && response.status < 300) {
                 return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
@@ -66,21 +104,51 @@ export class TencentProvider implements IOssProvider {
         }
 
         try {
-            const query = prefix ? `?prefix=${encodeURIComponent(prefix)}` : '';
-            const requestPath = `/${query}`;
-            const authorization = await this.generateAuthorization('GET', requestPath);
             const host = this.getHost();
+            const images: OssImage[] = [];
+            let marker = '';
 
-            const response = await requestUrl({
-                url: `https://${host}/${query}`,
-                method: 'GET',
-                headers: {
-                    'Authorization': authorization
+            while (true) {
+                const query: Record<string, string> = { 'max-keys': '1000' };
+                if (prefix) {
+                    query.prefix = prefix;
                 }
-            });
+                if (marker) {
+                    query.marker = marker;
+                }
 
-            if (response.status === 200) {
-                return this.parseListResponse(response.text);
+                const authorization = this.generateAuthorization('GET', '/', query, { host });
+                const queryString = new URLSearchParams(query).toString();
+                const response = await requestUrl({
+                    url: `https://${host}/?${queryString}`,
+                    method: 'GET',
+                    headers: {
+                        'Authorization': authorization,
+                    },
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`List failed with status: ${response.status}`);
+                }
+
+                const page = parseS3ListObjectsPage(response.text);
+                images.push(
+                    ...page.objects
+                        .filter((item) => isImageFile(item.key))
+                        .map((item) => ({
+                            key: item.key,
+                            url: this.buildPublicUrl(item.key),
+                            lastModified: item.lastModified,
+                            size: item.size,
+                        }))
+                );
+
+                const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
+                if (!page.isTruncated || !nextMarker || nextMarker === marker) {
+                    return images;
+                }
+
+                marker = nextMarker;
             }
         } catch (error) {
             console.error('Failed to list Tencent COS images:', error);
@@ -94,90 +162,25 @@ export class TencentProvider implements IOssProvider {
         }
 
         try {
-            const objectKey = `/${key}`;
-            const authorization = await this.generateAuthorization('DELETE', objectKey);
-
-            const host = `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
+            const host = this.getHost();
+            const objectPath = this.getObjectPath(key);
+            const authorization = this.generateAuthorization('DELETE', objectPath, undefined, { host });
 
             const response = await requestUrl({
-                url: `https://${host}/${key}`,
+                url: `https://${host}${objectPath}`,
                 method: 'DELETE',
                 headers: {
-                    'Authorization': authorization
-                }
+                    'Authorization': authorization,
+                },
             });
 
-            if (response.status !== 204) {
+            if (response.status < 200 || response.status >= 300) {
                 throw new Error(`Delete failed with status: ${response.status}`);
             }
         } catch (error) {
             console.error('Failed to delete Tencent COS image:', error);
             throw new Error(`Delete failed: ${error.message}`);
         }
-    }
-
-    private getHost(): string {
-        return `${this.settings.bucket}.cos.${this.settings.region}.myqcloud.com`;
-    }
-
-    private buildPublicUrl(objectKey: string): string {
-        const customUrl = this.settings.customUrl?.replace(/\/+$/, '');
-        if (customUrl) {
-            return `${customUrl}/${objectKey}`;
-        }
-        return `https://${this.getHost()}/${objectKey}`;
-    }
-
-    private parseListResponse(xml: string): OssImage[] {
-        return parseS3ListObjectsXml(xml, (key) => this.buildPublicUrl(key));
-    }
-
-    private async generateAuthorization(method: string, pathname: string, contentType?: string): Promise<string> {
-        const now = new Date();
-        const timestamp = Math.floor(now.getTime() / 1000);
-        const date = now.toISOString().substr(0, 10);
-
-        // Create key time
-        const keyTime = `${timestamp};${timestamp + 3600}`;
-
-        // Create sign key
-        const signKey = createHmac('sha1', this.settings.secretKey)
-            .update(keyTime)
-            .digest('hex');
-
-        // Create http string
-        const httpString = [
-            method,
-            pathname,
-            '',
-            contentType || '',
-            ''
-        ].join('\n');
-
-        // Create string to sign
-        const httpStringSha256 = createHash('sha256').update(httpString).digest('hex');
-        const stringToSign = [
-            'sha256',
-            keyTime,
-            httpStringSha256,
-            ''
-        ].join('\n');
-
-        // Create signature
-        const signature = createHmac('sha1', signKey)
-            .update(stringToSign)
-            .digest('hex');
-
-        // Create authorization header
-        const authorization = [
-            `q-sign-algorithm=sha1`,
-            `q-ak=${this.settings.secretId}`,
-            `q-sign-time=${keyTime}`,
-            `q-key-time=${keyTime}`,
-            `q-header-list=&q-url-param-list=&q-signature=${signature}`
-        ].join('&');
-
-        return `QCLOUD ${authorization}`;
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {

@@ -1,13 +1,16 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { QiniuSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { createHmac } from 'crypto';
-import * as Base64 from 'js-base64';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
-import { buildObjectKey } from './shared/path';
+import { buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import {
+    createQiniuAccessTokenV2,
+    createQiniuUploadToken,
+    encodeQiniuEntry,
+} from './shared/qiniu';
 
 export class QiniuProvider implements IOssProvider {
     name = 'qiniu';
@@ -15,6 +18,52 @@ export class QiniuProvider implements IOssProvider {
 
     constructor(settings: QiniuSettings) {
         this.settings = settings;
+    }
+
+    private getUploadUrl(): string {
+        const normalizedArea = this.settings.area.trim();
+        const knownHosts: Record<string, string> = {
+            z0: 'https://up-z0.qiniup.com',
+            z1: 'https://up-z1.qiniup.com',
+            z2: 'https://up-z2.qiniup.com',
+            na0: 'https://up-na0.qiniup.com',
+            as0: 'https://up-as0.qiniup.com',
+        };
+
+        return knownHosts[normalizedArea] || `https://up-${normalizedArea}.qiniup.com`;
+    }
+
+    private getPublicBaseUrl(): string {
+        if (this.settings.url) {
+            return normalizeBaseUrl(this.settings.url);
+        }
+        return `https://${this.settings.bucket}.qiniudn.com`;
+    }
+
+    private buildPublicUrl(key: string): string {
+        return `${this.getPublicBaseUrl()}/${encodeObjectKeyForUrl(key)}`;
+    }
+
+    private createManagementAuthorization(
+        host: string,
+        method: string,
+        path: string,
+        queryString?: string,
+        contentType?: string,
+        body?: string
+    ): string {
+        const token = createQiniuAccessTokenV2({
+            accessKey: this.settings.accessKey,
+            secretKey: this.settings.secretKey,
+            method,
+            host,
+            path,
+            queryString,
+            contentType,
+            body,
+        });
+
+        return `Qiniu ${token}`;
     }
 
     async upload(
@@ -33,13 +82,11 @@ export class QiniuProvider implements IOssProvider {
         const key = buildObjectKey(this.settings.path, path);
 
         // Generate upload token
-        const token = this.generateUploadToken(key);
-
-        // Determine upload URL based on area
-        let uploadUrl = 'https://upload.qiniup.com';
-        if (this.settings.area === 'z0') uploadUrl = 'https://upload-z1.qiniup.com';
-        else if (this.settings.area === 'na0') uploadUrl = 'https://upload-na0.qiniup.com';
-        else if (this.settings.area === 'as0') uploadUrl = 'https://upload-as0.qiniup.com';
+        const token = createQiniuUploadToken(this.settings.accessKey, this.settings.secretKey, {
+            scope: `${this.settings.bucket}:${key}`,
+            deadline: Math.floor(Date.now() / 1000) + 3600,
+        });
+        const uploadUrl = this.getUploadUrl();
 
         // Create form data
         const boundary = generateBoundary();
@@ -64,9 +111,7 @@ export class QiniuProvider implements IOssProvider {
             if (response.status === 200) {
                 const data = response.json;
                 if (data.hash) {
-                    // Return custom URL if configured
-                    const baseUrl = this.settings.url || `https://${this.settings.bucket}.qiniudn.com`;
-                    return `${baseUrl}/${key}`;
+                    return this.buildPublicUrl(key);
                 } else {
                     throw new Error(data.error || 'Upload failed');
                 }
@@ -86,49 +131,64 @@ export class QiniuProvider implements IOssProvider {
         }
 
         try {
-            // Qiniu requires different API for listing files
-            const url = 'https://rsf.qbox.me/list';
-            const listPrefix = prefix || '';
+            const host = 'rsf.qiniuapi.com';
+            const images: OssImage[] = [];
+            let marker = '';
 
-            const body = JSON.stringify({
-                bucket: this.settings.bucket,
-                prefix: listPrefix,
-                limit: 1000
-            });
+            while (true) {
+                const query = new URLSearchParams({
+                    bucket: this.settings.bucket,
+                    limit: '1000',
+                });
+                if (prefix) {
+                    query.append('prefix', prefix);
+                }
+                if (marker) {
+                    query.append('marker', marker);
+                }
 
-            const authorization = this.generateAuthHeader('POST', '/list', body, 'rsf.qbox.me', 'application/json');
+                const queryString = query.toString();
+                const authorization = this.createManagementAuthorization(
+                    host,
+                    'POST',
+                    '/list',
+                    queryString
+                );
 
-            const response = await requestUrl({
-                url: url,
-                method: 'POST',
-                headers: {
-                    'Authorization': authorization,
-                    'Content-Type': 'application/json'
-                },
-                body: body
-            });
+                const response = await requestUrl({
+                    url: `https://${host}/list?${queryString}`,
+                    method: 'POST',
+                    headers: {
+                        'Authorization': authorization,
+                    },
+                });
 
-            if (response.status === 200) {
+                if (response.status !== 200) {
+                    throw new Error(`List failed with status: ${response.status}`);
+                }
+
                 const data = response.json;
-                const images: OssImage[] = [];
-
-                if (data.items) {
-                    const baseUrl = this.settings.url || `https://${this.settings.bucket}.qiniudn.com`;
-
-                    for (const item of data.items) {
-                        // Filter for image files
-                        if (isImageFile(item.key)) {
-                            images.push({
-                                key: item.key,
-                                url: `${baseUrl}/${item.key}`,
-                                lastModified: new Date(item.putTime / 10000), // Qiniu timestamp is in 100ns
-                                size: item.fsize
-                            });
-                        }
+                for (const item of data?.items || []) {
+                    if (isImageFile(item.key)) {
+                        images.push({
+                            key: item.key,
+                            url: this.buildPublicUrl(item.key),
+                            lastModified: item.putTime ? new Date(item.putTime / 10000) : undefined,
+                            size: item.fsize || 0,
+                        });
                     }
                 }
 
-                return images;
+                const nextMarker = typeof data?.marker === 'string'
+                    ? data.marker
+                    : typeof data?.nextMarker === 'string'
+                        ? data.nextMarker
+                        : '';
+                if (!nextMarker || nextMarker === marker) {
+                    return images;
+                }
+
+                marker = nextMarker;
             }
         } catch (error) {
             console.error('Failed to list Qiniu images:', error);
@@ -142,19 +202,17 @@ export class QiniuProvider implements IOssProvider {
         }
 
         try {
-            // Qiniu delete API
-            const encodedEntry = Base64.encode(`${this.settings.bucket}:${key}`);
-            const url = `https://rs.qbox.me/delete/${encodedEntry}`;
-
-            const authorization = this.generateAuthHeader('POST', `/delete/${encodedEntry}`, '', 'rs.qbox.me', 'application/x-www-form-urlencoded');
+            const encodedEntry = encodeQiniuEntry(this.settings.bucket, key);
+            const host = 'rs.qiniuapi.com';
+            const path = `/delete/${encodedEntry}`;
+            const authorization = this.createManagementAuthorization(host, 'POST', path);
 
             const response = await requestUrl({
-                url: url,
+                url: `https://${host}${path}`,
                 method: 'POST',
                 headers: {
                     'Authorization': authorization,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
+                },
             });
 
             if (response.status !== 200) {
@@ -164,30 +222,6 @@ export class QiniuProvider implements IOssProvider {
             console.error('Failed to delete Qiniu image:', error);
             throw new Error(`Delete failed: ${error.message}`);
         }
-    }
-
-    private generateUploadToken(key: string): string {
-        const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour expiry
-        const policy = {
-            scope: `${this.settings.bucket}:${key}`,
-            deadline: deadline
-        };
-
-        const encodedPolicy = Base64.encode(JSON.stringify(policy));
-        const signature = createHmac('sha1', this.settings.secretKey)
-            .update(encodedPolicy)
-            .digest('base64');
-
-        return `${this.settings.accessKey}:${signature}:${encodedPolicy}`;
-    }
-
-    private generateAuthHeader(method: string, path: string, body: string, host: string, contentType: string): string {
-        const signingStr = `${method} ${path}\nHost: ${host}\nContent-Type: ${contentType}\n\n${body}`;
-        const signature = createHmac('sha1', this.settings.secretKey)
-            .update(signingStr)
-            .digest('base64');
-
-        return `QBox ${this.settings.accessKey}:${signature}`;
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {

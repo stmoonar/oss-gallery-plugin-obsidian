@@ -1,11 +1,17 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { AliyunSettings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
+import { requestUrl, RequestUrlParam, RequestUrlResponse, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import { simulateProgress } from './shared/progress';
-import { buildObjectKey, normalizeBaseUrl } from './shared/path';
-import { parseS3ListObjectsXml } from './shared/s3xml';
+import {
+    buildObjectKey,
+    encodeObjectKeyForUrl,
+    normalizeBaseUrl,
+    normalizeEndpointHost,
+} from './shared/path';
+import { parseS3ListObjectsPage } from './shared/s3xml';
+import { isImageFile } from './shared/image';
 
 export class AliyunProvider implements IOssProvider {
     name = 'aliyun';
@@ -13,6 +19,71 @@ export class AliyunProvider implements IOssProvider {
 
     constructor(settings: AliyunSettings) {
         this.settings = settings;
+    }
+
+    private getDefaultHost(): string {
+        return `${this.settings.bucket}.${this.settings.area}.aliyuncs.com`;
+    }
+
+    private getDefaultApiBaseUrl(): string {
+        return `https://${this.getDefaultHost()}`;
+    }
+
+    private getApiBaseUrls(): string[] {
+        const customHost = this.settings.customUrl
+            ? normalizeEndpointHost(this.settings.customUrl)
+            : '';
+        const customBaseUrl = customHost ? `https://${customHost}` : '';
+        if (customBaseUrl && customBaseUrl !== this.getDefaultApiBaseUrl()) {
+            return [this.getDefaultApiBaseUrl(), customBaseUrl];
+        }
+        return [this.getDefaultApiBaseUrl()];
+    }
+
+    private async requestApi(buildRequest: (baseUrl: string) => RequestUrlParam): Promise<RequestUrlResponse> {
+        let lastError: unknown;
+
+        for (const baseUrl of this.getApiBaseUrls()) {
+            try {
+                return await requestUrl(buildRequest(baseUrl));
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        throw lastError instanceof Error ? lastError : new Error('Aliyun OSS request failed');
+    }
+
+    private getPublicBaseUrl(): string {
+        if (this.settings.customUrl) {
+            return normalizeBaseUrl(this.settings.customUrl);
+        }
+        return `https://${this.getDefaultHost()}`;
+    }
+
+    private buildPublicUrl(objectKey: string): string {
+        return `${this.getPublicBaseUrl()}/${encodeObjectKeyForUrl(objectKey)}`;
+    }
+
+    private createAuthorization(
+        method: 'PUT' | 'GET' | 'DELETE',
+        date: string,
+        objectKey = '',
+        contentType = ''
+    ): string {
+        const canonicalString = [
+            method,
+            '',
+            contentType,
+            date,
+            `/${this.settings.bucket}/${objectKey}`,
+        ].join('\n');
+
+        const signature = createHmac('sha1', this.settings.accessKeySecret)
+            .update(canonicalString, 'utf8')
+            .digest('base64');
+
+        return `OSS ${this.settings.accessKeyId}:${signature}`;
     }
 
     async upload(
@@ -29,52 +100,28 @@ export class AliyunProvider implements IOssProvider {
 
         // Build object key
         const objectKey = buildObjectKey(this.settings.path, path);
-        // Always use the OSS API endpoint for upload requests
-        const apiEndpoint = `${this.settings.bucket}.${this.settings.area}.aliyuncs.com`;
-        const url = `https://${apiEndpoint}/${objectKey}`;
+        const encodedObjectKey = encodeObjectKeyForUrl(objectKey);
 
         // Generate authorization header
         const date = new Date().toUTCString();
         const contentType = file.type || 'application/octet-stream';
-
-        // Build canonical string for OSS signature
-        const canonicalString = [
-            'PUT',
-            '', // Content-MD5 (empty)
-            contentType,
-            date,
-            `/${this.settings.bucket}/${objectKey}`
-        ].join('\n');
-
-        // Generate signature
-        const signature = createHmac('sha1', this.settings.accessKeySecret)
-            .update(canonicalString, 'utf8')
-            .digest('base64');
-
-        const authorization = `OSS ${this.settings.accessKeyId}:${signature}`;
-
-        const requestParams: RequestUrlParam = {
-            url: url,
-            method: 'PUT',
-            headers: {
-                'Authorization': authorization,
-                'Date': date,
-                'Content-Type': contentType
-            },
-            body: await file.arrayBuffer()
-        };
+        const authorization = this.createAuthorization('PUT', date, objectKey, contentType);
+        const body = await file.arrayBuffer();
 
         try {
-            const response = await requestUrl(requestParams);
+            const response = await this.requestApi((baseUrl) => ({
+                url: `${baseUrl}/${encodedObjectKey}`,
+                method: 'PUT',
+                headers: {
+                    'Authorization': authorization,
+                    'Date': date,
+                    'Content-Type': contentType,
+                },
+                body,
+            }));
 
             if (response.status === 200) {
-                // Return custom URL if configured, otherwise use default API endpoint URL
-                if (this.settings.customUrl) {
-                    const customBase = this.settings.customUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-                    return `https://${customBase}/${objectKey}`;
-                } else {
-                    return url;
-                }
+                return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
@@ -91,42 +138,52 @@ export class AliyunProvider implements IOssProvider {
         }
 
         try {
-            const date = new Date().toUTCString();
-            const prefixQuery = prefix ? `?prefix=${prefix}` : '';
-            const canonicalString = [
-                'GET',
-                '', // Content-MD5
-                '', // Content-Type
-                date,
-                `/${this.settings.bucket}/`
-            ].join('\n');
+            const images: OssImage[] = [];
+            let marker = '';
 
-            const signature = createHmac('sha1', this.settings.accessKeySecret)
-                .update(canonicalString, 'utf8')
-                .digest('base64');
-
-            const authorization = `OSS ${this.settings.accessKeyId}:${signature}`;
-            // Always use OSS API endpoint for API requests
-            const apiEndpoint = `${this.settings.bucket}.${this.settings.area}.aliyuncs.com`;
-            // Use custom URL for public access URLs if configured
-            const publicEndpoint = this.settings.customUrl
-                ? this.settings.customUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '')
-                : apiEndpoint;
-
-            const response = await requestUrl({
-                url: `https://${apiEndpoint}/${prefixQuery}`,
-                method: 'GET',
-                headers: {
-                    'Authorization': authorization,
-                    'Date': date
+            while (true) {
+                const date = new Date().toUTCString();
+                const authorization = this.createAuthorization('GET', date);
+                const query = new URLSearchParams({ 'max-keys': '1000' });
+                if (prefix) {
+                    query.append('prefix', prefix);
                 }
-            });
+                if (marker) {
+                    query.append('marker', marker);
+                }
 
-            if (response.status === 200) {
-                return parseS3ListObjectsXml(
-                    response.text,
-                    (key) => `https://${publicEndpoint}/${key}`
+                let response: RequestUrlResponse;
+                try {
+                    response = await this.requestApi((baseUrl) => ({
+                        url: `${baseUrl}/?${query.toString()}`,
+                        method: 'GET',
+                        headers: {
+                            'Authorization': authorization,
+                            'Date': date,
+                        },
+                    }));
+                } catch (error) {
+                    throw error instanceof Error ? error : new Error(String(error));
+                }
+
+                const page = parseS3ListObjectsPage(response.text);
+                images.push(
+                    ...page.objects
+                        .filter((item) => isImageFile(item.key))
+                        .map((item) => ({
+                            key: item.key,
+                            url: this.buildPublicUrl(item.key),
+                            lastModified: item.lastModified,
+                            size: item.size,
+                        }))
                 );
+
+                const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
+                if (!page.isTruncated || !nextMarker || nextMarker === marker) {
+                    return images;
+                }
+
+                marker = nextMarker;
             }
         } catch (error) {
             console.error('Failed to list Aliyun OSS images:', error);
@@ -141,30 +198,17 @@ export class AliyunProvider implements IOssProvider {
 
         try {
             const date = new Date().toUTCString();
-            const canonicalString = [
-                'DELETE',
-                '', // Content-MD5
-                '', // Content-Type
-                date,
-                `/${this.settings.bucket}/${key}`
-            ].join('\n');
+            const authorization = this.createAuthorization('DELETE', date, key);
+            const encodedKey = encodeObjectKeyForUrl(key);
 
-            const signature = createHmac('sha1', this.settings.accessKeySecret)
-                .update(canonicalString, 'utf8')
-                .digest('base64');
-
-            const authorization = `OSS ${this.settings.accessKeyId}:${signature}`;
-            // Always use OSS API endpoint for delete requests
-            const apiEndpoint = `${this.settings.bucket}.${this.settings.area}.aliyuncs.com`;
-
-            const response = await requestUrl({
-                url: `https://${apiEndpoint}/${key}`,
+            const response = await this.requestApi((baseUrl) => ({
+                url: `${baseUrl}/${encodedKey}`,
                 method: 'DELETE',
                 headers: {
                     'Authorization': authorization,
-                    'Date': date
-                }
-            });
+                    'Date': date,
+                },
+            }));
 
             if (response.status !== 204) {
                 throw new Error(`Delete failed with status: ${response.status}`);
