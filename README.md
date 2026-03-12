@@ -34,11 +34,11 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 - Full-screen image preview
 - Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
 
-![upload](./upload.gif)
+![upload](./docs/assets/upload.gif)
 
 ---
 
-![delete](./delete.gif)
+![delete](./docs/assets/delete.gif)
 
 ## Settings
 
@@ -157,4 +157,4 @@ Note: Imgur uploads are supported, but gallery listing and deletion are not.
 
 For MinIO public access, enable anonymous or otherwise publicly accessible object URLs in your bucket policy.
 
-![Settings](./minio-bucket-setting.png)
+![Settings](./docs/assets/minio-bucket-setting.png)

@@ -34,11 +34,11 @@
 - 支持图片全屏预览
 - 图库包含懒加载、分批渲染、回到顶部和后台刷新
 
-![upload](./upload.gif)
+![upload](./docs/assets/upload.gif)
 
 ---
 
-![delete](./delete.gif)
+![delete](./docs/assets/delete.gif)
 
 ## 设置
 
@@ -157,4 +157,4 @@
 
 如果要让 MinIO 返回的链接可直接访问，需要在 Bucket 策略中开放匿名访问或提供公开可访问的对象 URL。
 
-![Settings](./minio-bucket-setting.png)
+![Settings](./docs/assets/minio-bucket-setting.png)
