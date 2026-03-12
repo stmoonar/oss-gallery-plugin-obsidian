@@ -7,7 +7,7 @@ export class ConfirmModal extends Modal {
     constructor(app: App, onConfirm: () => void) {
         super(app);
         this.onConfirm = onConfirm;
-        this.containerEl.addClass('minio-confirm-modal');
+        this.containerEl.addClass('oss-gallery-confirm-modal');
         this.modalEl.addClass('no-shadow-modal');
     }
 
@@ -17,12 +17,12 @@ export class ConfirmModal extends Modal {
         
         contentEl.createEl("h3", {
             text: t('Delete'),
-            cls: 'minio-confirm-title'
+            cls: 'oss-gallery-confirm-title'
         });
         
         contentEl.createEl("p", {
             text: t('Confirm delete?'),
-            cls: 'minio-confirm-message'
+            cls: 'oss-gallery-confirm-message'
         });
 
         new Setting(contentEl)

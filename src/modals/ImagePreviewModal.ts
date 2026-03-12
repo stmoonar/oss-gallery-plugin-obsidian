@@ -39,7 +39,7 @@ export class ImagePreviewModal extends Modal {
 	private setupModalStyle(): void {
 		requestAnimationFrame(() => {
 			const modalEl = this.modalEl;
-			modalEl.addClass("minio-image-preview-modal-shell");
+			modalEl.addClass("oss-gallery-image-preview-modal-shell");
 
 			// 移除默认关闭按钮
 			const closeBtn = modalEl.querySelector(
@@ -52,11 +52,11 @@ export class ImagePreviewModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.addClass("minio-image-preview-modal-content");
+		contentEl.addClass("oss-gallery-image-preview-modal-content");
 
 		// 创建主容器
 		this.container = contentEl.createDiv({
-			cls: "minio-image-preview-container",
+			cls: "oss-gallery-image-preview-container",
 		});
 
 		// 创建控制栏
@@ -81,12 +81,12 @@ export class ImagePreviewModal extends Modal {
 	 */
 	private createControlBar(): void {
 		const controlBar = this.container.createEl("div", {
-			cls: "minio-preview-control-bar",
+			cls: "oss-gallery-preview-control-bar",
 		});
 
 		// 主题切换按钮
 		const themeToggleBtn = controlBar.createEl("button", {
-			cls: "minio-preview-toggle-bg-btn",
+			cls: "oss-gallery-preview-toggle-bg-btn",
 		});
 		setIcon(themeToggleBtn, this.currentTheme === "dark" ? "sun" : "moon");
 		themeToggleBtn.title = "Toggle background";
@@ -102,7 +102,7 @@ export class ImagePreviewModal extends Modal {
 
 		// 路径显示
 		this.pathElement = controlBar.createEl("div", {
-			cls: "minio-preview-path",
+			cls: "oss-gallery-preview-path",
 			text: this.formatUrlToPath(this.imageUrl),
 		});
 
@@ -124,10 +124,10 @@ export class ImagePreviewModal extends Modal {
 	 */
 	private createPlaceholder(): void {
 		this.placeholderElement = this.container.createEl("div", {
-			cls: "minio-preview-placeholder",
+			cls: "oss-gallery-preview-placeholder",
 		});
 		const iconEl = this.placeholderElement.createDiv({
-			cls: "minio-preview-placeholder-icon",
+			cls: "oss-gallery-preview-placeholder-icon",
 		});
 		setIcon(iconEl, "image");
 		this.setHidden(this.placeholderElement, true);
@@ -138,7 +138,7 @@ export class ImagePreviewModal extends Modal {
 	 */
 	private createImageElement(): void {
 		this.imgElement = this.container.createEl("img", {
-			cls: "minio-image-preview",
+			cls: "oss-gallery-image-preview",
 			attr: {
 				// src: this.imageUrl, // 移除初始 src，由 updateImage 统一处理
 				alt: "Preview",
@@ -209,7 +209,7 @@ export class ImagePreviewModal extends Modal {
 
 		// 创建错误提示元素
 		const errorContainer = this.container.createEl("div", {
-			cls: "minio-preview-error",
+			cls: "oss-gallery-preview-error",
 		});
 		errorContainer.createDiv({ cls: "error-icon", text: "⚠️" });
 		errorContainer.createDiv({
@@ -348,7 +348,7 @@ export class ImagePreviewModal extends Modal {
 	private showLoadingSpinner(): void {
 		if (!this.loadingSpinner) {
 			this.loadingSpinner = this.container.createEl("div", {
-				cls: "minio-preview-loading is-hidden",
+				cls: "oss-gallery-preview-loading is-hidden",
 			});
 			this.loadingSpinner.createDiv({ cls: "loading-spinner" });
 			this.loadingSpinner.createDiv({
@@ -368,7 +368,7 @@ export class ImagePreviewModal extends Modal {
 	 */
 	private hideErrorMessages(): void {
 		const errorElements = this.container.querySelectorAll(
-			".minio-preview-error"
+			".oss-gallery-preview-error"
 		);
 		errorElements.forEach((el) => el.remove());
 	}

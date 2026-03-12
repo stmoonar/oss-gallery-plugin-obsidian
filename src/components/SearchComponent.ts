@@ -35,7 +35,7 @@ export class SearchComponent {
 
 		// 创建搜索输入框
 		this.searchInput = searchInputWrapper.createEl("input", {
-			cls: "minio-gallery-search",
+			cls: "oss-gallery-search",
 			attr: {
 				type: "text",
 				placeholder: options.placeholder || "Search by URL...",
@@ -44,7 +44,7 @@ export class SearchComponent {
 
 		// 创建正则表达式切换按钮
 		this.regexBtn = searchInputWrapper.createEl("button", {
-			cls: "minio-gallery-icon-btn regex-btn-inline",
+			cls: "oss-gallery-icon-btn clickable-icon regex-btn-inline",
 			attr: {
 				title: t("Toggle regex search"),
 				type: "button",
@@ -54,7 +54,7 @@ export class SearchComponent {
 
 		// 创建搜索按钮
 		this.searchBtn = searchContainer.createEl("button", {
-			cls: "minio-gallery-icon-btn search-btn",
+			cls: "oss-gallery-icon-btn mod-cta search-btn",
 		});
 		setIcon(this.searchBtn, "search");
 
@@ -100,8 +100,10 @@ export class SearchComponent {
 		this.useRegex = !this.useRegex;
 		if (this.useRegex) {
 			this.regexBtn?.addClass("active");
+			this.regexBtn?.addClass("mod-cta");
 		} else {
 			this.regexBtn?.removeClass("active");
+			this.regexBtn?.removeClass("mod-cta");
 		}
 	}
 
@@ -140,8 +142,10 @@ export class SearchComponent {
 		this.useRegex = enabled;
 		if (enabled) {
 			this.regexBtn?.addClass("active");
+			this.regexBtn?.addClass("mod-cta");
 		} else {
 			this.regexBtn?.removeClass("active");
+			this.regexBtn?.removeClass("mod-cta");
 		}
 	}
 

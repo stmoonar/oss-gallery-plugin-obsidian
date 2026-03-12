@@ -87,7 +87,7 @@ export class OssGalleryView extends ItemView {
     }
 
     private createToolbar(): void {
-        const toolbar = this.container.createEl('div', { cls: 'minio-gallery-toolbar' });
+        const toolbar = this.container.createEl('div', { cls: 'oss-gallery-toolbar' });
 
         this.searchComponent = new SearchComponent(toolbar, {
             placeholder: t('Search by URL...'),
@@ -97,7 +97,7 @@ export class OssGalleryView extends ItemView {
             }
         });
 
-        this.refreshBtn = toolbar.createEl('button', { cls: 'minio-gallery-icon-btn refresh-btn' });
+        this.refreshBtn = toolbar.createEl('button', { cls: 'oss-gallery-icon-btn refresh-btn' });
         setIcon(this.refreshBtn, 'refresh-cw');
         this.refreshBtn.onclick = () => {
             if (!this.state.isLoading) {
@@ -114,11 +114,11 @@ export class OssGalleryView extends ItemView {
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
 
-            const existingMessages = this.container.querySelectorAll('.minio-loading-spinner, .minio-gallery-error');
+            const existingMessages = this.container.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error');
             existingMessages.forEach(el => el.remove());
 
             this.container.createEl('div', {
-                cls: 'minio-gallery-error',
+                cls: 'oss-gallery-error',
                 text: t('Image listing is not available'),
             });
             return;
@@ -137,7 +137,7 @@ export class OssGalleryView extends ItemView {
         this.cleanupImageGrid();
 
         // Clear any existing loading or error messages
-        const existingMessages = this.container.querySelectorAll('.minio-loading-spinner, .minio-gallery-error');
+        const existingMessages = this.container.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error');
         existingMessages.forEach(el => el.remove());
 
         // If we have cached data and not forcing refresh, use it first
@@ -153,7 +153,7 @@ export class OssGalleryView extends ItemView {
             return;
         }
 
-        const loading = this.container.createEl('div', { cls: 'minio-loading-spinner' });
+        const loading = this.container.createEl('div', { cls: 'oss-gallery-loading-spinner' });
 
         try {
             const { objects } = await this.syncService.sync(this.state.remoteObjects);
@@ -171,8 +171,8 @@ export class OssGalleryView extends ItemView {
 
             loading.remove();
         } catch (err) {
-            loading.removeClass('minio-loading-spinner');
-            loading.addClass('minio-gallery-error');
+            loading.removeClass('oss-gallery-loading-spinner');
+            loading.addClass('oss-gallery-error');
             
             const errorMessage = err instanceof Error ? err.message : String(err);
             loading.setText(`${t('Load failed')}: ${errorMessage}`);
@@ -185,7 +185,7 @@ export class OssGalleryView extends ItemView {
 
     private createImageGrid(): void {
         const gridContainer = this.container.createEl('div', {
-            cls: 'minio-gallery-container'
+            cls: 'oss-gallery-container'
         });
 
         this.imageGrid = new ImageGrid(gridContainer, {
@@ -199,7 +199,7 @@ export class OssGalleryView extends ItemView {
     }
 
     private cleanupImageGrid(): void {
-        const existingContainer = this.container.querySelector('.minio-gallery-container');
+        const existingContainer = this.container.querySelector('.oss-gallery-container');
         existingContainer?.remove();
 
         if (this.imageGrid) {
@@ -410,7 +410,7 @@ export class OssGalleryView extends ItemView {
     private showBackToTopButton(): void {
         if (!this.backToTopBtn) {
             this.backToTopBtn = this.container.createEl('button', {
-                cls: 'minio-back-to-top'
+                cls: 'oss-gallery-back-to-top'
             });
             setIcon(this.backToTopBtn, 'chevron-up');
 

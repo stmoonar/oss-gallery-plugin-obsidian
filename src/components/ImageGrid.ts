@@ -47,7 +47,7 @@ export class ImageGrid {
 		const objectUrl = await this.options.getObjectUrl(objectName);
 
 		const imgDiv = this.container.createEl("div", {
-			cls: "minio-gallery-item",
+			cls: "oss-gallery-item",
 		});
 
 		const imgAttrs: Record<string, string> = {
@@ -68,7 +68,7 @@ export class ImageGrid {
 		};
 
 		const buttonContainer = imgDiv.createEl("div", {
-			cls: "minio-gallery-buttons",
+			cls: "oss-gallery-buttons",
 		});
 
 		this.createCopyButton(buttonContainer, objectUrl);
@@ -141,7 +141,7 @@ export class ImageGrid {
 
 	private createCopyButton(container: HTMLElement, url: string): void {
 		const copyBtn = container.createEl("button", {
-			cls: "minio-gallery-icon-btn copy-btn",
+			cls: "oss-gallery-icon-btn copy-btn",
 		});
 		setIcon(copyBtn, "copy");
 
@@ -158,7 +158,7 @@ export class ImageGrid {
 		imgDiv: HTMLElement
 	): void {
 		const deleteBtn = container.createEl("button", {
-			cls: "minio-gallery-icon-btn delete-btn",
+			cls: "oss-gallery-icon-btn delete-btn",
 		});
 		setIcon(deleteBtn, "trash");
 
