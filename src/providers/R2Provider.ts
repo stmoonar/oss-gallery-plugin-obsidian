@@ -1,6 +1,6 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { R2Settings, PluginSettings } from '../types/settings';
-import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
+import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
 import { parseS3ListObjectsXml } from './shared/s3xml';

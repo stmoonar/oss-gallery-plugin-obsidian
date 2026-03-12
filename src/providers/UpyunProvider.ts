@@ -54,7 +54,19 @@ export class UpyunProvider implements IOssProvider {
         return `${this.getPublicBaseUrl()}/${encodeObjectKeyForUrl(key)}${this.settings.suffix || ''}`;
     }
 
-    private async listDirectory(directory: string, filterPrefix: string): Promise<OssImage[]> {
+    private async listDirectory(
+        directory: string,
+        filterPrefix: string,
+        visitedDirectories: Set<string>,
+        seenPaths: Set<string>
+    ): Promise<OssImage[]> {
+        const directoryKey = normalizePath(directory);
+        if (visitedDirectories.has(directoryKey)) {
+            console.warn(`Upyun: skipping duplicate directory "${directoryKey || '/'}" during listing`);
+            return [];
+        }
+        visitedDirectories.add(directoryKey);
+
         const images: OssImage[] = [];
         let iter = '';
 
@@ -91,14 +103,22 @@ export class UpyunProvider implements IOssProvider {
                 if (!entry.name) {
                     continue;
                 }
+                if (seenPaths.has(entryPath)) {
+                    console.warn(`Upyun: skipping duplicate path "${entryPath}" during listing`);
+                    continue;
+                }
                 if (isUpyunDirectory(entry.type)) {
-                    images.push(...await this.listDirectory(entryPath, filterPrefix));
+                    seenPaths.add(entryPath);
+                    images.push(
+                        ...await this.listDirectory(entryPath, filterPrefix, visitedDirectories, seenPaths)
+                    );
                     continue;
                 }
                 if (filterPrefix && !entryPath.startsWith(filterPrefix)) {
                     continue;
                 }
                 if (isImageFile(entryPath)) {
+                    seenPaths.add(entryPath);
                     images.push({
                         key: entryPath,
                         url: this.buildPublicUrl(entryPath),
@@ -180,7 +200,12 @@ export class UpyunProvider implements IOssProvider {
             const rootDirectory = normalizedPrefix.includes('/')
                 ? normalizedPrefix.split('/').slice(0, -1).join('/')
                 : '';
-            return await this.listDirectory(rootDirectory, normalizedPrefix);
+            return await this.listDirectory(
+                rootDirectory,
+                normalizedPrefix,
+                new Set<string>(),
+                new Set<string>()
+            );
         } catch (error) {
             console.error('Failed to list Upyun images:', error);
         }
@@ -348,5 +373,4 @@ export class UpyunProvider implements IOssProvider {
                     await saveSettings();
                 }));
     }
-
 }

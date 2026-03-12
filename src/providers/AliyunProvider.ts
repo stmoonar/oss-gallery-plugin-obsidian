@@ -152,19 +152,14 @@ export class AliyunProvider implements IOssProvider {
                     query.append('marker', marker);
                 }
 
-                let response: RequestUrlResponse;
-                try {
-                    response = await this.requestApi((baseUrl) => ({
-                        url: `${baseUrl}/?${query.toString()}`,
-                        method: 'GET',
-                        headers: {
-                            'Authorization': authorization,
-                            'Date': date,
-                        },
-                    }));
-                } catch (error) {
-                    throw error instanceof Error ? error : new Error(String(error));
-                }
+                const response = await this.requestApi((baseUrl) => ({
+                    url: `${baseUrl}/?${query.toString()}`,
+                    method: 'GET',
+                    headers: {
+                        'Authorization': authorization,
+                        'Date': date,
+                    },
+                }));
 
                 const page = parseS3ListObjectsPage(response.text);
                 images.push(
