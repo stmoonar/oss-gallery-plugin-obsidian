@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-oss-gallery",
-	"version": "1.0.2",
+	"version": "2.0.1",
 	"description": "Upload and manage media and documents across multiple OSS providers for Obsidian.",
 	"main": "main.js",
 	"type": "module",
