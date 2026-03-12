@@ -13,7 +13,8 @@ interface CachedImageStore {
 
 export class ImageCache {
     private static imageCache: Map<string, CachedImageEntry> = new Map();
-    private static readonly CACHE_KEY = 'minio-gallery-cache';
+    private static readonly CACHE_KEY = 'oss-gallery-cache';
+    private static readonly LEGACY_CACHE_KEY = 'minio-gallery-cache';
     private static readonly CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12小时
     private static readonly MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB
     private static saveTimeout: number | null = null;
@@ -25,11 +26,16 @@ export class ImageCache {
 
     static async init() {
         try {
-            const savedCache = this.getStorage().getItem(this.CACHE_KEY);
+            const storage = this.getStorage();
+            const savedCache = storage.getItem(this.CACHE_KEY) ?? storage.getItem(this.LEGACY_CACHE_KEY);
             if (savedCache) {
                 const parsed = this.parseCacheStore(JSON.parse(savedCache) as unknown);
                 if (parsed && Date.now() - parsed.timestamp < this.CACHE_EXPIRY) {
                     this.imageCache = new Map(Object.entries(parsed.data));
+                    if (!storage.getItem(this.CACHE_KEY)) {
+                        storage.setItem(this.CACHE_KEY, savedCache);
+                    }
+                    storage.removeItem(this.LEGACY_CACHE_KEY);
                 }
             }
         } catch (err) {
@@ -92,7 +98,9 @@ export class ImageCache {
 
     static clear(): void {
         this.imageCache.clear();
-        this.getStorage().removeItem(this.CACHE_KEY);
+        const storage = this.getStorage();
+        storage.removeItem(this.CACHE_KEY);
+        storage.removeItem(this.LEGACY_CACHE_KEY);
     }
 
     private static getTotalCacheSize(): number {
