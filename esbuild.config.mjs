@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
+import { copyFile, mkdir } from "node:fs/promises";
 import { builtinModules } from 'node:module';
+import { join } from "node:path";
 
 const banner =
 `/*
@@ -10,6 +12,15 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+const outfile = prod ? "dist/main.js" : "main.js";
+const releaseAssets = ["manifest.json", "styles.css", "LICENSE"];
+
+async function copyReleaseAssets() {
+	await mkdir("dist", { recursive: true });
+	await Promise.all(
+		releaseAssets.map((asset) => copyFile(asset, join("dist", asset)))
+	);
+}
 
 const context = await esbuild.context({
 	banner: {
@@ -37,12 +48,13 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "main.js",
+	outfile,
 	minify: prod,
 });
 
 if (prod) {
 	await context.rebuild();
+	await copyReleaseAssets();
 	process.exit(0);
 } else {
 	await context.watch();
