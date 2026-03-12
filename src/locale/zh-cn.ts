@@ -14,7 +14,6 @@ export default {
 		"输入自定义域名(例如 https://minio.example.com)",
 
 	"Base path": "基础路径",
-	"Custom domain": "自定义域名",
 
 	"Object rules": "对象规则",
 	"Object naming rules": "Object 命名规则",

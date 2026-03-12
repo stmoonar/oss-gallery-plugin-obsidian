@@ -11,6 +11,7 @@ import {
     createQiniuUploadToken,
     encodeQiniuEntry,
 } from './shared/qiniu';
+import { getArray, getNumber, getRecord, getString } from '../utils/typeGuards';
 
 export class QiniuProvider implements IOssProvider {
     name = 'qiniu';
@@ -109,18 +110,18 @@ export class QiniuProvider implements IOssProvider {
             const response = await requestUrl(requestParams);
 
             if (response.status === 200) {
-                const data = response.json;
-                if (data.hash) {
+                const data = getRecord(response.json as unknown);
+                if (getString(data?.hash)) {
                     return this.buildPublicUrl(key);
                 } else {
-                    throw new Error(data.error || 'Upload failed');
+                    throw new Error(getString(data?.error) || 'Upload failed');
                 }
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
             console.error('Qiniu upload error:', error);
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -167,23 +168,25 @@ export class QiniuProvider implements IOssProvider {
                     throw new Error(`List failed with status: ${response.status}`);
                 }
 
-                const data = response.json;
-                for (const item of data?.items || []) {
-                    if (isImageFile(item.key)) {
+                const data = getRecord(response.json as unknown);
+                const items = getArray(data?.items) ?? [];
+                for (const item of items) {
+                    const record = getRecord(item);
+                    const itemKey = getString(record?.key);
+                    if (itemKey && isImageFile(itemKey)) {
+                        const putTime = getNumber(record?.putTime);
                         images.push({
-                            key: item.key,
-                            url: this.buildPublicUrl(item.key),
-                            lastModified: item.putTime ? new Date(item.putTime / 10000) : undefined,
-                            size: item.fsize || 0,
+                            key: itemKey,
+                            url: this.buildPublicUrl(itemKey),
+                            lastModified: putTime !== undefined ? new Date(putTime / 10000) : undefined,
+                            size: getNumber(record?.fsize) ?? 0,
                         });
                     }
                 }
 
-                const nextMarker = typeof data?.marker === 'string'
-                    ? data.marker
-                    : typeof data?.nextMarker === 'string'
-                        ? data.nextMarker
-                        : '';
+                const nextMarker = getString(data?.marker)
+                    ?? getString(data?.nextMarker)
+                    ?? '';
                 if (!nextMarker || nextMarker === marker) {
                     return images;
                 }
@@ -220,7 +223,7 @@ export class QiniuProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete Qiniu image:', error);
-            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

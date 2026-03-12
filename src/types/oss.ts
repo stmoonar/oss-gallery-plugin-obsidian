@@ -1,3 +1,5 @@
+import { PluginSettings } from './settings';
+
 export interface OssImage {
     key: string;
     url: string;
@@ -39,7 +41,7 @@ export interface IStorageProvider {
 export interface IProviderSettingsRenderer {
     renderSettings(
         containerEl: HTMLElement,
-        settings: any,
+        settings: PluginSettings,
         saveSettings: () => Promise<void>
     ): void;
 }

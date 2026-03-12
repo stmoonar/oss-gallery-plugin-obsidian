@@ -1,5 +1,18 @@
+import { getNumber, getRecord, getString } from './typeGuards';
+
+interface CachedImageEntry {
+    data: string;
+    timestamp: number;
+    size: number;
+}
+
+interface CachedImageStore {
+    data: Record<string, CachedImageEntry>;
+    timestamp: number;
+}
+
 export class ImageCache {
-    private static imageCache: Map<string, {data: string, timestamp: number, size: number}> = new Map();
+    private static imageCache: Map<string, CachedImageEntry> = new Map();
     private static readonly CACHE_KEY = 'minio-gallery-cache';
     private static readonly CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12小时
     private static readonly MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -14,9 +27,9 @@ export class ImageCache {
         try {
             const savedCache = this.getStorage().getItem(this.CACHE_KEY);
             if (savedCache) {
-                const {data, timestamp} = JSON.parse(savedCache);
-                if (Date.now() - timestamp < this.CACHE_EXPIRY) {
-                    this.imageCache = new Map(Object.entries(data));
+                const parsed = this.parseCacheStore(JSON.parse(savedCache) as unknown);
+                if (parsed && Date.now() - parsed.timestamp < this.CACHE_EXPIRY) {
+                    this.imageCache = new Map(Object.entries(parsed.data));
                 }
             }
         } catch (err) {
@@ -140,6 +153,37 @@ export class ImageCache {
             count,
             totalSize,
             totalSizeMB: Math.round(totalSize / (1024 * 1024) * 100) / 100
+        };
+    }
+
+    private static parseCacheStore(value: unknown): CachedImageStore | null {
+        const record = getRecord(value);
+        const data = getRecord(record?.data);
+        const timestamp = getNumber(record?.timestamp);
+        if (!data || timestamp === undefined) {
+            return null;
+        }
+
+        const parsedEntries = Object.entries(data).flatMap(([key, entryValue]) => {
+            const entry = getRecord(entryValue);
+            const entryData = getString(entry?.data);
+            const entryTimestamp = getNumber(entry?.timestamp);
+            const size = getNumber(entry?.size);
+
+            if (entryData === undefined || entryTimestamp === undefined || size === undefined) {
+                return [];
+            }
+
+            return [[key, {
+                data: entryData,
+                timestamp: entryTimestamp,
+                size,
+            } satisfies CachedImageEntry]];
+        });
+
+        return {
+            data: Object.fromEntries(parsedEntries) as Record<string, CachedImageEntry>,
+            timestamp,
         };
     }
 }

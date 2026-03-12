@@ -482,6 +482,13 @@ If your plugin does not need CSS, delete this file.
     background: none !important;
 }
 
+.minio-image-preview-modal-shell {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+}
+
 .minio-gallery-item.hidden {
     display: none;
 }
@@ -772,6 +779,21 @@ If your plugin does not need CSS, delete this file.
     font-family: monospace;
 }
 
+.imgur-settings-note {
+    margin-top: 20px;
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.imgur-settings-note-title {
+    margin: 0 0 8px;
+}
+
+.imgur-settings-note ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
 @keyframes fadeIn {
     from {
         opacity: 0;
@@ -809,18 +831,32 @@ If your plugin does not need CSS, delete this file.
     box-shadow: none;
 }
 
+.minio-image-preview-container.dark {
+    background: var(--minio-preview-overlay-bg);
+}
+
+.minio-image-preview-container.light {
+    background: rgba(255, 255, 255, 0.95);
+}
+
 /* Loading Spinner */
 .minio-preview-loading {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    display: none;
+    display: flex;
     flex-direction: column;
     align-items: center;
     gap: 16px;
     pointer-events: none;
     z-index: 1004;
+}
+
+.minio-image-preview.is-hidden,
+.minio-preview-placeholder.is-hidden,
+.minio-preview-loading.is-hidden {
+    display: none;
 }
 
 .loading-spinner {
@@ -895,13 +931,13 @@ If your plugin does not need CSS, delete this file.
     z-index: 1000;
 }
 
-.minio-preview-placeholder svg {
+.minio-preview-placeholder-icon svg {
     width: 120px;
     height: 120px;
     color: rgba(255, 255, 255, 0.2);
     transition: color 0.3s ease;
 }
 
-.minio-image-preview-container.light .minio-preview-placeholder svg {
+.minio-image-preview-container.light .minio-preview-placeholder-icon svg {
     color: rgba(0, 0, 0, 0.1);
 }

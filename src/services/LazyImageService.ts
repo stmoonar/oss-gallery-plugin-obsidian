@@ -30,7 +30,7 @@ export class LazyImageService {
 						const src = img.dataset.src;
 
 						if (src && img.src !== src) {
-							this.loadImageWithRetry(
+							void this.loadImageWithRetry(
 								src,
 								img,
 								this.options.retryCount,

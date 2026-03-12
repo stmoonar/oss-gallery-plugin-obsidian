@@ -10,6 +10,7 @@ import { getFileTypeByMime } from "./utils/FileUtils";
 import { handleUploadError } from "./utils/ErrorHandler";
 import { OssProviderManager } from "./providers/OssProviderManager";
 import { providerRegistry } from "./providers/registry";
+import { loadStoredSettings } from "./settings/loadStoredSettings";
 
 interface Position {
 	line: number;
@@ -347,54 +348,17 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const existingData = await this.loadData();
+		const existingData: unknown = await this.loadData();
 
 		if (!existingData) {
-			await this.saveData(DEFAULT_SETTINGS);
-			this.settings = { ...DEFAULT_SETTINGS };
-			} else {
-				// Migration logic for old settings (pre-multi-provider)
-				if (!existingData.providers) {
-					const oldSettings = existingData;
-					this.settings = {
-					...DEFAULT_SETTINGS,
-					activeProvider: 'minio',
-					basepath: oldSettings.basepath || '',
-					providers: {
-						...DEFAULT_SETTINGS.providers,
-						minio: {
-							accessKey: oldSettings.accessKey || '',
-							secretKey: oldSettings.secretKey || '',
-							region: oldSettings.region || '',
-							bucket: oldSettings.bucket || '',
-							endpoint: oldSettings.endpoint || '',
-							port: oldSettings.port || 9000,
-							customDomain: oldSettings.customDomain || '',
-							useSSL: oldSettings.useSSL ?? true,
-						},
-					},
-				};
-			} else {
-				// Deep merge providers: ensure all provider keys exist with defaults from registry
-				const registryDefaults = providerRegistry.buildDefaultProviderSettings();
-					const mergedProviders = { ...registryDefaults };
-					for (const key of Object.keys(registryDefaults) as Array<keyof typeof registryDefaults>) {
-						mergedProviders[key] = {
-							...registryDefaults[key],
-							...(existingData.providers[key] || {}),
-						};
-					}
+			this.settings = loadStoredSettings(null);
+			await this.saveData(this.settings);
+		} else {
+			this.settings = loadStoredSettings(existingData);
+		}
 
-				this.settings = {
-					...DEFAULT_SETTINGS,
-					...existingData,
-					providers: mergedProviders,
-				};
-			}
-
-			if (!providerRegistry.get(this.settings.activeProvider, this.app)) {
-				this.settings.activeProvider = DEFAULT_SETTINGS.activeProvider;
-			}
+		if (!providerRegistry.get(this.settings.activeProvider, this.app)) {
+			this.settings.activeProvider = DEFAULT_SETTINGS.activeProvider;
 		}
 	}
 

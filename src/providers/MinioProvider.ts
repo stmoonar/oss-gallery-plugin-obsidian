@@ -162,7 +162,7 @@ export class MinioProvider implements IOssProvider {
         }
     }
 
-    private signRequest(opts: any) {
+    private signRequest(opts: Parameters<typeof aws4.sign>[0]) {
         aws4.sign(opts, {
             accessKeyId: this.settings.accessKey,
             secretAccessKey: this.settings.secretKey

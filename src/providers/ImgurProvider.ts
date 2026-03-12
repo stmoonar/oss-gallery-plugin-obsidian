@@ -4,6 +4,7 @@ import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
+import { getBoolean, getRecord, getString } from '../utils/typeGuards';
 
 export class ImgurProvider implements IOssProvider {
     name = 'imgur';
@@ -47,18 +48,20 @@ export class ImgurProvider implements IOssProvider {
             const response = await requestUrl(requestParams);
 
             if (response.status === 200) {
-                const data = response.json;
-                if (data.success && data.data && data.data.link) {
-                    return data.data.link;
+                const data = getRecord(response.json as unknown);
+                const image = getRecord(data?.data);
+                const link = getString(image?.link);
+                if (getBoolean(data?.success) && link) {
+                    return link;
                 } else {
-                    throw new Error(data.data.error || 'Upload failed');
+                    throw new Error(getString(image?.error) || 'Upload failed');
                 }
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
             console.error('Imgur upload error:', error);
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -127,18 +130,18 @@ export class ImgurProvider implements IOssProvider {
                 }));
 
         // Add note about Imgur limitations
-        const noteDiv = containerEl.createDiv();
-        noteDiv.innerHTML = `
-            <p><strong>${t('Note')}:</strong></p>
-            <ul>
-                <li>${t('Imgur only supports image uploads')}</li>
-                <li>${t('Image listing is not available')}</li>
-                <li>${t('Image deletion requires OAuth authentication')}</li>
-                <li>${t('In some regions, a proxy may be required to access Imgur API')}</li>
-            </ul>
-        `;
-        noteDiv.style.marginTop = '20px';
-        noteDiv.style.fontSize = '0.9em';
-        noteDiv.style.color = 'var(--text-muted)';
+        const noteDiv = containerEl.createDiv({ cls: 'imgur-settings-note' });
+        const noteTitle = noteDiv.createEl('p', { cls: 'imgur-settings-note-title' });
+        noteTitle.createEl('strong', { text: `${t('Note')}:` });
+
+        const noteList = noteDiv.createEl('ul');
+        [
+            t('Imgur only supports image uploads'),
+            t('Image listing is not available'),
+            t('Image deletion requires OAuth authentication'),
+            t('In some regions, a proxy may be required to access Imgur API'),
+        ].forEach((message) => {
+            noteList.createEl('li', { text: message });
+        });
     }
 }

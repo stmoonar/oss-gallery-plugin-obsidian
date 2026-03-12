@@ -1,4 +1,10 @@
 import { createHash, createHmac } from 'crypto';
+import {
+    getArray,
+    getNumberLike,
+    getRecord,
+    getString,
+} from '../../utils/typeGuards';
 
 export interface UpyunListEntry {
     name: string;
@@ -32,25 +38,28 @@ export function createUpyunContentMd5(data: ArrayBuffer): string {
     return createHash('md5').update(Buffer.from(data)).digest('base64');
 }
 
-export function parseUpyunListPage(raw: any, iterHeader?: string): UpyunListPage {
-    const files = Array.isArray(raw?.files)
-        ? raw.files
-        : Array.isArray(raw)
-            ? raw
-            : [];
+export function parseUpyunListPage(raw: unknown, iterHeader?: string): UpyunListPage {
+    const record = getRecord(raw);
+    const files = getArray(record?.files) ?? getArray(raw) ?? [];
 
     return {
-        entries: files.map((item: any) => ({
-            name: String(item?.name ?? ''),
-            type: String(item?.type ?? ''),
-            size: Number(item?.length ?? item?.size ?? 0),
-            lastModified: item?.last_modified
-                ? new Date(Number(item.last_modified) * 1000)
-                : item?.last_update
-                    ? new Date(Number(item.last_update) * 1000)
-                    : undefined,
-        })),
-        iter: typeof raw?.iter === 'string' ? raw.iter : iterHeader ?? '',
+        entries: files.map((item) => {
+            const file = getRecord(item);
+            const lastModified = getNumberLike(file?.last_modified);
+            const lastUpdate = getNumberLike(file?.last_update);
+
+            return {
+                name: getString(file?.name) ?? '',
+                type: getString(file?.type) ?? '',
+                size: getNumberLike(file?.length) ?? getNumberLike(file?.size) ?? 0,
+                lastModified: lastModified !== undefined
+                    ? new Date(lastModified * 1000)
+                    : lastUpdate !== undefined
+                        ? new Date(lastUpdate * 1000)
+                        : undefined,
+            };
+        }),
+        iter: getString(record?.iter) ?? iterHeader ?? '',
     };
 }
 

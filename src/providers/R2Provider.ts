@@ -34,7 +34,7 @@ export class R2Provider implements IOssProvider {
         return `/${this.getBucketName()}/${encodeObjectKeyForUrl(objectKey)}`;
     }
 
-    private signRequest(opts: any) {
+    private signRequest(opts: Parameters<typeof aws4.sign>[0]) {
         aws4.sign(opts, {
             accessKeyId: this.settings.accessKeyId,
             secretAccessKey: this.settings.secretAccessKey,
@@ -107,7 +107,7 @@ export class R2Provider implements IOssProvider {
             if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
                 throw new Error('Upload failed: invalid R2 request. Check Account ID, bucket name, and file path/name for unsupported characters.');
             }
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -189,7 +189,7 @@ export class R2Provider implements IOssProvider {
             if (error instanceof Error && error.message.includes('ERR_INVALID_ARGUMENT')) {
                 throw new Error('Delete failed: invalid R2 request. Check Account ID, bucket name, and object key.');
             }
-            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

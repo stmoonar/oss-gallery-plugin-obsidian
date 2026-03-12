@@ -67,6 +67,13 @@ export default tseslint.config(
 			"@typescript-eslint/no-floating-promises": "warn",
 		},
 	},
+	{
+		files: ["src/providers/*.ts"],
+		rules: {
+			// Provider settings labels intentionally follow product/provider naming.
+			"obsidianmd/ui/sentence-case": "off",
+		},
+	},
 	globalIgnores([
 		"node_modules",
 		"dist",

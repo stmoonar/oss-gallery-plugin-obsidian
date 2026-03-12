@@ -32,7 +32,7 @@ export class S3Provider implements IOssProvider {
         return `${protocol}://${host}${path}`;
     }
 
-    private signRequest(opts: any) {
+    private signRequest(opts: Parameters<typeof aws4.sign>[0]) {
         aws4.sign(opts, {
             accessKeyId: this.settings.accessKeyId,
             secretAccessKey: this.settings.secretAccessKey,
@@ -98,7 +98,7 @@ export class S3Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('S3 upload error:', error);
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -176,7 +176,7 @@ export class S3Provider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to delete S3 image:', error);
-            throw new Error(`Delete failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

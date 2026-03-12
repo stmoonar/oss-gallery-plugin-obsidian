@@ -13,7 +13,7 @@ export default {
 	'Enter your custom domain(e.g. https://minio.example.com)': '自定義域名(例如 https://minio.example.com)',
 
 	'Base path': '基礎路徑',
-	'Custom domain': '自定義域名',
+		'Custom Domain': '自定義域名',
 
 	'Object rules': '對象規則',
 	'Object naming rules': 'Object 命名規則',
@@ -99,5 +99,13 @@ export default {
 	"Move deleted files to system trash instead of permanent deletion": "刪除檔案時移到系統資源回收筒而非永久刪除",
 	"Please configure local storage path first": "請先配置本地儲存路徑",
 	"Vault-relative local storage requires a file-system vault": "倉庫相對路徑模式僅支援桌面端本機檔案倉庫",
+		"Repo Name": "倉庫名稱",
+		"Access Key": "Access Key",
+		"Secret Key": "Secret Key",
+		"URL": "存取網域",
+		"Access Key ID": "Access Key ID",
+		"Access Key Secret": "Access Key Secret",
+		"Secret ID": "Secret ID",
+		"Client ID": "Client ID",
 
 }

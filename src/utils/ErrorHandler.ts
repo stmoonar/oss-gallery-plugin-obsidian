@@ -17,7 +17,7 @@ export enum ErrorLevel {
 export interface ErrorContext {
     operation: string;
     filename?: string;
-    additionalInfo?: Record<string, any>;
+    additionalInfo?: Record<string, unknown>;
 }
 
 /**

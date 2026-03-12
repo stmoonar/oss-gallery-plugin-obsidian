@@ -1,12 +1,6 @@
 import { App, Modal, setIcon } from "obsidian";
 import { ImagePreviewOptions } from "../types/gallery";
 
-interface PreviewTheme {
-	background: string;
-	textColor: string;
-	textShadow: string;
-}
-
 export class ImagePreviewModal extends Modal {
 	private imageUrl: string;
 	private fileName: string;
@@ -23,20 +17,6 @@ export class ImagePreviewModal extends Modal {
 	private isLoadingShown: boolean = false;
 	private originalImgSrc: string | null = null;
 	private static readonly LOADING_DELAY = 500; // 500ms阈值
-
-	// 主题配置
-	private readonly themes: Record<string, PreviewTheme> = {
-		dark: {
-			background: "var(--minio-preview-overlay-bg)",
-			textColor: "white",
-			textShadow: "0 1px 3px rgba(0, 0, 0, 0.8)",
-		},
-		light: {
-			background: "rgba(255, 255, 255, 0.95)",
-			textColor: "black",
-			textShadow: "0 1px 3px rgba(255, 255, 255, 0.8)",
-		},
-	};
 
 	constructor(
 		app: App,
@@ -59,10 +39,7 @@ export class ImagePreviewModal extends Modal {
 	private setupModalStyle(): void {
 		requestAnimationFrame(() => {
 			const modalEl = this.modalEl;
-			modalEl.style.border = "none";
-			modalEl.style.background = "transparent";
-			modalEl.style.boxShadow = "none";
-			modalEl.style.padding = "0";
+			modalEl.addClass("minio-image-preview-modal-shell");
 
 			// 移除默认关闭按钮
 			const closeBtn = modalEl.querySelector(
@@ -149,15 +126,11 @@ export class ImagePreviewModal extends Modal {
 		this.placeholderElement = this.container.createEl("div", {
 			cls: "minio-preview-placeholder",
 		});
-
-		// 使用更美观的图片图标
-		this.placeholderElement.innerHTML = `
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
-			</svg>
-		`;
-
-		this.placeholderElement.style.display = "none";
+		const iconEl = this.placeholderElement.createDiv({
+			cls: "minio-preview-placeholder-icon",
+		});
+		setIcon(iconEl, "image");
+		this.setHidden(this.placeholderElement, true);
 	}
 
 	/**
@@ -238,12 +211,12 @@ export class ImagePreviewModal extends Modal {
 		const errorContainer = this.container.createEl("div", {
 			cls: "minio-preview-error",
 		});
-
-		errorContainer.innerHTML = `
-            <div class="error-icon">⚠️</div>
-            <div class="error-message">Failed to load image</div>
-            <div class="error-url">${this.imageUrl}</div>
-        `;
+		errorContainer.createDiv({ cls: "error-icon", text: "⚠️" });
+		errorContainer.createDiv({
+			cls: "error-message",
+			text: "Failed to load image",
+		});
+		errorContainer.createDiv({ cls: "error-url", text: this.imageUrl });
 
 		this.container.appendChild(errorContainer);
 
@@ -267,14 +240,12 @@ export class ImagePreviewModal extends Modal {
 	 * 应用主题
 	 */
 	private applyTheme(theme: "dark" | "light"): void {
-		const themeConfig = this.themes[theme];
+		this.container.classList.toggle("dark", theme === "dark");
+		this.container.classList.toggle("light", theme === "light");
+	}
 
-		this.container.style.background = themeConfig.background;
-
-		// 切换 class 以应用特定主题的样式
-		this.container.removeClass("dark");
-		this.container.removeClass("light");
-		this.container.addClass(theme);
+	private setHidden(element: HTMLElement | null, hidden: boolean): void {
+		element?.classList.toggle("is-hidden", hidden);
 	}
 
 	/**
@@ -314,13 +285,11 @@ export class ImagePreviewModal extends Modal {
 
 			// 切换到占位符显示
 			if (this.imgElement) {
-				this.imgElement.style.display = "none";
+				this.setHidden(this.imgElement, true);
 				this.imgElement.removeAttribute("src");
 			}
 
-			if (this.placeholderElement) {
-				this.placeholderElement.style.display = "flex";
-			}
+			this.setHidden(this.placeholderElement, false);
 
 			// 设置延迟显示加载动画（在背景图案之上）
 			this.loadingTimer = window.setTimeout(() => {
@@ -338,12 +307,10 @@ export class ImagePreviewModal extends Modal {
 				}
 
 				// 恢复图片显示
-				if (this.placeholderElement) {
-					this.placeholderElement.style.display = "none";
-				}
+				this.setHidden(this.placeholderElement, true);
 
 				if (this.imgElement) {
-					this.imgElement.style.display = "block";
+					this.setHidden(this.imgElement, false);
 					this.imgElement.src = newUrl;
 				}
 
@@ -381,18 +348,19 @@ export class ImagePreviewModal extends Modal {
 	private showLoadingSpinner(): void {
 		if (!this.loadingSpinner) {
 			this.loadingSpinner = this.container.createEl("div", {
-				cls: "minio-preview-loading",
+				cls: "minio-preview-loading is-hidden",
 			});
-			this.loadingSpinner.innerHTML = `
-                <div class="loading-spinner"></div>
-                <div class="loading-text">Loading...</div>
-            `;
+			this.loadingSpinner.createDiv({ cls: "loading-spinner" });
+			this.loadingSpinner.createDiv({
+				cls: "loading-text",
+				text: "Loading...",
+			});
 			this.container.appendChild(this.loadingSpinner);
 		}
 
 		// 确保只显示一个加载动画
 		this.hideErrorMessages();
-		this.loadingSpinner.style.display = "flex";
+		this.setHidden(this.loadingSpinner, false);
 	}
 
 	/**
@@ -409,9 +377,7 @@ export class ImagePreviewModal extends Modal {
 	 * 隐藏加载动画
 	 */
 	private hideLoadingSpinner(): void {
-		if (this.loadingSpinner) {
-			this.loadingSpinner.style.display = "none";
-		}
+		this.setHidden(this.loadingSpinner, true);
 		this.isLoadingShown = false;
 	}
 

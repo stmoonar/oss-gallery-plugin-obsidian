@@ -215,18 +215,34 @@ export class ProviderRegistry {
      * Build a complete default ProviderSettingsMap from registry entries.
      */
     buildDefaultProviderSettings(): ProviderSettingsMap {
-        const result: Record<string, any> = {};
+        const result = {} as ProviderSettingsMap;
         for (const entry of this.entries.values()) {
-            result[entry.id] = { ...entry.defaultSettings };
+            this.setProviderSettings(
+                result,
+                entry.id,
+                { ...entry.defaultSettings } as ProviderSettingsMap[typeof entry.id]
+            );
         }
-        return result as ProviderSettingsMap;
+        return result;
+    }
+
+    private setProviderSettings<K extends keyof ProviderSettingsMap>(
+        target: ProviderSettingsMap,
+        id: K,
+        settings: ProviderSettingsMap[K]
+    ): void {
+        target[id] = settings;
     }
 
     /**
      * Create a provider instance by id with settings.
      */
-    createProvider(id: string, settings: any, app?: App): IOssProvider {
-        const entry = this.get(id, app);
+    createProvider<K extends keyof ProviderSettingsMap>(
+        id: K,
+        settings: ProviderSettingsMap[K],
+        app?: App
+    ): IOssProvider {
+        const entry = this.get(id, app) as ProviderRegistryEntry<K> | undefined;
         if (!entry) {
             throw new Error(`Unknown provider: ${id}`);
         }

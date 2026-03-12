@@ -4,6 +4,7 @@ import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
+import { getArray, getBoolean, getNumber, getRecord, getString } from '../utils/typeGuards';
 
 export class SmMsProvider implements IOssProvider {
     name = 'smms';
@@ -44,18 +45,22 @@ export class SmMsProvider implements IOssProvider {
 
             const response = await requestUrl(requestParams);
 
-            const data = response.json;
+            const data = getRecord(response.json as unknown);
+            const uploadData = getRecord(data?.data);
+            const imageUrl = getString(uploadData?.url);
+            const repeatedImageUrl = getString(data?.images);
+            const code = getString(data?.code);
 
-            if (data.success) {
-                return data.data.url;
-            } else if (data.code === 'image_repeated') {
-                return data.images;
+            if (getBoolean(data?.success) && imageUrl) {
+                return imageUrl;
+            } else if (code === 'image_repeated' && repeatedImageUrl) {
+                return repeatedImageUrl;
             } else {
-                throw new Error(data.message || `Upload failed with code: ${data.code}`);
+                throw new Error(getString(data?.message) || `Upload failed with code: ${code ?? 'unknown'}`);
             }
         } catch (error) {
             console.error('SM.MS upload error:', error);
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -75,14 +80,24 @@ export class SmMsProvider implements IOssProvider {
             });
 
             if (response.status === 200) {
-                const data = response.json;
-                if (data.success) {
-                    return data.data.map((item: any) => ({
-                        key: item.hash, // SM.MS uses hash as ID
-                        url: item.url,
-                        lastModified: new Date(item.created_at), // Assuming created_at exists
-                        size: item.size
-                    }));
+                const data = getRecord(response.json as unknown);
+                if (getBoolean(data?.success)) {
+                    return (getArray(data?.data) ?? []).flatMap((item) => {
+                        const record = getRecord(item);
+                        const key = getString(record?.hash);
+                        const url = getString(record?.url);
+                        if (!key || !url) {
+                            return [];
+                        }
+
+                        const createdAt = getString(record?.created_at);
+                        return [{
+                            key,
+                            url,
+                            lastModified: createdAt ? new Date(createdAt) : undefined,
+                            size: getNumber(record?.size) ?? 0,
+                        }];
+                    });
                 }
             }
         } catch (e) {
@@ -104,8 +119,9 @@ export class SmMsProvider implements IOssProvider {
                 }
             });
             
-            if (response.status !== 200 || !response.json.success) {
-                throw new Error(response.json.message || 'Delete failed');
+            const data = getRecord(response.json as unknown);
+            if (response.status !== 200 || !getBoolean(data?.success)) {
+                throw new Error(getString(data?.message) || 'Delete failed');
             }
         } catch (e) {
             throw new Error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);

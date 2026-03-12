@@ -3,6 +3,16 @@ import { GithubSettings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
+import { getArray, getNumber, getRecord, getString } from '../utils/typeGuards';
+
+interface GithubFileEntry {
+    type?: string;
+    name?: string;
+    path?: string;
+    downloadUrl?: string;
+    size?: number;
+    sha?: string;
+}
 
 export class GithubProvider implements IOssProvider {
     name = 'github';
@@ -10,6 +20,34 @@ export class GithubProvider implements IOssProvider {
 
     constructor(settings: GithubSettings) {
         this.settings = settings;
+    }
+
+    private getErrorStatus(error: unknown): number | undefined {
+        return getNumber(getRecord(error)?.status);
+    }
+
+    private parseFileEntry(value: unknown): GithubFileEntry | null {
+        const record = getRecord(value);
+        if (!record) {
+            return null;
+        }
+
+        return {
+            type: getString(record.type),
+            name: getString(record.name),
+            path: getString(record.path),
+            downloadUrl: getString(record.download_url),
+            size: getNumber(record.size),
+            sha: getString(record.sha),
+        };
+    }
+
+    private parseFileEntries(value: unknown): GithubFileEntry[] {
+        const entries = getArray(value) ?? [];
+        return entries.flatMap((entry) => {
+            const parsed = this.parseFileEntry(entry);
+            return parsed ? [parsed] : [];
+        });
     }
 
     async upload(
@@ -52,7 +90,9 @@ export class GithubProvider implements IOssProvider {
             });
 
             if (response.status >= 200 && response.status < 300) {
-                const data = response.json;
+                const data = getRecord(response.json as unknown);
+                const content = getRecord(data?.content);
+                const downloadUrl = getString(content?.download_url);
                 if (this.settings.customUrl) {
                     // Replace https://github.com/user/repo/raw/branch/path with custom url
                     // Or usually customUrl is CDN like https://cdn.jsdelivr.net/gh/user/repo
@@ -64,20 +104,24 @@ export class GithubProvider implements IOssProvider {
                     const cleanCustomUrl = this.settings.customUrl.replace(/\/$/, '');
                     return `${cleanCustomUrl}/${cleanPath}`;
                 }
-                return data.content.download_url;
+                if (downloadUrl) {
+                    return downloadUrl;
+                }
+                return this.buildCustomUrl(cleanPath);
             } else {
                 throw new Error(`Upload failed: ${response.status} ${response.text}`);
             }
         } catch (error) {
             console.error('GitHub upload error:', error);
-            if ((error as any).status === 401) {
+            const status = this.getErrorStatus(error);
+            if (status === 401) {
                 throw new Error('GitHub authentication failed. Please check your token.');
-            } else if ((error as any).status === 403) {
+            } else if (status === 403) {
                 throw new Error('GitHub permission denied. Please ensure your token has write access to the repository.');
-            } else if ((error as any).status === 404) {
+            } else if (status === 404) {
                 throw new Error('GitHub repository or file not found. Please check the repository name and path.');
             } else {
-                throw new Error(`Upload failed: ${error instanceof Error ? error.message : error}`);
+                throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
     }
@@ -110,7 +154,7 @@ export class GithubProvider implements IOssProvider {
     /**
      * Get repository's Git tree with all files at once
      */
-    private async getRepositoryTree(repo: string): Promise<any> {
+    private async getRepositoryTree(repo: string): Promise<unknown> {
         const url = `https://api.github.com/repos/${repo}/git/trees/${this.settings.branch || 'main'}?recursive=1`;
 
         const response = await requestUrl({
@@ -133,18 +177,18 @@ export class GithubProvider implements IOssProvider {
     /**
      * Extract images from Git tree data
      */
-    private extractImagesFromTree(treeData: any): OssImage[] {
+    private extractImagesFromTree(treeData: unknown): OssImage[] {
         const images: OssImage[] = [];
+        const tree = getArray(getRecord(treeData)?.tree) ?? [];
 
-        if (treeData.tree && Array.isArray(treeData.tree)) {
-            for (const item of treeData.tree) {
-                if (item.type === 'blob' && isImageFile(item.path)) {
+        for (const item of tree) {
+            const entry = this.parseFileEntry(item);
+            if (entry?.type === 'blob' && entry.path && isImageFile(entry.path)) {
                     images.push({
-                        key: item.path,
-                        url: this.buildCustomUrl(item.path),
-                        size: item.size || 0
+                        key: entry.path,
+                        url: this.buildCustomUrl(entry.path),
+                        size: entry.size ?? 0
                     });
-                }
             }
         }
 
@@ -170,28 +214,30 @@ export class GithubProvider implements IOssProvider {
             });
 
             if (response.status === 200) {
-                const data = response.json;
+                const data = response.json as unknown;
+                const file = this.parseFileEntry(data);
 
                 // Handle single file
-                if (data && !Array.isArray(data) && data.type === 'file') {
-                    if (isImageFile(data.name)) {
+                if (file?.type === 'file' && file.name && file.path) {
+                    if (isImageFile(file.name)) {
                         return [{
-                            key: data.path,
-                            url: data.download_url || this.buildCustomUrl(data.path),
-                            size: data.size
+                            key: file.path,
+                            url: file.downloadUrl || this.buildCustomUrl(file.path),
+                            size: file.size ?? 0
                         }];
                     }
                     return [];
                 }
 
                 // Handle directory
-                if (Array.isArray(data)) {
-                    return data
-                        .filter(item => item.type === 'file' && isImageFile(item.name))
-                        .map(item => ({
-                            key: item.path,
-                            url: item.download_url || this.buildCustomUrl(item.path),
-                            size: item.size
+                const items = this.parseFileEntries(data);
+                if (items.length > 0) {
+                    return items
+                        .filter((item) => item.type === 'file' && item.name && item.path && isImageFile(item.name))
+                        .map((item) => ({
+                            key: item.path as string,
+                            url: item.downloadUrl || this.buildCustomUrl(item.path as string),
+                            size: item.size ?? 0
                         }));
                 }
             }
@@ -266,7 +312,10 @@ export class GithubProvider implements IOssProvider {
                 throw new Error('File not found');
             }
 
-            const sha = getResponse.json.sha;
+            const file = this.parseFileEntry(getResponse.json as unknown);
+            if (!file?.sha) {
+                throw new Error('File SHA not found');
+            }
 
             // Delete
             const deleteResponse = await requestUrl({
@@ -280,7 +329,7 @@ export class GithubProvider implements IOssProvider {
                 },
                 body: JSON.stringify({
                     message: `Delete ${key} by Obsidian OSS Gallery`,
-                    sha: sha,
+                    sha: file.sha,
                     branch: this.settings.branch || 'main'
                 })
             });

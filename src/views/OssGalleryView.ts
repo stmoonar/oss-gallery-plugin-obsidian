@@ -49,7 +49,7 @@ export class OssGalleryView extends ItemView {
     updateProvider(provider: IOssProvider) {
         this.provider = provider;
         this.initializeServices();
-        this.loadGallery(true);
+        void this.loadGallery(true);
     }
 
     private initializeServices(): void {
@@ -101,7 +101,7 @@ export class OssGalleryView extends ItemView {
         setIcon(this.refreshBtn, 'refresh-cw');
         this.refreshBtn.onclick = () => {
             if (!this.state.isLoading) {
-                this.loadGallery(true);
+                void this.loadGallery(true);
             }
         };
     }
@@ -149,7 +149,7 @@ export class OssGalleryView extends ItemView {
             this.state.isSearching = false;
 
             // Then load fresh data in background
-            this.refreshDataInBackground();
+            void this.refreshDataInBackground();
             return;
         }
 
@@ -362,23 +362,27 @@ export class OssGalleryView extends ItemView {
     }
 
     private startAutoSync(): void {
-        this.syncInterval = window.setInterval(async () => {
-            try {
-                const { objects } = await this.syncService.sync(this.state.remoteObjects);
-                this.state.remoteObjects = objects;
-
-                if (!this.state.isSearching) {
-                    this.state.visibleImages = objects;
-                }
-            } catch (error) {
-                handleError(error, {
-                    operation: 'AutoSync',
-                    additionalInfo: {
-                        interval: '120000ms'
-                    }
-                });
-            }
+        this.syncInterval = window.setInterval(() => {
+            void this.runAutoSync();
         }, 120000);
+    }
+
+    private async runAutoSync(): Promise<void> {
+        try {
+            const { objects } = await this.syncService.sync(this.state.remoteObjects);
+            this.state.remoteObjects = objects;
+
+            if (!this.state.isSearching) {
+                this.state.visibleImages = objects;
+            }
+        } catch (error) {
+            handleError(error, {
+                operation: 'AutoSync',
+                additionalInfo: {
+                    interval: '120000ms'
+                }
+            });
+        }
     }
 
     private setupScrollListener(): void {
