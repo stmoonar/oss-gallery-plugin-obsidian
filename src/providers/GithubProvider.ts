@@ -142,7 +142,6 @@ export class GithubProvider implements IOssProvider {
                     images.push({
                         key: item.path,
                         url: this.buildCustomUrl(item.path),
-                        lastModified: new Date(),
                         size: item.size || 0
                     });
                 }
@@ -179,7 +178,6 @@ export class GithubProvider implements IOssProvider {
                         return [{
                             key: data.path,
                             url: data.download_url || this.buildCustomUrl(data.path),
-                            lastModified: new Date(),
                             size: data.size
                         }];
                     }
@@ -193,7 +191,6 @@ export class GithubProvider implements IOssProvider {
                         .map(item => ({
                             key: item.path,
                             url: item.download_url || this.buildCustomUrl(item.path),
-                            lastModified: new Date(),
                             size: item.size
                         }));
                 }

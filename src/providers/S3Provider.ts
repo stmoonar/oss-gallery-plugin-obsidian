@@ -2,8 +2,9 @@ import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { S3Settings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { isImageFile } from './shared/image';
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
+import { parseS3ListObjectsXml } from './shared/s3xml';
+import { extractSignedHeaders } from './shared/aws4helpers';
 import mime from 'mime';
 import * as aws4 from 'aws4';
 
@@ -79,19 +80,13 @@ export class S3Provider implements IOssProvider {
 
         this.signRequest(opts);
 
-        const headers = { ...opts.headers } as any;
-        delete headers['Host'];
-        delete headers['host'];
-        delete headers['Content-Length'];
-        delete headers['content-length'];
-
         if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
 
         try {
             const response = await requestUrl({
                 url: this.getUrl(requestPath),
                 method: 'PUT',
-                headers: headers as Record<string, string>,
+                headers: extractSignedHeaders(opts.headers as Record<string, string>),
                 body: arrayBuffer,
             });
 
@@ -135,14 +130,10 @@ export class S3Provider implements IOssProvider {
 
             this.signRequest(opts);
 
-            const headers = { ...opts.headers } as any;
-            delete headers['Host'];
-            delete headers['host'];
-
             const response = await requestUrl({
                 url: this.getUrl(requestPath),
                 method: 'GET',
-                headers: headers as Record<string, string>,
+                headers: extractSignedHeaders(opts.headers as Record<string, string>),
             });
 
             if (response.status === 200) {
@@ -174,14 +165,10 @@ export class S3Provider implements IOssProvider {
 
             this.signRequest(opts);
 
-            const headers = { ...opts.headers } as any;
-            delete headers['Host'];
-            delete headers['host'];
-
             const response = await requestUrl({
                 url: this.getUrl(requestPath),
                 method: 'DELETE',
-                headers: headers as Record<string, string>,
+                headers: extractSignedHeaders(opts.headers as Record<string, string>),
             });
 
             if (response.status < 200 || response.status >= 300) {
@@ -194,27 +181,7 @@ export class S3Provider implements IOssProvider {
     }
 
     private parseListObjectsResponse(xml: string): OssImage[] {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xml, 'text/xml');
-        const contents = xmlDoc.getElementsByTagName('Contents');
-        const images: OssImage[] = [];
-
-        for (let i = 0; i < contents.length; i++) {
-            const item = contents[i];
-            const key = item.getElementsByTagName('Key')[0]?.textContent;
-            const lastModified = item.getElementsByTagName('LastModified')[0]?.textContent;
-            const size = item.getElementsByTagName('Size')[0]?.textContent;
-
-            if (key && isImageFile(key)) {
-                images.push({
-                    key,
-                    url: this.generateAccessUrl(key),
-                    lastModified: lastModified ? new Date(lastModified) : new Date(),
-                    size: size ? parseInt(size) : 0,
-                });
-            }
-        }
-        return images;
+        return parseS3ListObjectsXml(xml, (key) => this.generateAccessUrl(key));
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {

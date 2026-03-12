@@ -27,7 +27,8 @@ export class ImageCache {
         // 检查过期时间
         if (Date.now() - cached.timestamp > this.CACHE_EXPIRY) {
             this.imageCache.delete(key);
-            this.saveCache();
+            this.dirty = true;
+            this.scheduleSave();
             return null;
         }
 
@@ -58,7 +59,8 @@ export class ImageCache {
         // 检查过期时间
         if (Date.now() - cached.timestamp > this.CACHE_EXPIRY) {
             this.imageCache.delete(key);
-            this.saveCache();
+            this.dirty = true;
+            this.scheduleSave();
             return false;
         }
 
@@ -89,17 +91,16 @@ export class ImageCache {
         const entries = Array.from(this.imageCache.entries())
             .sort((a, b) => a[1].timestamp - b[1].timestamp);
 
-        let freedSize = 0;
         const targetSize = this.MAX_CACHE_SIZE * 0.7; // 清理到70%
 
-        for (const [key, entry] of entries) {
-            if (this.getTotalCacheSize() - freedSize <= targetSize) break;
+        for (const [key] of entries) {
+            if (this.getTotalCacheSize() <= targetSize) break;
 
             this.imageCache.delete(key);
-            freedSize += entry.size;
         }
 
-        this.saveCache();
+        this.dirty = true;
+        this.scheduleSave();
     }
 
     private static scheduleSave(): void {

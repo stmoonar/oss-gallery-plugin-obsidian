@@ -4,8 +4,8 @@ import { requestUrl, RequestUrlParam, Notice, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import { simulateProgress } from './shared/progress';
-import { isImageFile } from './shared/image';
 import { buildObjectKey, normalizeBaseUrl } from './shared/path';
+import { parseS3ListObjectsXml } from './shared/s3xml';
 
 export class AliyunProvider implements IOssProvider {
     name = 'aliyun';
@@ -123,45 +123,10 @@ export class AliyunProvider implements IOssProvider {
             });
 
             if (response.status === 200) {
-                // Parse XML response from Aliyun OSS
-                const xmlText = response.text;
-                let xmlDoc: Document;
-
-                try {
-                    const parser = new DOMParser();
-                    xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-                } catch (parseError) {
-                    console.error('Failed to parse XML:', parseError);
-                    return [];
-                }
-
-                const images: OssImage[] = [];
-
-                // Get all Contents elements from the XML
-                const contents = xmlDoc.getElementsByTagName('Contents');
-
-                for (let i = 0; i < contents.length; i++) {
-                    const content = contents[i];
-                    const keyElement = content.getElementsByTagName('Key')[0];
-                    const lastModifiedElement = content.getElementsByTagName('LastModified')[0];
-                    const sizeElement = content.getElementsByTagName('Size')[0];
-
-                    if (keyElement && keyElement.textContent) {
-                        const key = keyElement.textContent;
-
-                        // Filter for image files
-                        if (isImageFile(key)) {
-                            images.push({
-                                key: key,
-                                url: `https://${publicEndpoint}/${key}`,
-                                lastModified: lastModifiedElement ? new Date(lastModifiedElement.textContent || '') : new Date(),
-                                size: sizeElement ? parseInt(sizeElement.textContent || '0') : 0
-                            });
-                        }
-                    }
-                }
-
-                return images;
+                return parseS3ListObjectsXml(
+                    response.text,
+                    (key) => `https://${publicEndpoint}/${key}`
+                );
             }
         } catch (error) {
             console.error('Failed to list Aliyun OSS images:', error);

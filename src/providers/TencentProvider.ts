@@ -5,8 +5,8 @@ import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import { createHash } from 'crypto';
 import { simulateProgress } from './shared/progress';
-import { isImageFile } from './shared/image';
 import { buildObjectKey } from './shared/path';
+import { parseS3ListObjectsXml } from './shared/s3xml';
 
 export class TencentProvider implements IOssProvider {
     name = 'tencent';
@@ -129,28 +129,7 @@ export class TencentProvider implements IOssProvider {
     }
 
     private parseListResponse(xml: string): OssImage[] {
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xml, 'text/xml');
-        const contents = xmlDoc.getElementsByTagName('Contents');
-        const images: OssImage[] = [];
-
-        for (let i = 0; i < contents.length; i++) {
-            const item = contents[i];
-            const key = item.getElementsByTagName('Key')[0]?.textContent;
-            const lastModified = item.getElementsByTagName('LastModified')[0]?.textContent;
-            const size = item.getElementsByTagName('Size')[0]?.textContent;
-
-            if (key && isImageFile(key)) {
-                images.push({
-                    key,
-                    url: this.buildPublicUrl(key),
-                    lastModified: lastModified ? new Date(lastModified) : new Date(),
-                    size: size ? parseInt(size, 10) : 0,
-                });
-            }
-        }
-
-        return images;
+        return parseS3ListObjectsXml(xml, (key) => this.buildPublicUrl(key));
     }
 
     private async generateAuthorization(method: string, pathname: string, contentType?: string): Promise<string> {

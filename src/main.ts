@@ -75,6 +75,10 @@ export default class OssGalleryPlugin extends Plugin {
 					new Notice(t("Image listing is not available"));
 					return;
 				}
+				if (!this.validateSettings()) {
+					new Notice(t("Please configure OSS settings first"));
+					return;
+				}
 				void this.openGalleryView();
 			},
 		});
@@ -107,6 +111,10 @@ export default class OssGalleryPlugin extends Plugin {
 				new Notice(t("Image listing is not available"));
 				return;
 			}
+			if (!this.validateSettings()) {
+				new Notice(t("Please configure OSS settings first"));
+				return;
+			}
 			void this.openGalleryView();
 		});
 	}
@@ -114,6 +122,10 @@ export default class OssGalleryPlugin extends Plugin {
 	async openGalleryView(): Promise<void> {
 		if (!this.supportsActiveProviderCapability("list")) {
 			new Notice(t("Image listing is not available"));
+			return;
+		}
+		if (!this.validateSettings()) {
+			new Notice(t("Please configure OSS settings first"));
 			return;
 		}
 
@@ -149,7 +161,7 @@ export default class OssGalleryPlugin extends Plugin {
 		input.onchange = async (event: Event) => {
 			const file = (event.target as HTMLInputElement)?.files?.[0];
 			if (file) {
-				await this.uploadFileToEditor(editor, file);
+				await this.performUpload(editor, file);
 			}
 		};
 
@@ -157,9 +169,9 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	/**
-	 * Upload a file directly (used by command palette file picker)
+	 * Upload a file and replace the preview placeholder with the final embed.
 	 */
-	private async uploadFileToEditor(editor: Editor, file: File): Promise<void> {
+	private async performUpload(editor: Editor, file: File): Promise<void> {
 		if (!file || !getFileTypeByMime(file)) return;
 
 		const cursor = editor.getCursor();
@@ -226,65 +238,7 @@ export default class OssGalleryPlugin extends Plugin {
 		if (!this.validateSettings()) return;
 
 		evt.preventDefault();
-
-		const cursor = editor.getCursor();
-		const startPos: Position = { line: cursor.line, ch: cursor.ch };
-		let previewText = await this.showUploadPreview(editor, startPos, file);
-
-		try {
-			if (!this.uploadService) {
-				throw new Error("Upload service not initialized. Check settings.");
-			}
-
-			const objectName = this.keyBuilder.generateObjectName(file);
-			const fileType = getFileTypeByMime(file);
-
-			const url = await this.uploadService.uploadFile(
-				file,
-				objectName,
-				(progress: UploadProgress) => {
-					previewText = this.updateUploadProgress(
-						editor,
-						startPos,
-						previewText,
-						progress.percentage
-					);
-				}
-			);
-
-			// Wait a bit for the progress bar to complete visually
-			setTimeout(() => {
-				const finalText = this.embedRenderer.render(
-					fileType,
-					url,
-					file.name
-				);
-				// Get actual range of preview text
-				const endPos = editor.offsetToPos(
-					editor.posToOffset(startPos) + previewText.length
-				);
-				editor.replaceRange(finalText, startPos, endPos);
-				// Move cursor to end of inserted text
-				const newCursorPos = editor.offsetToPos(
-					editor.posToOffset(startPos) + finalText.length
-				);
-				editor.setCursor(newCursorPos);
-				// Ensure editor focus
-				editor.focus();
-
-				// Refresh all gallery views to show the new upload
-				this.refreshGalleryViews();
-			}, 500);
-		} catch (error) {
-			handleUploadError(error, file.name);
-			// Remove preview text
-			const endPos = editor.offsetToPos(
-				editor.posToOffset(startPos) + previewText.length
-			);
-			editor.replaceRange("", startPos, endPos);
-			editor.setCursor(startPos);
-			new Notice(t("Upload failed"));
-		}
+		await this.performUpload(editor, file);
 	}
 
 	private extractFileFromEvent(evt: ClipboardEvent | DragEvent): File | null {

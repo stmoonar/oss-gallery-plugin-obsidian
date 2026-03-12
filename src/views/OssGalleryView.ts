@@ -125,10 +125,9 @@ export class OssGalleryView extends ItemView {
         }
 
         const currentTime = Date.now();
-        // Increase cache time to 5 minutes to reduce frequent API calls
+        // Skip if data was loaded less than 5 minutes ago (unless forced)
         if (!forceRefresh && (currentTime - this.lastLoadTime < 300000)) {
-            // But if it's a force refresh for new upload, we should bypass cache
-            if (!forceRefresh) return;
+            return;
         }
 
         this.state.isLoading = true;

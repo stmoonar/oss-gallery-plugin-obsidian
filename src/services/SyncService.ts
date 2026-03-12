@@ -41,11 +41,12 @@ export class SyncService {
     }
 
     /**
-     * Detect changes between local and remote
+     * Detect changes between local and remote.
+     * When lastModified is unavailable (e.g. GitHub), only add/delete is detected.
      */
     private detectChanges(local: OssImage[], remote: OssImage[]): SyncChanges {
-        const localMap = new Map(local.map(obj => [obj.key, obj.lastModified]));
-        const remoteMap = new Map(remote.map(obj => [obj.key, obj.lastModified]));
+        const localMap = new Map(local.map(obj => [obj.key, obj]));
+        const remoteMap = new Map(remote.map(obj => [obj.key, obj]));
 
         const added: OssImage[] = [];
         const deleted: string[] = [];
@@ -53,14 +54,17 @@ export class SyncService {
         let hasChanges = false;
 
         // Detect added and modified
-        for (const [key, remoteModified] of remoteMap) {
-            const localModified = localMap.get(key);
+        for (const [key, remoteObj] of remoteMap) {
+            const localObj = localMap.get(key);
 
-            if (!localModified) {
-                added.push(remote.find(obj => obj.key === key)!);
+            if (!localObj) {
+                added.push(remoteObj);
                 hasChanges = true;
-            } else if (remoteModified?.getTime() !== localModified?.getTime()) {
-                modified.push(remote.find(obj => obj.key === key)!);
+            } else if (
+                remoteObj.lastModified && localObj.lastModified &&
+                remoteObj.lastModified.getTime() !== localObj.lastModified.getTime()
+            ) {
+                modified.push(remoteObj);
                 hasChanges = true;
             }
         }

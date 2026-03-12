@@ -1,7 +1,7 @@
 export interface OssImage {
     key: string;
     url: string;
-    lastModified: Date;
+    lastModified?: Date;
     size: number;
 }
 

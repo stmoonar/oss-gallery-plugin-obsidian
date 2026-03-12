@@ -91,7 +91,7 @@ export class LocalProvider implements IOssProvider {
         this.scanDirectory(baseDir, '', images, prefix);
 
         // Sort by lastModified descending
-        images.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+        images.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
         return images;
     }
 
