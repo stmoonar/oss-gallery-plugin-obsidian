@@ -5,6 +5,6 @@
 	"minAppVersion": "0.15.0",
 	"description": "Upload and manage media and documents across multiple providers (Local on desktop, S3, MinIO, Cloudflare R2, SM.MS, GitHub, Aliyun, Tencent, Qiniu, Upyun, Imgur).",
 	"author": "stmoonar",
-	"authorUrl": "https://blog.stmoonar.me",
+	"authorUrl": "https://github.com/stmoonar",
 	"isDesktopOnly": false
 }
