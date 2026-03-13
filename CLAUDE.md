@@ -5,9 +5,9 @@ This repository contains an Obsidian plugin that uploads media and documents to 
 ## Common commands
 
 ```bash
-npm run dev
-npm run build
-npm run version
+pnpm run lint  # always pass before commit
+pnpm run build
+pnpm run version
 tsc -noEmit -skipLibCheck
 ```
 
@@ -57,3 +57,13 @@ Use the registry as the source of truth when adding or changing providers.
 - If you add user-facing strings, update `src/locale/en.ts`, `src/locale/zh-cn.ts`, and `src/locale/zh-tw.ts`.
 - Gallery features must respect provider capabilities. Imgur is upload-only in this plugin.
 - `basepath`, `nameRule`, and `pathRule` all affect final object keys.
+
+## Compact Instructions
+
+When compressing, preserve in priority order:
+
+1. Architecture decisions (NEVER summarize)
+2. Modified files and their key changes
+3. Current verification status (pass/fail)
+4. Open TODOs and rollback notes
+5. Tool outputs (can delete, keep pass/fail only)
