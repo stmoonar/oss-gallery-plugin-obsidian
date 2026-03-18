@@ -134,6 +134,18 @@ export class SettingsManager extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        // Embed format
+        new Setting(containerEl)
+            .setName(t('Embed format'))
+            .setDesc(t('Embed format description'))
+            .addText(text => text
+                .setPlaceholder('![]($URL)')
+                .setValue(this.plugin.settings.embedFormat || '![]($URL)')
+                .onChange(async value => {
+                    this.plugin.settings.embedFormat = value || '![]($URL)';
+                    await this.plugin.saveSettings();
+                }));
+
         // Video preview
         new Setting(containerEl)
             .setName(t('Video preview'))

@@ -32,6 +32,9 @@ export default {
 	Preview: "预览配置",
 	"Image preview": "图片预览",
 	"Image preview description": "开启后直接显示图片，否则显示一个链接",
+	"Embed format": "图片嵌入格式",
+	"Embed format description":
+		"图片嵌入模板。使用 $URL 代表图片链接，$NAME 代表文件名。默认: ![]($URL)。Obsidian 内链格式示例: ![[$NAME]]",
 	"Video preview": "视频预览",
 	"Video preview description":
 		"开启后通过video标签直接加载视频，否则显示一个链接",

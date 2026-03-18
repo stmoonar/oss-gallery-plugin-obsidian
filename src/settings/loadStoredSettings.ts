@@ -151,6 +151,7 @@ export function loadStoredSettings(storedValue: unknown): PluginSettings {
 		videoPreview: getBoolean(stored.videoPreview) ?? defaults.videoPreview,
 		audioPreview: getBoolean(stored.audioPreview) ?? defaults.audioPreview,
 		docsPreview: getString(stored.docsPreview) ?? defaults.docsPreview,
+		embedFormat: getString(stored.embedFormat) ?? defaults.embedFormat,
 		nameRule: isNameRule(stored.nameRule)
 			? stored.nameRule
 			: defaults.nameRule,

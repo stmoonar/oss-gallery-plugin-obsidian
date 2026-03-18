@@ -115,6 +115,7 @@ export interface PluginSettings {
     docsPreview: string;
     nameRule: NameRule;
     pathRule: PathRule;
+    embedFormat: string;
 }
 
 export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
@@ -227,4 +228,5 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     docsPreview: '',
     nameRule: 'local',
     pathRule: 'root',
+    embedFormat: '![]($URL)',
 };

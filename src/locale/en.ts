@@ -34,6 +34,9 @@ export default {
 	"Image preview": "Image preview",
 	"Image preview description":
 		"Display the image directly after opening, otherwise display a link",
+	"Embed format": "Image embed format",
+	"Embed format description":
+		"Template for image embed. Use $URL for the image URL, $NAME for the file name. Default: ![]($URL). Obsidian wiki-link example: ![[$NAME]]",
 	"Video preview": "Video preview",
 	"Video preview description":
 		"After opening, directly load the video through the video tag, otherwise a link will be displayed",

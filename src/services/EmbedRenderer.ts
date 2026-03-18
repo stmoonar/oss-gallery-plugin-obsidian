@@ -6,7 +6,7 @@ export class EmbedRenderer {
     render(type: string, url: string, name: string): string {
         switch (type) {
             case 'image':
-                return `${this.settings.imgPreview ? '!' : ''}[](${url})\n`;
+                return this.renderImage(url, name);
             case 'video':
                 return `${this.settings.videoPreview ? `<video src="${url}" controls></video>` : `[${name}](${url})`}\n`;
             case 'audio':
@@ -18,6 +18,15 @@ export class EmbedRenderer {
             default:
                 throw new Error('Unknown file type');
         }
+    }
+
+    private renderImage(url: string, name: string): string {
+        if (!this.settings.imgPreview) {
+            return `[${name}](${url})\n`;
+        }
+
+        const format = this.settings.embedFormat || '![]($URL)';
+        return format.replace(/\$URL/g, url).replace(/\$NAME/g, name) + '\n';
     }
 
     updateSettings(settings: PluginSettings): void {

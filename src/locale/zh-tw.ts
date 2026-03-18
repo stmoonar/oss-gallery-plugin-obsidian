@@ -31,6 +31,9 @@ export default {
 	'Preview': '預覽配寘',
 	'Image preview': '圖片預覽',
 	'Image preview description': '開啟後直接顯示圖片，否則顯示一個連結',
+	'Embed format': '圖片嵌入格式',
+	'Embed format description':
+		'圖片嵌入模板。使用 $URL 代表圖片連結，$NAME 代表檔案名稱。預設: ![]($URL)。Obsidian 內連結格式範例: ![[$NAME]]',
 	'Video preview': '視頻預覽',
 	'Video preview description': '開啟後通過video標籤直接加載視頻，否則顯示一個連結',
 	'Audio preview': '音頻預覽',
