@@ -49,7 +49,7 @@ export class SettingsManager extends PluginSettingTab {
         const registryEntry = providerRegistry.get(this.plugin.settings.activeProvider, this.app);
         if (activeProvider && registryEntry) {
             new Setting(containerEl)
-                .setName(`${registryEntry.label} Settings`)
+                .setName(`${registryEntry.label} ${t('Settings')}`)
                 .setHeading();
 
             activeProvider.renderSettings(

@@ -6,6 +6,7 @@ import { OssImage } from "../types/oss";
 export class ImageGrid {
 	private lazyImageService: LazyImageService;
 	private imageElements: Set<HTMLImageElement> = new Set();
+	private renderToken = 0;
 	private static readonly MAX_DISPLAY_DIMENSION = 4096;
 	private static readonly MAX_PIXEL_COUNT = 12_000_000;
 
@@ -30,8 +31,14 @@ export class ImageGrid {
 
 	async renderImages(objects: OssImage[], batchSize = 10): Promise<void> {
 		this.cleanup();
+		const token = ++this.renderToken;
 
 		for (let i = 0; i < objects.length; i += batchSize) {
+			// 渲染期间发生了新一轮渲染或 destroy：停止向已失效的容器继续渲染
+			if (token !== this.renderToken || !this.container.isConnected) {
+				return;
+			}
+
 			const batch = objects.slice(i, i + batchSize);
 			await Promise.all(
 				batch.map((obj, idx) => this.renderImageItem(obj.key, i + idx))
@@ -180,6 +187,7 @@ export class ImageGrid {
 	}
 
 	private cleanup(): void {
+		this.renderToken++;
 		this.container.empty();
 		this.imageElements.forEach((img) => {
 			this.lazyImageService.unobserve(img);

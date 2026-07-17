@@ -1,18 +1,7 @@
 import { IOssProvider, OssImage } from "./oss";
 
-export interface FileInputEvent extends Event {
-	target: HTMLInputElement & {
-		files: FileList;
-	};
-}
-
 export interface ImagePreviewOptions {
 	onNavigate?: (direction: "prev" | "next") => void;
-}
-
-export interface SearchResult {
-	matchedObjects: OssImage[];
-	totalCount: number;
 }
 
 export interface SyncChanges {
@@ -30,15 +19,6 @@ export interface GalleryState {
 	useRegexSearch: boolean;
 	currentPreviewIndex: number | null;
 	isLoading: boolean;
-}
-
-export interface RenderImageOptions {
-	container: HTMLElement;
-	objectName: string;
-	index: number;
-	onPreview?: (index: number) => void;
-	onCopy?: (url: string) => void;
-	onDelete?: (objectName: string, element: HTMLElement) => void;
 }
 
 export interface LazyImageOptions {

@@ -1,9 +1,10 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from "../types/oss";
 import { MinioSettings, PluginSettings } from "../types/settings";
 import { Setting, requestUrl, RequestUrlParam } from "obsidian";
+import { t } from "../i18n";
 import { handleUploadError } from "../utils/ErrorHandler";
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
-import { parseS3ListObjectsXml } from './shared/s3xml';
+import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './shared/s3xml';
 import { extractSignedHeaders } from './shared/aws4helpers';
 import mime from 'mime';
 import * as aws4 from "aws4";
@@ -32,10 +33,14 @@ export class MinioProvider implements IOssProvider {
     }
 
     async upload(
-        file: File, 
+        file: File,
         path: string,
         onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
+        if (!this.settings.endpoint || !this.settings.accessKey || !this.settings.secretKey || !this.settings.bucket) {
+            throw new Error(t('Please configure OSS settings first'));
+        }
+
         try {
             const arrayBuffer = await file.arrayBuffer();
             const buffer = Buffer.from(arrayBuffer);
@@ -87,43 +92,55 @@ export class MinioProvider implements IOssProvider {
     async listImages(prefix?: string): Promise<OssImage[]> {
         try {
             const bucket = this.settings.bucket.trim();
-            // Construct query parameters for ListObjects V2
-            const queryParams = new URLSearchParams({
-                'list-type': '2'
-            });
+            const images: OssImage[] = [];
+            let continuationToken: string | undefined;
 
-            if (prefix) {
-                queryParams.append('prefix', prefix);
-            }
+            do {
+                const queryParams = new URLSearchParams({
+                    'list-type': '2',
+                    'max-keys': '1000'
+                });
 
-            const queryString = queryParams.toString();
-            const path = `/${bucket}${queryString ? '?' + queryString : ''}`;
-
-            const opts = {
-                host: this.getSignedHost(),
-                path: path,
-                service: 's3',
-                region: this.settings.region || 'us-east-1',
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/xml'
+                if (prefix) {
+                    queryParams.append('prefix', prefix);
                 }
-            };
+                if (continuationToken) {
+                    queryParams.append('continuation-token', continuationToken);
+                }
 
-            this.signRequest(opts);
+                const path = `/${bucket}?${queryParams.toString()}`;
 
-            const response = await requestUrl({
-                url: this.getUrl(path),
-                method: 'GET',
-                headers: extractSignedHeaders(opts.headers as Record<string, string>),
-            });
+                const opts = {
+                    host: this.getSignedHost(),
+                    path: path,
+                    service: 's3',
+                    region: this.settings.region || 'us-east-1',
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/xml'
+                    }
+                };
 
-            if (response.status === 200) {
-                return this.parseListObjectsResponse(response.text);
-            } else {
-                console.error('List objects failed with status:', response.status, response.text);
-                throw new Error(`List objects failed with status ${response.status}`);
-            }
+                this.signRequest(opts);
+
+                const response = await requestUrl({
+                    url: this.getUrl(path),
+                    method: 'GET',
+                    headers: extractSignedHeaders(opts.headers as Record<string, string>),
+                });
+
+                if (response.status !== 200) {
+                    console.error('List objects failed with status:', response.status, response.text);
+                    throw new Error(`List objects failed with status ${response.status}`);
+                }
+
+                images.push(...this.parseListObjectsResponse(response.text));
+
+                const page = parseS3ListObjectsPage(response.text);
+                continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
+            } while (continuationToken);
+
+            return images;
         } catch (error) {
             console.error("List images failed:", error);
             throw error;
@@ -213,7 +230,11 @@ export class MinioProvider implements IOssProvider {
             .addText(text => text
                 .setValue(String(minioSettings.port))
                 .onChange(async (value) => {
-                    minioSettings.port = Number(value);
+                    const port = Number(value);
+                    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                        return;
+                    }
+                    minioSettings.port = port;
                     this.updateSettings(minioSettings);
                     await saveSettings();
                 }));

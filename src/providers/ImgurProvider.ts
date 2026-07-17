@@ -14,6 +14,19 @@ export class ImgurProvider implements IOssProvider {
         this.settings = settings;
     }
 
+    /**
+     * The proxy setting is a mirror/reverse-proxy base for api.imgur.com.
+     * Users typically enter just the base URL, so append the API path unless
+     * they already provided the full endpoint.
+     */
+    private getUploadUrl(): string {
+        const proxy = this.settings.proxy?.trim();
+        if (!proxy) return 'https://api.imgur.com/3/image';
+
+        const base = proxy.replace(/\/+$/, '');
+        return /\/3\/image$/.test(base) ? base : `${base}/3/image`;
+    }
+
     async upload(
         file: File,
         path: string,
@@ -31,7 +44,7 @@ export class ImgurProvider implements IOssProvider {
 
         const boundary = generateBoundary();
         const requestParams: RequestUrlParam = {
-            url: this.settings.proxy || 'https://api.imgur.com/3/image',
+            url: this.getUploadUrl(),
             method: 'POST',
             headers: {
                 'Authorization': `Client-ID ${this.settings.clientId}`,
@@ -114,7 +127,7 @@ export class ImgurProvider implements IOssProvider {
 
         new Setting(containerEl)
             .setName(t('Proxy'))
-            .setDesc(t('HTTP proxy URL (optional, required in some regions)'))
+            .setDesc(t('Imgur API mirror base URL (optional, required in some regions)'))
             .addText(text => text
                 .setPlaceholder('https://proxy.example.com')
                 .setValue(settings.providers.imgur?.proxy || '')

@@ -24,6 +24,11 @@ export class TencentProvider implements IOssProvider {
         return `/${encodeObjectKeyForUrl(objectKey)}`;
     }
 
+    // COS signs the raw (unencoded) UriPathname; percent-encoding is only for the request URL.
+    private getSignPath(objectKey: string): string {
+        return `/${objectKey}`;
+    }
+
     private buildPublicUrl(objectKey: string): string {
         const customUrl = this.settings.customUrl
             ? normalizeBaseUrl(this.settings.customUrl)
@@ -68,7 +73,7 @@ export class TencentProvider implements IOssProvider {
         const url = `https://${host}${objectPath}`;
         const contentType = file.type || 'application/octet-stream';
 
-        const authorization = this.generateAuthorization('PUT', objectPath, undefined, {
+        const authorization = this.generateAuthorization('PUT', this.getSignPath(objectKey), undefined, {
             host,
             'content-type': contentType,
         });
@@ -152,8 +157,8 @@ export class TencentProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to list Tencent COS images:', error);
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return [];
     }
 
     async deleteImage(key: string): Promise<void> {
@@ -164,7 +169,7 @@ export class TencentProvider implements IOssProvider {
         try {
             const host = this.getHost();
             const objectPath = this.getObjectPath(key);
-            const authorization = this.generateAuthorization('DELETE', objectPath, undefined, { host });
+            const authorization = this.generateAuthorization('DELETE', this.getSignPath(key), undefined, { host });
 
             const response = await requestUrl({
                 url: `https://${host}${objectPath}`,

@@ -3,7 +3,7 @@ import { R2Settings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
-import { parseS3ListObjectsXml } from './shared/s3xml';
+import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './shared/s3xml';
 import { extractSignedHeaders } from './shared/aws4helpers';
 import mime from 'mime';
 import * as aws4 from 'aws4';
@@ -117,39 +117,51 @@ export class R2Provider implements IOssProvider {
         }
 
         try {
-            const queryParams = new URLSearchParams({ 'list-type': '2' });
-            if (prefix) {
-                queryParams.append('prefix', prefix);
-            }
+            const images: OssImage[] = [];
+            let continuationToken: string | undefined;
 
-            const queryString = queryParams.toString();
-            const path = `/${this.getBucketName()}${queryString ? '?' + queryString : ''}`;
+            do {
+                const queryParams = new URLSearchParams({ 'list-type': '2', 'max-keys': '1000' });
+                if (prefix) {
+                    queryParams.append('prefix', prefix);
+                }
+                if (continuationToken) {
+                    queryParams.append('continuation-token', continuationToken);
+                }
 
-            const opts = {
-                host: this.getApiHost(),
-                path: path,
-                service: 's3',
-                region: 'auto',
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/xml',
-                },
-            };
+                const path = `/${this.getBucketName()}?${queryParams.toString()}`;
 
-            this.signRequest(opts);
+                const opts = {
+                    host: this.getApiHost(),
+                    path: path,
+                    service: 's3',
+                    region: 'auto',
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/xml',
+                    },
+                };
 
-            const response = await requestUrl({
-                url: this.getApiUrl(path),
-                method: 'GET',
-                headers: extractSignedHeaders(opts.headers as Record<string, string>),
-            });
+                this.signRequest(opts);
 
-            if (response.status === 200) {
-                return this.parseListObjectsResponse(response.text);
-            } else {
-                console.error('R2 list objects failed:', response.status, response.text);
-                throw new Error(`List objects failed with status ${response.status}`);
-            }
+                const response = await requestUrl({
+                    url: this.getApiUrl(path),
+                    method: 'GET',
+                    headers: extractSignedHeaders(opts.headers as Record<string, string>),
+                });
+
+                if (response.status !== 200) {
+                    console.error('R2 list objects failed:', response.status, response.text);
+                    throw new Error(`List objects failed with status ${response.status}`);
+                }
+
+                images.push(...this.parseListObjectsResponse(response.text));
+
+                const page = parseS3ListObjectsPage(response.text);
+                continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
+            } while (continuationToken);
+
+            return images;
         } catch (error) {
             console.error('Failed to list R2 images:', error);
             throw error;

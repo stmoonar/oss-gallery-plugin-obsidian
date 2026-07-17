@@ -41,17 +41,27 @@ export class AliyunProvider implements IOssProvider {
     }
 
     private async requestApi(buildRequest: (baseUrl: string) => RequestUrlParam): Promise<RequestUrlResponse> {
-        let lastError: unknown;
+        let firstError: unknown;
 
         for (const baseUrl of this.getApiBaseUrls()) {
+            let response: RequestUrlResponse;
             try {
-                return await requestUrl(buildRequest(baseUrl));
+                response = await requestUrl({ ...buildRequest(baseUrl), throw: false });
             } catch (error) {
-                lastError = error;
+                // Network-level failure only: fall through to the custom-domain mirror.
+                firstError ??= error;
+                continue;
             }
+
+            // An HTTP response (including 403/404) is authoritative — retrying
+            // another host would just mask the real error.
+            if (response.status >= 200 && response.status < 300) {
+                return response;
+            }
+            throw new Error(`Aliyun OSS request failed with status ${response.status}`);
         }
 
-        throw lastError instanceof Error ? lastError : new Error('Aliyun OSS request failed');
+        throw firstError instanceof Error ? firstError : new Error('Aliyun OSS request failed');
     }
 
     private getPublicBaseUrl(): string {
@@ -182,8 +192,8 @@ export class AliyunProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to list Aliyun OSS images:', error);
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return [];
     }
 
     async deleteImage(key: string): Promise<void> {

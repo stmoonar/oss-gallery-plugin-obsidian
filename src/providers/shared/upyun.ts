@@ -34,8 +34,9 @@ export function createUpyunAuthorization(
     return `UPYUN ${operator}:${signature}`;
 }
 
+// Upyun's REST API expects Content-MD5 as a 32-char lowercase hex digest, not base64.
 export function createUpyunContentMd5(data: ArrayBuffer): string {
-    return createHash('md5').update(Buffer.from(data)).digest('base64');
+    return createHash('md5').update(Buffer.from(data)).digest('hex');
 }
 
 export function parseUpyunListPage(raw: unknown, iterHeader?: string): UpyunListPage {

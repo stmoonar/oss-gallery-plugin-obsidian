@@ -26,6 +26,45 @@ export class GithubProvider implements IOssProvider {
         return getNumber(getRecord(error)?.status);
     }
 
+    /**
+     * Percent-encode each path segment so spaces, "#", "?" and non-ASCII
+     * characters survive both API URLs and generated raw/CDN links.
+     */
+    private encodePath(path: string): string {
+        return path.split('/').map((segment) => encodeURIComponent(segment)).join('/');
+    }
+
+    private getBranch(): string {
+        return this.settings.branch || 'main';
+    }
+
+    private getEncodedBranch(): string {
+        return encodeURIComponent(this.getBranch());
+    }
+
+    /**
+     * Look up the sha of an existing file; the Contents API requires it when
+     * overwriting, otherwise the PUT fails with 422.
+     */
+    private async getExistingSha(cleanPath: string): Promise<string | undefined> {
+        try {
+            const response = await requestUrl({
+                url: `https://api.github.com/repos/${this.settings.repo}/contents/${this.encodePath(cleanPath)}?ref=${this.getEncodedBranch()}`,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${this.settings.token}`,
+                    'User-Agent': 'Obsidian-OSS-Gallery',
+                    'X-GitHub-Api-Version': '2022-11-28'
+                },
+                throw: false,
+            });
+            if (response.status !== 200) return undefined;
+            return this.parseFileEntry(response.json as unknown)?.sha;
+        } catch {
+            return undefined;
+        }
+    }
+
     private parseFileEntry(value: unknown): GithubFileEntry | null {
         const record = getRecord(value);
         if (!record) {
@@ -70,9 +109,12 @@ export class GithubProvider implements IOssProvider {
         // However, we should ensure it doesn't start with /.
         const cleanPath = path.replace(/^\//, '');
 
-        const url = `https://api.github.com/repos/${this.settings.repo}/contents/${cleanPath}`;
+        const url = `https://api.github.com/repos/${this.settings.repo}/contents/${this.encodePath(cleanPath)}`;
 
         try {
+            // Updating an existing file requires its sha, otherwise GitHub returns 422.
+            const existingSha = await this.getExistingSha(cleanPath);
+
             const response = await requestUrl({
                 url: url,
                 method: 'PUT',
@@ -85,7 +127,8 @@ export class GithubProvider implements IOssProvider {
                 body: JSON.stringify({
                     message: `Upload ${fileName} by Obsidian OSS Gallery`,
                     content: content,
-                    branch: this.settings.branch || 'main'
+                    branch: this.getBranch(),
+                    ...(existingSha ? { sha: existingSha } : {})
                 })
             });
 
@@ -102,7 +145,7 @@ export class GithubProvider implements IOssProvider {
                     // PicGo logic: replace raw.githubusercontent.com structure or just use customUrl + path
                     // Let's assume customUrl is the base URL.
                     const cleanCustomUrl = this.settings.customUrl.replace(/\/$/, '');
-                    return `${cleanCustomUrl}/${cleanPath}`;
+                    return `${cleanCustomUrl}/${this.encodePath(cleanPath)}`;
                 }
                 if (downloadUrl) {
                     return downloadUrl;
@@ -155,7 +198,7 @@ export class GithubProvider implements IOssProvider {
      * Get repository's Git tree with all files at once
      */
     private async getRepositoryTree(repo: string): Promise<unknown> {
-        const url = `https://api.github.com/repos/${repo}/git/trees/${this.settings.branch || 'main'}?recursive=1`;
+        const url = `https://api.github.com/repos/${repo}/git/trees/${this.getEncodedBranch()}?recursive=1`;
 
         const response = await requestUrl({
             url: url,
@@ -199,7 +242,7 @@ export class GithubProvider implements IOssProvider {
      * Search specific directory
      */
     private async searchDirectory(repo: string, path: string): Promise<OssImage[]> {
-        const url = `https://api.github.com/repos/${repo}/contents/${path}?ref=${this.settings.branch || 'main'}`;
+        const url = `https://api.github.com/repos/${repo}/contents/${this.encodePath(path)}?ref=${this.getEncodedBranch()}`;
 
         try {
             const response = await requestUrl({
@@ -280,10 +323,10 @@ export class GithubProvider implements IOssProvider {
     private buildCustomUrl(path: string): string {
         if (this.settings.customUrl) {
             const cleanCustomUrl = this.settings.customUrl.replace(/\/$/, '');
-            return `${cleanCustomUrl}/${path}`;
+            return `${cleanCustomUrl}/${this.encodePath(path)}`;
         }
         // Fallback to GitHub raw URL
-        return `https://raw.githubusercontent.com/${this.settings.repo}/${this.settings.branch || 'main'}/${path}`;
+        return `https://raw.githubusercontent.com/${this.settings.repo}/${this.getEncodedBranch()}/${this.encodePath(path)}`;
     }
 
     async deleteImage(key: string): Promise<void> {
@@ -294,12 +337,12 @@ export class GithubProvider implements IOssProvider {
         const repo = this.settings.repo;
         if (!repo) throw new Error('Repo not configured');
 
-        const url = `https://api.github.com/repos/${repo}/contents/${key}`;
+        const url = `https://api.github.com/repos/${repo}/contents/${this.encodePath(key)}`;
 
         try {
             // Get SHA
             const getResponse = await requestUrl({
-                url: url + `?ref=${this.settings.branch || 'main'}`,
+                url: url + `?ref=${this.getEncodedBranch()}`,
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${this.settings.token}`,
@@ -330,7 +373,7 @@ export class GithubProvider implements IOssProvider {
                 body: JSON.stringify({
                     message: `Delete ${key} by Obsidian OSS Gallery`,
                     sha: file.sha,
-                    branch: this.settings.branch || 'main'
+                    branch: this.getBranch()
                 })
             });
 

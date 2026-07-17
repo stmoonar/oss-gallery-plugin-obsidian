@@ -3,7 +3,7 @@ import { S3Settings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
-import { parseS3ListObjectsXml } from './shared/s3xml';
+import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './shared/s3xml';
 import { extractSignedHeaders } from './shared/aws4helpers';
 import mime from 'mime';
 import * as aws4 from 'aws4';
@@ -108,39 +108,51 @@ export class S3Provider implements IOssProvider {
         }
 
         try {
-            const queryParams = new URLSearchParams({ 'list-type': '2' });
-            if (prefix) {
-                queryParams.append('prefix', prefix);
-            }
-            const queryString = queryParams.toString();
+            const images: OssImage[] = [];
+            let continuationToken: string | undefined;
 
-            const basePath = this.settings.forcePathStyle
-                ? `/${this.settings.bucket}`
-                : '';
-            const requestPath = `${basePath}/${queryString ? '?' + queryString : ''}`;
+            do {
+                const queryParams = new URLSearchParams({ 'list-type': '2', 'max-keys': '1000' });
+                if (prefix) {
+                    queryParams.append('prefix', prefix);
+                }
+                if (continuationToken) {
+                    queryParams.append('continuation-token', continuationToken);
+                }
 
-            const opts = {
-                host: this.getHost(),
-                path: requestPath,
-                service: 's3',
-                region: this.settings.region || 'us-east-1',
-                method: 'GET',
-                headers: { 'Accept': 'application/xml' },
-            };
+                const basePath = this.settings.forcePathStyle
+                    ? `/${this.settings.bucket}`
+                    : '';
+                const requestPath = `${basePath}/?${queryParams.toString()}`;
 
-            this.signRequest(opts);
+                const opts = {
+                    host: this.getHost(),
+                    path: requestPath,
+                    service: 's3',
+                    region: this.settings.region || 'us-east-1',
+                    method: 'GET',
+                    headers: { 'Accept': 'application/xml' },
+                };
 
-            const response = await requestUrl({
-                url: this.getUrl(requestPath),
-                method: 'GET',
-                headers: extractSignedHeaders(opts.headers as Record<string, string>),
-            });
+                this.signRequest(opts);
 
-            if (response.status === 200) {
-                return this.parseListObjectsResponse(response.text);
-            } else {
-                throw new Error(`List objects failed with status ${response.status}`);
-            }
+                const response = await requestUrl({
+                    url: this.getUrl(requestPath),
+                    method: 'GET',
+                    headers: extractSignedHeaders(opts.headers as Record<string, string>),
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`List objects failed with status ${response.status}`);
+                }
+
+                images.push(...this.parseListObjectsResponse(response.text));
+
+                const page = parseS3ListObjectsPage(response.text);
+                continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
+            } while (continuationToken);
+
+            return images;
         } catch (error) {
             console.error('Failed to list S3 images:', error);
             throw error;

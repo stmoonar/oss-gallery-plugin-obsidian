@@ -3,6 +3,7 @@ import { LazyImageOptions } from "../types/gallery";
 export class LazyImageService {
 	private observer: IntersectionObserver;
 	private imageElements: Set<HTMLImageElement> = new Set();
+	private destroyed = false;
 	private options: Required<
 		Pick<
 			LazyImageOptions,
@@ -53,23 +54,23 @@ export class LazyImageService {
 	 * 观察图片元素
 	 */
 	observe(img: HTMLImageElement): void {
-		if (img.dataset.src) {
-			this.imageElements.add(img);
+		if (!img.dataset.src) return;
 
-			// 使用 requestIdleCallback 延迟 observe，避免阻塞 UI
-			if ("requestIdleCallback" in window) {
-				requestIdleCallback(() => {
-					if (img.dataset.src) {
-						this.observer.observe(img);
-					}
-				});
-			} else {
-				setTimeout(() => {
-					if (img.dataset.src) {
-						this.observer.observe(img);
-					}
-				}, 0);
+		this.imageElements.add(img);
+
+		// 延迟 observe 避免阻塞 UI。回调触发时必须重新检查状态：
+		// destroy/unobserve 之后再 observe 会重新激活已 disconnect 的 observer。
+		const deferredObserve = () => {
+			if (this.destroyed || !this.imageElements.has(img) || !img.dataset.src) {
+				return;
 			}
+			this.observer.observe(img);
+		};
+
+		if ("requestIdleCallback" in window) {
+			requestIdleCallback(deferredObserve, { timeout: 200 });
+		} else {
+			setTimeout(deferredObserve, 0);
 		}
 	}
 
@@ -144,9 +145,15 @@ export class LazyImageService {
 
 			img.onerror = () => {
 				clearTimeout(timeoutId);
+				img.onload = null;
+				img.onerror = null;
 				reject(new Error(`Failed to load image: ${url}`));
 			};
 
+			// 重试时 src 可能已是同一 URL，直接重赋值不会再次触发 load 事件
+			if (img.src === url) {
+				img.removeAttribute("src");
+			}
 			img.src = url;
 		});
 	}
@@ -160,7 +167,7 @@ export class LazyImageService {
 			btoa(`
             <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
                 <rect width="100" height="100" fill="#ccc"/>
-                <text x="50" y="50" text-anchor="middle" dy=".3em" fill="#666" font-size="12">Loading...</text>
+                <text x="50" y="50" text-anchor="middle" dy=".3em" fill="#666" font-size="12">Load failed</text>
             </svg>
         `)
 		);
@@ -182,6 +189,7 @@ export class LazyImageService {
 	 * 销毁服务
 	 */
 	destroy(): void {
+		this.destroyed = true;
 		this.observer.disconnect();
 		this.imageElements.clear();
 	}

@@ -1,13 +1,8 @@
 import { OssImage, SearchResult } from '../types/oss';
 import { t } from '../i18n';
 import { isImageFile } from '../utils/FileUtils';
-import { handleError } from '../utils/ErrorHandler';
 
 export class SearchService {
-    private allImageUrls: Map<string, string> = new Map();
-
-    constructor(private generateUrl: (objectName: string) => Promise<string>) {}
-
     /**
      * 执行搜索
      */
@@ -23,15 +18,9 @@ export class SearchService {
             };
         }
 
-        const matchedObjects: OssImage[] = [];
-
-        if (useRegex) {
-            const result = await this.regexSearch(objects, searchText);
-            matchedObjects.push(...result);
-        } else {
-            const result = await this.textSearch(objects, searchText);
-            matchedObjects.push(...result);
-        }
+        const matchedObjects = useRegex
+            ? this.regexSearch(objects, searchText)
+            : this.textSearch(objects, searchText);
 
         return {
             matchedObjects,
@@ -40,123 +29,55 @@ export class SearchService {
     }
 
     /**
+     * 匹配目标：对象 key + 去掉查询串的 URL。
+     * 预签名 URL 的查询串是随机签名，参与匹配只会产生误报。
+     */
+    private getSearchTarget(obj: OssImage): string {
+        const urlWithoutQuery = obj.url ? obj.url.split('?')[0] : '';
+        return `${obj.key} ${urlWithoutQuery}`;
+    }
+
+    /**
      * 正则表达式搜索
      */
-    private async regexSearch(objects: OssImage[], searchText: string): Promise<OssImage[]> {
-        const matchedObjects: OssImage[] = [];
-
+    private regexSearch(objects: OssImage[], searchText: string): OssImage[] {
+        let regex: RegExp;
         try {
-            let regexPattern = searchText;
-
-            // 智能处理通配符
-            regexPattern = this.convertWildcardToRegex(regexPattern);
-
-            const regex = new RegExp(regexPattern, 'i');
-
-            for (const obj of objects) {
-                if (!isImageFile(obj.key)) continue;
-
-                const cachedUrl = this.allImageUrls.get(obj.key);
-                let url = cachedUrl;
-                
-                if (!url) {
-                    if (obj.url) {
-                        url = obj.url;
-                    } else {
-                        url = await this.generateUrl(obj.key);
-                    }
-                }
-
-                if (regex.test(url)) {
-                    matchedObjects.push(obj);
-                    if (!cachedUrl) {
-                        this.allImageUrls.set(obj.key, url);
-                    }
-                }
-            }
+            regex = new RegExp(this.convertWildcardToRegex(searchText), 'i');
         } catch (error) {
-            handleError(error, {
-                operation: 'RegexSearch',
-                additionalInfo: {
-                    pattern: searchText
-                }
-            });
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             throw new Error(`${t('Invalid regex pattern')}: ${errorMessage}`);
         }
 
-        return matchedObjects;
+        return objects.filter(
+            (obj) => isImageFile(obj.key) && regex.test(this.getSearchTarget(obj))
+        );
     }
 
     /**
      * 普通文本搜索
      */
-    private async textSearch(objects: OssImage[], searchText: string): Promise<OssImage[]> {
-        const matchedObjects: OssImage[] = [];
+    private textSearch(objects: OssImage[], searchText: string): OssImage[] {
         const lowerSearchText = searchText.toLowerCase();
 
-        for (const obj of objects) {
-            if (!isImageFile(obj.key)) continue;
-
-            const cachedUrl = this.allImageUrls.get(obj.key);
-            let url = cachedUrl;
-
-            if (!url) {
-                if (obj.url) {
-                    url = obj.url;
-                } else {
-                    url = await this.generateUrl(obj.key);
-                }
-            }
-
-            if (url.toLowerCase().includes(lowerSearchText)) {
-                matchedObjects.push(obj);
-                if (!cachedUrl) {
-                    this.allImageUrls.set(obj.key, url);
-                }
-            }
-        }
-
-        return matchedObjects;
+        return objects.filter(
+            (obj) =>
+                isImageFile(obj.key) &&
+                this.getSearchTarget(obj).toLowerCase().includes(lowerSearchText)
+        );
     }
 
     /**
-     * 转换通配符为正则表达式
+     * 转换通配符为正则表达式。
+     * 仅当模式除 * 外不含其他正则元字符时才按通配符处理，
+     * 此时转义所有字符再把 * 展开为 .*，避免 "." 等被误当正则解释。
      */
     private convertWildcardToRegex(pattern: string): string {
-        // 检查是否是简单的通配符模式
-        const hasSpecialChars = /[()[?+]/.test(pattern);
-
-        if (!hasSpecialChars) {
-            if (pattern.startsWith('*') && pattern.endsWith('*')) {
-                const innerPattern = pattern.slice(1, -1);
-                return `.*${innerPattern}.*`;
-            } else if (pattern.startsWith('*')) {
-                // *foo -> match anything ending with foo
-                const innerPattern = pattern.slice(1);
-                return `.*${innerPattern}`;
-            } else if (pattern.endsWith('*')) {
-                // foo* -> match anything starting with foo
-                const innerPattern = pattern.slice(0, -1);
-                return `${innerPattern}.*`;
-            }
+        const hasOtherRegexChars = /[()[\]{}?+.\\^$|]/.test(pattern);
+        if (pattern.includes('*') && !hasOtherRegexChars) {
+            const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return escaped.replace(/\\\*/g, '.*');
         }
-
         return pattern;
-    }
-
-    
-    /**
-     * 清空URL缓存
-     */
-    clearCache(): void {
-        this.allImageUrls.clear();
-    }
-
-    /**
-     * 获取缓存大小
-     */
-    getCacheSize(): number {
-        return this.allImageUrls.size;
     }
 }

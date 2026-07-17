@@ -39,6 +39,19 @@ export class LocalProvider implements IOssProvider {
     }
 
     /**
+     * Resolve a storage-relative path to an absolute path, rejecting any
+     * path (e.g. containing "..") that escapes the storage directory.
+     */
+    private resolveWithinStorage(relativePath: string): string {
+        const baseDir = path.resolve(this.getAbsoluteStoragePath());
+        const resolved = path.resolve(baseDir, relativePath);
+        if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) {
+            throw new Error(t('Path escapes the storage directory'));
+        }
+        return resolved;
+    }
+
+    /**
      * Ensure the storage directory exists.
      */
     private ensureStorageDir(): void {
@@ -64,7 +77,7 @@ export class LocalProvider implements IOssProvider {
 
         if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
 
-        const destAbsolute = path.join(this.getAbsoluteStoragePath(), filePath);
+        const destAbsolute = this.resolveWithinStorage(filePath);
         const destDir = path.dirname(destAbsolute);
         if (!fs.existsSync(destDir)) {
             fs.mkdirSync(destDir, { recursive: true });
@@ -145,25 +158,55 @@ export class LocalProvider implements IOssProvider {
     }
 
     async deleteImage(key: string): Promise<void> {
-        const fullPath = path.join(this.getAbsoluteStoragePath(), key);
+        const fullPath = this.resolveWithinStorage(key);
 
         if (!fs.existsSync(fullPath)) {
             throw new Error(`File not found: ${key}`);
         }
 
         if (this.settings.deleteToTrash) {
-            const adapter = this.getFileSystemAdapter();
-            try {
-                const trashed = adapter ? await adapter.trashSystem(fullPath) : false;
-                if (!trashed) {
-                    fs.unlinkSync(fullPath);
-                }
-            } catch {
-                fs.unlinkSync(fullPath);
+            const trashed = await this.moveToSystemTrash(fullPath, key);
+            if (!trashed) {
+                // Never silently fall back to permanent deletion when the
+                // user explicitly asked for trash.
+                throw new Error(t('Failed to move file to system trash'));
             }
         } else {
             fs.unlinkSync(fullPath);
         }
+    }
+
+    /**
+     * Move a file to the system trash. `trashSystem` expects a vault-relative
+     * path, so it only works in vault-relative mode; for absolute storage
+     * paths fall back to Electron's shell.trashItem.
+     */
+    private async moveToSystemTrash(fullPath: string, key: string): Promise<boolean> {
+        if (this.settings.useRelativePath) {
+            const adapter = this.getFileSystemAdapter();
+            if (adapter) {
+                try {
+                    const vaultRelative = normalizePath(`${this.settings.storagePath}/${key}`);
+                    if (await adapter.trashSystem(vaultRelative)) return true;
+                } catch {
+                    // fall through to Electron
+                }
+            }
+        }
+
+        try {
+            interface ElectronShell { shell?: { trashItem?: (p: string) => Promise<void> } }
+            const requireFn = (window as unknown as { require?: (m: string) => ElectronShell }).require;
+            const electron = requireFn?.('electron');
+            if (electron?.shell?.trashItem) {
+                await electron.shell.trashItem(fullPath);
+                return true;
+            }
+        } catch {
+            // no Electron available (mobile) or trash failed
+        }
+
+        return false;
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {

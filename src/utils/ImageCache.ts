@@ -4,6 +4,7 @@ interface CachedImageEntry {
     data: string;
     timestamp: number;
     size: number;
+    lastAccess?: number;
 }
 
 interface CachedImageStore {
@@ -16,7 +17,8 @@ export class ImageCache {
     private static readonly CACHE_KEY = 'oss-gallery-cache';
     private static readonly LEGACY_CACHE_KEY = 'minio-gallery-cache';
     private static readonly CACHE_EXPIRY = 12 * 60 * 60 * 1000; // 12小时
-    private static readonly MAX_CACHE_SIZE = 50 * 1024 * 1024; // 50MB
+    // localStorage 配额通常只有 5-10MB，上限必须留足余量，否则持久化永远失败
+    private static readonly MAX_CACHE_SIZE = 4 * 1024 * 1024; // 4MB
     private static saveTimeout: number | null = null;
     private static dirty = false;
 
@@ -55,12 +57,17 @@ export class ImageCache {
             return null;
         }
 
+        cached.lastAccess = Date.now();
         return cached.data;
     }
 
     static async set(key: string, data: string): Promise<void> {
         // 检查缓存大小
         const dataSize = new Blob([data]).size;
+        if (dataSize > this.MAX_CACHE_SIZE) {
+            // 单条数据超出总上限，不缓存
+            return;
+        }
         if (this.getTotalCacheSize() + dataSize > this.MAX_CACHE_SIZE) {
             this.cleanupOldCache();
         }
@@ -97,6 +104,11 @@ export class ImageCache {
     }
 
     static clear(): void {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        this.dirty = false;
         this.imageCache.clear();
         const storage = this.getStorage();
         storage.removeItem(this.CACHE_KEY);
@@ -111,17 +123,20 @@ export class ImageCache {
         return totalSize;
     }
 
-    private static cleanupOldCache(): void {
-        // 按LRU策略清理缓存
+    private static cleanupOldCache(targetRatio = 0.7): void {
+        // 按最近访问时间（LRU）清理缓存
         const entries = Array.from(this.imageCache.entries())
-            .sort((a, b) => a[1].timestamp - b[1].timestamp);
+            .sort((a, b) =>
+                (a[1].lastAccess ?? a[1].timestamp) - (b[1].lastAccess ?? b[1].timestamp));
 
-        const targetSize = this.MAX_CACHE_SIZE * 0.7; // 清理到70%
+        const targetSize = this.MAX_CACHE_SIZE * targetRatio;
+        let totalSize = this.getTotalCacheSize();
 
-        for (const [key] of entries) {
-            if (this.getTotalCacheSize() <= targetSize) break;
+        for (const [key, entry] of entries) {
+            if (totalSize <= targetSize) break;
 
             this.imageCache.delete(key);
+            totalSize -= entry.size;
         }
 
         this.dirty = true;
@@ -143,15 +158,28 @@ export class ImageCache {
         if (!this.dirty) return;
 
         try {
-            const data = Object.fromEntries(this.imageCache);
-            this.getStorage().setItem(this.CACHE_KEY, JSON.stringify({
-                data,
-                timestamp: Date.now()
-            }));
+            this.persist();
             this.dirty = false;
-        } catch (err) {
-            console.error('Failed to save image cache:', err);
+        } catch {
+            // 多半是 localStorage 配额不足：清掉一半再试一次
+            try {
+                this.cleanupOldCache(0.5);
+                this.persist();
+                this.dirty = false;
+            } catch (err) {
+                console.error('Failed to save image cache:', err);
+                // 放弃本轮持久化，避免之后每次 scheduleSave 都重复序列化-失败
+                this.dirty = false;
+            }
         }
+    }
+
+    private static persist(): void {
+        const data = Object.fromEntries(this.imageCache);
+        this.getStorage().setItem(this.CACHE_KEY, JSON.stringify({
+            data,
+            timestamp: Date.now()
+        }));
     }
 
     static getStats(): { count: number, totalSize: number, totalSizeMB: number } {

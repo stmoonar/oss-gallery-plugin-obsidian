@@ -3,6 +3,9 @@ import { moment } from 'obsidian';
 import { getFileTypeByMime } from '../utils/FileUtils';
 
 export class ObjectKeyBuilder {
+    private lastTimestamp = '';
+    private timestampSeq = 0;
+
     constructor(private settings: PluginSettings) {}
 
     generateObjectName(file: File): string {
@@ -14,7 +17,13 @@ export class ObjectKeyBuilder {
         const basePath = this.settings.basepath.trim().replace(/^\/+/, '').replace(/\/+$/, '');
 
         if (basePath) {
-            segments.push(basePath);
+            // Drop empty / "." / ".." segments so the base path cannot escape the storage root.
+            const safeSegments = basePath
+                .split('/')
+                .filter((segment) => segment && segment !== '.' && segment !== '..');
+            if (safeSegments.length > 0) {
+                segments.push(safeSegments.join('/'));
+            }
         }
 
         switch (this.settings.pathRule) {
@@ -36,23 +45,46 @@ export class ObjectKeyBuilder {
         return segments.length > 0 ? `${segments.join('/')}/` : '';
     }
 
-    private generateFileName(file: File): string {
+    /**
+     * Millisecond timestamp with a sequence suffix when two uploads land in
+     * the same millisecond (batch paste/drop), so keys never collide.
+     */
+    private nextTimestamp(): string {
         const timestamp = moment().format('YYYYMMDDHHmmssSSS');
-        const extension = file.name.substring(file.name.lastIndexOf('.'));
+        if (timestamp === this.lastTimestamp) {
+            this.timestampSeq++;
+            return `${timestamp}_${this.timestampSeq}`;
+        }
+        this.lastTimestamp = timestamp;
+        this.timestampSeq = 0;
+        return timestamp;
+    }
+
+    private generateFileName(file: File): string {
+        const timestamp = this.nextTimestamp();
+        const dotIndex = file.name.lastIndexOf('.');
+        const extension = dotIndex > 0 ? file.name.substring(dotIndex) : '';
+        const safeName = sanitizeFileName(file.name);
 
         switch (this.settings.nameRule) {
-            case 'local':
-                return file.name;
             case 'time':
-                return timestamp + extension;
+                return timestamp + sanitizeFileName(extension);
             case 'timeAndLocal':
-                return timestamp + '_' + file.name;
+                return timestamp + '_' + safeName;
+            case 'local':
             default:
-                return file.name;
+                return safeName;
         }
     }
 
     updateSettings(settings: PluginSettings): void {
         this.settings = settings;
     }
+}
+
+/**
+ * Strip characters that break object keys or the URLs built from them.
+ */
+function sanitizeFileName(name: string): string {
+    return name.replace(/[\\/:*?"<>|#%]/g, '_');
 }

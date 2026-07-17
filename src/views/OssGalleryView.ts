@@ -19,7 +19,6 @@ export class OssGalleryView extends ItemView {
     private container: HTMLElement;
     private refreshBtn: HTMLButtonElement;
     private backToTopBtn: HTMLButtonElement | null = null;
-    private syncInterval: number | null = null;
     private scrollTimeout: number | null = null;
     private lastLoadTime: number = 0;
 
@@ -47,17 +46,18 @@ export class OssGalleryView extends ItemView {
     }
 
     updateProvider(provider: IOssProvider) {
+        // saveSettings calls this on every settings keystroke; only force a
+        // remote reload when the active provider actually changed.
+        const providerChanged = this.provider.name !== provider.name;
         this.provider = provider;
         this.initializeServices();
-        void this.loadGallery(true);
+        if (providerChanged) {
+            void this.loadGallery(true);
+        }
     }
 
     private initializeServices(): void {
-        // Search service might need update if it depends on specific object structure, 
-        // but OssImage should be compatible if we map 'key' to 'name' or update SearchService.
-        // Assuming SearchService expects objects with 'name' property. 
-        // OssImage has 'key', let's ensure compatibility.
-        this.searchService = new SearchService(async (objectName) => await this.getObjectUrl(objectName));
+        this.searchService = new SearchService();
         this.syncService = new SyncService({ provider: this.provider });
     }
 
@@ -66,7 +66,7 @@ export class OssGalleryView extends ItemView {
     }
 
     getDisplayText(): string {
-        return t('Minio gallery'); // Should probably rename to OSS Gallery in i18n
+        return t('OSS gallery');
     }
 
     getIcon(): string {
@@ -74,6 +74,8 @@ export class OssGalleryView extends ItemView {
     }
 
     async onOpen() {
+        await ImageCache.init();
+
         const container = this.containerEl.children[1] as HTMLElement;
         if (!container) throw new Error("Failed to get container element");
 
@@ -241,7 +243,7 @@ export class OssGalleryView extends ItemView {
         }
     }
 
-    private async openImagePreview(imageIndex: number, modal?: ImagePreviewModal): Promise<void> {
+    private async openImagePreview(imageIndex: number): Promise<void> {
         if (imageIndex < 0 || imageIndex >= this.state.visibleImages.length || this.state.isLoading) {
             return;
         }
@@ -249,12 +251,6 @@ export class OssGalleryView extends ItemView {
         const object = this.state.visibleImages[imageIndex];
         // 使用 object.url 而不是异步搜索
         const objectUrl = object.url;
-
-        if (modal) {
-            modal.updateImage(objectUrl, object.key);
-            this.state.currentPreviewIndex = imageIndex;
-            return;
-        }
 
         const modalInstance = new ImagePreviewModal(this.app, objectUrl, object.key, {
             onNavigate: (direction: 'prev' | 'next') => {
@@ -362,17 +358,26 @@ export class OssGalleryView extends ItemView {
     }
 
     private startAutoSync(): void {
-        this.syncInterval = window.setInterval(() => {
+        this.registerInterval(window.setInterval(() => {
             void this.runAutoSync();
-        }, 120000);
+        }, 120000));
     }
 
     private async runAutoSync(): Promise<void> {
+        if (this.state.isLoading) return;
+
         try {
-            const { objects } = await this.syncService.sync(this.state.remoteObjects);
+            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
+            if (!changes.hasChanges) return;
+
             this.state.remoteObjects = objects;
 
+            // Re-render so the grid (and the indices captured in its click
+            // handlers) stays consistent with the new object list.
             if (!this.state.isSearching) {
+                this.cleanupImageGrid();
+                this.createImageGrid();
+                await this.imageGrid!.renderImages(objects);
                 this.state.visibleImages = objects;
             }
         } catch (error) {
@@ -404,7 +409,7 @@ export class OssGalleryView extends ItemView {
             }, 16);
         };
 
-        this.container.addEventListener('scroll', throttledHandleScroll, { passive: true });
+        this.registerDomEvent(this.container, 'scroll', throttledHandleScroll, { passive: true });
     }
 
     private showBackToTopButton(): void {
@@ -426,12 +431,8 @@ export class OssGalleryView extends ItemView {
         this.backToTopBtn?.classList.remove('visible');
     }
 
-    async onunload(): Promise<void> {
-        if (this.syncInterval) {
-            clearInterval(this.syncInterval);
-            this.syncInterval = null;
-        }
-
+    async onClose(): Promise<void> {
+        // The auto-sync interval is cleaned up via registerInterval.
         if (this.scrollTimeout) {
             clearTimeout(this.scrollTimeout);
             this.scrollTimeout = null;
@@ -445,11 +446,5 @@ export class OssGalleryView extends ItemView {
 
         this.imageGrid?.destroy();
         this.imageGrid = null;
-
-        this.searchService.clearCache();
-    }
-
-    async onload(): Promise<void> {
-        await ImageCache.init();
     }
 }

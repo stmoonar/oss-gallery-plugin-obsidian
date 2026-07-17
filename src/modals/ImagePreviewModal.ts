@@ -1,4 +1,5 @@
 import { App, Modal, setIcon } from "obsidian";
+import { t } from "../i18n";
 import { ImagePreviewOptions } from "../types/gallery";
 
 export class ImagePreviewModal extends Modal {
@@ -16,6 +17,7 @@ export class ImagePreviewModal extends Modal {
 	private loadingTimer: number | null = null;
 	private isLoadingShown: boolean = false;
 	private originalImgSrc: string | null = null;
+	private closed = false;
 	private static readonly LOADING_DELAY = 500; // 500ms阈值
 
 	constructor(
@@ -50,6 +52,7 @@ export class ImagePreviewModal extends Modal {
 	}
 
 	onOpen(): void {
+		this.closed = false;
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("oss-gallery-image-preview-modal-content");
@@ -89,7 +92,7 @@ export class ImagePreviewModal extends Modal {
 			cls: "oss-gallery-preview-toggle-bg-btn",
 		});
 		setIcon(themeToggleBtn, this.currentTheme === "dark" ? "sun" : "moon");
-		themeToggleBtn.title = "Toggle background";
+		themeToggleBtn.title = t("Toggle background");
 
 		themeToggleBtn.onclick = (e) => {
 			e.stopPropagation();
@@ -156,9 +159,6 @@ export class ImagePreviewModal extends Modal {
 			}
 		};
 
-		this.imgElement.onload = () => {
-			console.log("Preview image loaded successfully:", this.imageUrl);
-		};
 	}
 
 	/**
@@ -168,9 +168,7 @@ export class ImagePreviewModal extends Modal {
 		// 点击背景关闭
 		this.container.onclick = () => this.close();
 
-		// 键盘快捷键
-		this.scope.register([], "Escape", () => this.close());
-
+		// Escape 关闭由 Modal 基类处理
 		if (this.onNavigate) {
 			this.scope.register([], "ArrowLeft", () =>
 				this.onNavigate?.("prev")
@@ -214,7 +212,7 @@ export class ImagePreviewModal extends Modal {
 		errorContainer.createDiv({ cls: "error-icon", text: "⚠️" });
 		errorContainer.createDiv({
 			cls: "error-message",
-			text: "Failed to load image",
+			text: t("Failed to load image"),
 		});
 		errorContainer.createDiv({ cls: "error-url", text: this.imageUrl });
 
@@ -252,6 +250,8 @@ export class ImagePreviewModal extends Modal {
 	 * 更新图片
 	 */
 	updateImage(newUrl: string, newFileName?: string): void {
+		if (this.closed) return;
+
 		// 立即清除之前的错误信息和加载状态
 		this.hideErrorMessages();
 		this.hideLoadingSpinner();
@@ -300,6 +300,8 @@ export class ImagePreviewModal extends Modal {
 			// 预加载新图片
 			const tempImg = new Image();
 			tempImg.onload = () => {
+				if (this.closed) return;
+
 				// 清除延迟计时器
 				if (this.loadingTimer) {
 					clearTimeout(this.loadingTimer);
@@ -321,6 +323,8 @@ export class ImagePreviewModal extends Modal {
 			};
 
 			tempImg.onerror = () => {
+				if (this.closed) return;
+
 				// 清除延迟计时器
 				if (this.loadingTimer) {
 					clearTimeout(this.loadingTimer);
@@ -353,7 +357,7 @@ export class ImagePreviewModal extends Modal {
 			this.loadingSpinner.createDiv({ cls: "loading-spinner" });
 			this.loadingSpinner.createDiv({
 				cls: "loading-text",
-				text: "Loading...",
+				text: t("Loading..."),
 			});
 			this.container.appendChild(this.loadingSpinner);
 		}
@@ -397,12 +401,16 @@ export class ImagePreviewModal extends Modal {
 
 			// 延迟一点再处理，让当前更新完成
 			setTimeout(() => {
-				this.updateImage(pending.url, pending.fileName);
+				if (!this.closed) {
+					this.updateImage(pending.url, pending.fileName);
+				}
 			}, 50);
 		}
 	}
 
 	onClose(): void {
+		this.closed = true;
+
 		// 清理计时器
 		if (this.loadingTimer) {
 			clearTimeout(this.loadingTimer);

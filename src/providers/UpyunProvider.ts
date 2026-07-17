@@ -47,7 +47,9 @@ export class UpyunProvider implements IOssProvider {
         if (this.settings.url) {
             return normalizeBaseUrl(this.settings.url);
         }
-        return `https://${this.settings.bucket}.test.upcdn.net`;
+        // No usable default: Upyun's test domains are long retired, and a made-up
+        // fallback would produce dead links that look like successful uploads.
+        throw new Error(t('Please configure Upyun acceleration domain URL first'));
     }
 
     private buildPublicUrl(key: string): string {
@@ -109,9 +111,15 @@ export class UpyunProvider implements IOssProvider {
                 }
                 if (isUpyunDirectory(entry.type)) {
                     seenPaths.add(entryPath);
-                    images.push(
-                        ...await this.listDirectory(entryPath, filterPrefix, visitedDirectories, seenPaths)
-                    );
+                    // Only recurse into directories that can still contain matches.
+                    const canMatchPrefix = !filterPrefix
+                        || entryPath.startsWith(filterPrefix)
+                        || filterPrefix.startsWith(`${entryPath}/`);
+                    if (canMatchPrefix) {
+                        images.push(
+                            ...await this.listDirectory(entryPath, filterPrefix, visitedDirectories, seenPaths)
+                        );
+                    }
                     continue;
                 }
                 if (filterPrefix && !entryPath.startsWith(filterPrefix)) {
@@ -208,8 +216,8 @@ export class UpyunProvider implements IOssProvider {
             );
         } catch (error) {
             console.error('Failed to list Upyun images:', error);
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return [];
     }
 
     async deleteImage(key: string): Promise<void> {

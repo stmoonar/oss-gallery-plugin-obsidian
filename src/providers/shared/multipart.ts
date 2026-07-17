@@ -16,8 +16,11 @@ export function buildMultipartBody(fields: MultipartField[], boundary: string): 
         parts.push(encoder.encode(`--${boundary}\r\n`));
 
         if (field.filename) {
+            // Raw UTF-8 filename (with quotes/backslashes escaped) — percent-encoding
+            // here would make servers store the encoded string as the file name.
+            const safeFilename = field.filename.replace(/[\\"]/g, '_').replace(/[\r\n]/g, ' ');
             parts.push(encoder.encode(
-                `Content-Disposition: form-data; name="${field.name}"; filename="${encodeURIComponent(field.filename)}"\r\n`
+                `Content-Disposition: form-data; name="${field.name}"; filename="${safeFilename}"\r\n`
             ));
             if (field.contentType) {
                 parts.push(encoder.encode(`Content-Type: ${field.contentType}\r\n`));

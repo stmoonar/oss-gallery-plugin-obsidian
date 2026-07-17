@@ -9,6 +9,7 @@ export interface SearchComponentOptions {
 
 export class SearchComponent {
 	private container: HTMLElement;
+	private searchContainer: HTMLElement;
 	private searchInput: HTMLInputElement;
 	private searchBtn: HTMLButtonElement;
 	private regexBtn: HTMLButtonElement | null = null;
@@ -27,6 +28,7 @@ export class SearchComponent {
 		const searchContainer = this.container.createEl("div", {
 			cls: "search-container",
 		});
+		this.searchContainer = searchContainer;
 
 		// 创建搜索框包装器
 		const searchInputWrapper = searchContainer.createEl("div", {
@@ -74,6 +76,8 @@ export class SearchComponent {
 			} else if (e.key === "Escape") {
 				if (this.searchInput.value) {
 					this.searchInput.value = "";
+					// 清空后同步复位搜索结果
+					options.onSearch("");
 				}
 			}
 		};
@@ -167,7 +171,7 @@ export class SearchComponent {
 			this.regexBtn.onclick = null;
 		}
 
-		// 移除元素
-		this.container.remove();
+		// 只移除自己创建的容器，传入的父容器（工具栏）不属于本组件
+		this.searchContainer.remove();
 	}
 }

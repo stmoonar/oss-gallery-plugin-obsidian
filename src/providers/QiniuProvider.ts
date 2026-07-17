@@ -38,7 +38,9 @@ export class QiniuProvider implements IOssProvider {
         if (this.settings.url) {
             return normalizeBaseUrl(this.settings.url);
         }
-        return `https://${this.settings.bucket}.qiniudn.com`;
+        // qiniudn.com test domains were retired in 2018; a fabricated fallback
+        // would produce dead links that look like successful uploads.
+        throw new Error(t('Please configure Qiniu CDN domain URL first'));
     }
 
     private buildPublicUrl(key: string): string {
@@ -195,8 +197,8 @@ export class QiniuProvider implements IOssProvider {
             }
         } catch (error) {
             console.error('Failed to list Qiniu images:', error);
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return [];
     }
 
     async deleteImage(key: string): Promise<void> {

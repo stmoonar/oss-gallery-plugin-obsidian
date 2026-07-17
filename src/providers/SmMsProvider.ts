@@ -65,45 +65,62 @@ export class SmMsProvider implements IOssProvider {
     }
 
     async listImages(prefix?: string): Promise<OssImage[]> {
-        // SM.MS API for listing history is https://sm.ms/api/v2/upload_history
-        // But it might require different permissions or return structure.
-        // For now, we can try to implement it or return empty if not supported.
-        // Let's assume we want to support it if possible.
-        
+        // SM.MS upload history API: https://sm.ms/api/v2/upload_history (paginated)
+        if (!this.settings.token) {
+            return [];
+        }
+
         try {
-            const response = await requestUrl({
-                url: 'https://sm.ms/api/v2/upload_history',
-                method: 'GET',
-                headers: {
-                    'Authorization': this.settings.token
-                }
-            });
+            const images: OssImage[] = [];
+            let page = 1;
 
-            if (response.status === 200) {
+            while (true) {
+                const response = await requestUrl({
+                    url: `https://sm.ms/api/v2/upload_history?page=${page}`,
+                    method: 'GET',
+                    headers: {
+                        'Authorization': this.settings.token
+                    }
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`List failed with status: ${response.status}`);
+                }
+
                 const data = getRecord(response.json as unknown);
-                if (getBoolean(data?.success)) {
-                    return (getArray(data?.data) ?? []).flatMap((item) => {
-                        const record = getRecord(item);
-                        const key = getString(record?.hash);
-                        const url = getString(record?.url);
-                        if (!key || !url) {
-                            return [];
-                        }
-
-                        const createdAt = getString(record?.created_at);
-                        return [{
-                            key,
-                            url,
-                            lastModified: createdAt ? new Date(createdAt) : undefined,
-                            size: getNumber(record?.size) ?? 0,
-                        }];
-                    });
+                if (!getBoolean(data?.success)) {
+                    throw new Error(getString(data?.message) || 'List failed');
                 }
+
+                const items = getArray(data?.data) ?? [];
+                images.push(...items.flatMap((item) => {
+                    const record = getRecord(item);
+                    const key = getString(record?.hash);
+                    const url = getString(record?.url);
+                    if (!key || !url) {
+                        return [];
+                    }
+
+                    const createdAt = getString(record?.created_at);
+                    return [{
+                        key,
+                        url,
+                        lastModified: createdAt ? new Date(createdAt) : undefined,
+                        size: getNumber(record?.size) ?? 0,
+                    }];
+                }));
+
+                const totalPages = getNumber(data?.TotalPages)
+                    ?? getNumber(getRecord(data?.meta)?.total_pages);
+                if (items.length === 0 || !totalPages || page >= totalPages) {
+                    return images;
+                }
+                page++;
             }
         } catch (e) {
             console.error('Failed to list SM.MS images', e);
+            throw new Error(`List failed: ${e instanceof Error ? e.message : String(e)}`);
         }
-        return [];
     }
 
     async deleteImage(key: string): Promise<void> {

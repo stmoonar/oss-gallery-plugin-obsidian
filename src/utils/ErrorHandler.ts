@@ -21,17 +21,10 @@ export interface ErrorContext {
 }
 
 /**
- * 敏感信息模式列表
+ * 敏感键名 + 其后的值（key=value / key: value / "key": "value"）
  */
-const SENSITIVE_PATTERNS = [
-    /access[_-]?key/i,
-    /secret[_-]?key/i,
-    /password/i,
-    /token/i,
-    /auth/i,
-    /credential/i,
-    /endpoint.*\..*\./i
-];
+const SENSITIVE_KEY_VALUE_PATTERN =
+    /((?:access[_-]?key(?:[_-]?id)?|secret(?:[_-]?access)?[_-]?key|password|passwd|pwd|token|authorization|credential|signature|secret)[\w-]*"?\s*[=:]\s*)("[^"]*"|'[^']*'|[^&\s,;"']+)/gi;
 
 /**
  * 过滤敏感信息
@@ -41,12 +34,14 @@ const SENSITIVE_PATTERNS = [
 function filterSensitiveInfo(message: string): string {
     let filtered = message;
 
-    SENSITIVE_PATTERNS.forEach(pattern => {
-        filtered = filtered.replace(pattern, '[REDACTED]');
-    });
+    // key=value / key: value 形式的凭据
+    filtered = filtered.replace(SENSITIVE_KEY_VALUE_PATTERN, '$1[REDACTED]');
 
-    // 过滤可能的 URL 查询参数中的敏感信息
-    filtered = filtered.replace(/\?([^\s&]*=)[^&\s]*/g, '$1[REDACTED]');
+    // Authorization: Bearer/Basic xxx 形式
+    filtered = filtered.replace(/\b(bearer|basic)\s+[\w.~+/=-]+/gi, '$1 [REDACTED]');
+
+    // URL 查询参数：预签名 URL 的签名/凭据都在参数值里，全部脱敏
+    filtered = filtered.replace(/([?&][^=&\s?#]+)=[^&\s#]*/g, '$1=[REDACTED]');
 
     return filtered;
 }
@@ -92,7 +87,7 @@ export function handleError(
         case ErrorLevel.ERROR:
             console.error(formattedMessage);
             if (errorStack) {
-                console.error('Stack trace:', errorStack);
+                console.error('Stack trace:', filterSensitiveInfo(errorStack));
             }
             break;
     }

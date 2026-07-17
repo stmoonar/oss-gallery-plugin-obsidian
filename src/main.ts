@@ -12,14 +12,10 @@ import { OssProviderManager } from "./providers/OssProviderManager";
 import { providerRegistry } from "./providers/registry";
 import { loadStoredSettings } from "./settings/loadStoredSettings";
 
-interface Position {
-	line: number;
-	ch: number;
-}
-
 export default class OssGalleryPlugin extends Plugin {
 	settings: PluginSettings;
 	providerManager: OssProviderManager;
+	private uploadCounter = 0;
 
 	// Services
 	private keyBuilder: ObjectKeyBuilder;
@@ -69,7 +65,7 @@ export default class OssGalleryPlugin extends Plugin {
 
 		this.addCommand({
 			id: "open-oss-gallery",
-			name: t("Open Minio gallery"),
+			name: t("Open OSS gallery"),
 			icon: "image-file",
 			callback: () => {
 				if (!this.supportsActiveProviderCapability("list")) {
@@ -101,13 +97,16 @@ export default class OssGalleryPlugin extends Plugin {
 		this.registerView(
 			GALLERY_VIEW_TYPE,
 			(leaf) => {
-				const provider = this.providerManager.getActiveProvider();
-				if (!provider) throw new Error("No active provider");
+				// Fall back to any available provider so restoring a persisted
+				// workspace leaf never leaves a broken view behind.
+				const provider = this.providerManager.getActiveProvider()
+					?? this.providerManager.getAllProviders()[0];
+				if (!provider) throw new Error(t("No active provider"));
 				return new OssGalleryView(leaf, provider);
 			}
 		);
 
-		this.addRibbonIcon("image-file", t("Minio gallery"), () => {
+		this.addRibbonIcon("image-file", t("OSS gallery"), () => {
 			if (!this.supportsActiveProviderCapability("list")) {
 				new Notice(t("Image listing is not available"));
 				return;
@@ -171,13 +170,22 @@ export default class OssGalleryPlugin extends Plugin {
 
 	/**
 	 * Upload a file and replace the preview placeholder with the final embed.
+	 *
+	 * The placeholder carries a unique upload id and every later edit locates it
+	 * by searching the document text, so concurrent uploads and user edits
+	 * elsewhere in the note cannot shift the replacement range.
 	 */
 	private async performUpload(editor: Editor, file: File): Promise<void> {
 		if (!file || !getFileTypeByMime(file)) return;
 
+		const uploadId = `oss-upload-${Date.now()}-${++this.uploadCounter}`;
+		let previewText = await this.buildUploadPreview(file, uploadId);
+
 		const cursor = editor.getCursor();
-		const startPos: Position = { line: cursor.line, ch: cursor.ch };
-		let previewText = await this.showUploadPreview(editor, startPos, file);
+		editor.replaceRange(previewText, cursor);
+		editor.setCursor(
+			editor.offsetToPos(editor.posToOffset(cursor) + previewText.length)
+		);
 
 		try {
 			if (!this.uploadService) {
@@ -191,40 +199,71 @@ export default class OssGalleryPlugin extends Plugin {
 				file,
 				objectName,
 				(progress: UploadProgress) => {
-					previewText = this.updateUploadProgress(
-						editor,
-						startPos,
-						previewText,
-						progress.percentage
+					let updated = previewText.replace(
+						/width: \d+%/,
+						`width: ${progress.percentage}%`
 					);
+					if (progress.percentage === 100) {
+						updated = updated.replace("uploading", "completed");
+					}
+					if (this.replaceUploadPlaceholder(editor, previewText, updated) !== null) {
+						previewText = updated;
+					}
 				}
 			);
 
-			setTimeout(() => {
-				const finalText = this.embedRenderer.render(
-					fileType,
-					url,
-					file.name
-				);
-				const endPos = editor.offsetToPos(
-					editor.posToOffset(startPos) + previewText.length
-				);
-				editor.replaceRange(finalText, startPos, endPos);
-				const newCursorPos = editor.offsetToPos(
-					editor.posToOffset(startPos) + finalText.length
-				);
-				editor.setCursor(newCursorPos);
-				editor.focus();
-				this.refreshGalleryViews();
+			window.setTimeout(() => {
+				try {
+					const finalText = this.embedRenderer.render(
+						fileType,
+						url,
+						file.name
+					);
+					const startOffset = this.replaceUploadPlaceholder(
+						editor,
+						previewText,
+						finalText
+					);
+					if (startOffset !== null) {
+						editor.setCursor(
+							editor.offsetToPos(startOffset + finalText.length)
+						);
+						editor.focus();
+					}
+					this.refreshGalleryViews();
+				} catch (error) {
+					handleUploadError(error, file.name);
+				}
 			}, 500);
 		} catch (error) {
 			handleUploadError(error, file.name);
-			const endPos = editor.offsetToPos(
-				editor.posToOffset(startPos) + previewText.length
-			);
-			editor.replaceRange("", startPos, endPos);
-			editor.setCursor(startPos);
+			this.replaceUploadPlaceholder(editor, previewText, "");
 			new Notice(t("Upload failed"));
+		}
+	}
+
+	/**
+	 * Locate the placeholder by its (unique) text and replace it.
+	 * Returns the placeholder's start offset, or null if the user removed it
+	 * or the editor is no longer available.
+	 */
+	private replaceUploadPlaceholder(
+		editor: Editor,
+		oldText: string,
+		newText: string
+	): number | null {
+		try {
+			const content = editor.getValue();
+			const index = content.indexOf(oldText);
+			if (index === -1) return null;
+			editor.replaceRange(
+				newText,
+				editor.offsetToPos(index),
+				editor.offsetToPos(index + oldText.length)
+			);
+			return index;
+		} catch {
+			return null;
 		}
 	}
 
@@ -234,82 +273,61 @@ export default class OssGalleryPlugin extends Plugin {
 	): Promise<void> {
 		if (evt.defaultPrevented) return;
 
-		const file = this.extractFileFromEvent(evt);
-		if (!file || !getFileTypeByMime(file)) return;
+		const files = this.extractFilesFromEvent(evt);
+		const supported = files.filter((f) => getFileTypeByMime(f));
+		if (supported.length === 0) return;
 		if (!this.validateSettings()) return;
 
 		evt.preventDefault();
-		await this.performUpload(editor, file);
+
+		const skipped = files.length - supported.length;
+		if (skipped > 0) {
+			new Notice(t("Some files are not supported and were skipped"));
+		}
+
+		for (const file of supported) {
+			await this.performUpload(editor, file);
+		}
 	}
 
-	private extractFileFromEvent(evt: ClipboardEvent | DragEvent): File | null {
+	private extractFilesFromEvent(evt: ClipboardEvent | DragEvent): File[] {
+		let fileList: FileList | null | undefined;
 		switch (evt.type) {
 			case "paste":
-				return (evt as ClipboardEvent).clipboardData?.files[0] || null;
+				fileList = (evt as ClipboardEvent).clipboardData?.files;
+				break;
 			case "drop":
-				return (evt as DragEvent).dataTransfer?.files[0] || null;
-			default:
-				return null;
+				fileList = (evt as DragEvent).dataTransfer?.files;
+				break;
 		}
+		return fileList ? Array.from(fileList) : [];
 	}
 
-	private async showUploadPreview(
-		editor: Editor,
-		startPos: Position,
-		file: File
+	private async buildUploadPreview(
+		file: File,
+		uploadId: string
 	): Promise<string> {
 		const fileType = getFileTypeByMime(file);
-		let previewText = `<div class="upload-preview-container uploading"><div class="upload-progress"><div class="upload-progress-bar" style="width: 0%"></div></div></div>\n`;
+		const wrap = (inner: string): string =>
+			`<div class="upload-preview-container uploading" data-upload-id="${uploadId}">${inner}<div class="upload-progress"><div class="upload-progress-bar" style="width: 0%"></div></div></div>\n`;
 
-		if (fileType === "image") {
+		if (fileType !== "image") {
+			return wrap("");
+		}
+
+		return new Promise<string>((resolve) => {
 			const reader = new FileReader();
-
-			const imgPreview = await new Promise<string>((resolve) => {
-				reader.onload = (e) => {
-					const imgSrc = e.target?.result as string;
-					const newText = `<div class="upload-preview-container uploading"><img src="${imgSrc}"><div class="upload-progress"><div class="upload-progress-bar" style="width: 0%"></div></div></div>\n`;
-					resolve(newText);
-				};
-				reader.readAsDataURL(file);
-			});
-
-			previewText = imgPreview;
-		}
-
-		editor.replaceRange(previewText, startPos);
-		editor.setCursor({ line: startPos.line + 1, ch: 0 });
-
-		return previewText;
-	}
-
-	private updateUploadProgress(
-		editor: Editor,
-		startPos: Position,
-		currentText: string,
-		percentage: number
-	): string {
-		const progressText = currentText.replace(
-			/width: \d+%/,
-			`width: ${percentage}%`
-		);
-		const endPos = editor.offsetToPos(
-			editor.posToOffset(startPos) + currentText.length
-		);
-		editor.replaceRange(progressText, startPos, endPos);
-
-		if (percentage === 100) {
-			const completedText = progressText.replace(
-				"uploading",
-				"completed"
-			);
-			const completedEndPos = editor.offsetToPos(
-				editor.posToOffset(startPos) + progressText.length
-			);
-			editor.replaceRange(completedText, startPos, completedEndPos);
-			return completedText;
-		}
-
-		return progressText;
+			reader.onload = (e) => {
+				const imgSrc = e.target?.result;
+				if (typeof imgSrc === "string") {
+					resolve(wrap(`<img src="${imgSrc}">`));
+				} else {
+					resolve(wrap(""));
+				}
+			};
+			reader.onerror = () => resolve(wrap(""));
+			reader.readAsDataURL(file);
+		});
 	}
 
 	validateSettings(): boolean {
@@ -335,7 +353,7 @@ export default class OssGalleryPlugin extends Plugin {
 	 */
 	private refreshGalleryViews(): void {
 		// Get all gallery views and force refresh them
-		this.app.workspace.getLeavesOfType('oss-gallery-view').forEach(leaf => {
+		this.app.workspace.getLeavesOfType(GALLERY_VIEW_TYPE).forEach(leaf => {
 			if (leaf.view instanceof OssGalleryView) {
 				// Force refresh by calling loadGallery with true
 				void leaf.view.loadGallery(true);
@@ -374,7 +392,7 @@ export default class OssGalleryPlugin extends Plugin {
 			this.uploadService?.updateProvider(activeProvider);
 
 			// Update all gallery views
-			this.app.workspace.getLeavesOfType('oss-gallery-view').forEach(leaf => {
+			this.app.workspace.getLeavesOfType(GALLERY_VIEW_TYPE).forEach(leaf => {
 				if (leaf.view instanceof OssGalleryView) {
 					leaf.view.updateProvider(activeProvider);
 				}

@@ -52,17 +52,19 @@ export default {
 
 	Uploading: "Uploading",
 
-	"Minio gallery": "OSS Gallery",
+	"OSS gallery": "OSS Gallery",
 	"Loading...": "Loading...",
 	"Load failed": "Load failed",
 	"Upload failed": "Upload failed",
+	"Failed to load image": "Failed to load image",
 	"Search failed": "Search failed",
 	"Delete success": "Delete successfully",
 	"Delete failed": "Delete failed",
 	"Search by URL...": "Search by URL...",
-	"Open Minio gallery": "Open OSS Gallery",
-	"Please configure Minio settings first":
-		"Please configure Minio settings first",
+	"Open OSS gallery": "Open OSS Gallery",
+	"Some files are not supported and were skipped":
+		"Some files are not supported and were skipped",
+	"Toggle background": "Toggle background",
 	"URL copied": "URL copied",
 	"Confirm delete?": "Confirm delete?",
 	Refresh: "Refresh",
@@ -71,6 +73,7 @@ export default {
 	Cancel: "Cancel",
 	"Invalid regex pattern": "Invalid regex pattern",
 	"Toggle regex search": "Toggle regex search",
+	"Settings": "Settings",
 	"Select Provider": "Select Provider",
 	"Choose the OSS provider you want to use": "Choose the OSS provider you want to use",
 	"No active provider": "No active provider",
@@ -131,6 +134,7 @@ export default {
 	"Area": "Area",
 	"Qiniu storage area (z0: East China, z1: North China, na0: North America, as0: Southeast Asia)": "Qiniu storage area (z0: East China, z1: North China, na0: North America, as0: Southeast Asia)",
 	"Please configure Qiniu settings first": "Please configure Qiniu settings first",
+	"Please configure Qiniu CDN domain URL first": "Please configure Qiniu CDN domain URL first",
 
 	// Upyun
 	"Operator": "Operator",
@@ -140,6 +144,7 @@ export default {
 	"Service name": "Service name",
 	"Upyun service name": "Upyun service name",
 	"Upyun acceleration domain URL": "Upyun acceleration domain URL",
+	"Please configure Upyun acceleration domain URL first": "Please configure Upyun acceleration domain URL first",
 	"Suffix": "Suffix",
 	"Image processing suffix (optional)": "Image processing suffix (optional)",
 	"Please configure Upyun settings first": "Please configure Upyun settings first",
@@ -149,6 +154,7 @@ export default {
 	"Imgur OAuth Client ID": "Imgur OAuth Client ID",
 	"Proxy": "Proxy",
 	"HTTP proxy URL (optional, required in some regions)": "HTTP proxy URL (optional, required in some regions)",
+	"Imgur API mirror base URL (optional, required in some regions)": "Imgur API mirror base URL (optional, required in some regions)",
 	"Please configure Imgur settings first": "Please configure Imgur settings first",
 	"Note": "Note",
 	"Imgur only supports image uploads": "Imgur only supports image uploads",
@@ -194,6 +200,8 @@ export default {
 	"Move deleted files to system trash instead of permanent deletion": "Move deleted files to system trash instead of permanent deletion",
 	"Please configure local storage path first": "Please configure local storage path first",
 	"Vault-relative local storage requires a file-system vault": "Vault-relative local storage requires a file-system vault",
+	"Path escapes the storage directory": "Path escapes the storage directory",
+	"Failed to move file to system trash": "Failed to move file to system trash",
 
 	// GitHub (avoid duplication)
 	"GitHub Custom Domain": "GitHub Custom Domain",
