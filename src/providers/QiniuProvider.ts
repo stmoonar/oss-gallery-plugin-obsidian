@@ -79,7 +79,7 @@ export class QiniuProvider implements IOssProvider {
         }
 
         // Simulate progress since requestUrl doesn't support it
-        simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
         // Build key
         const key = buildObjectKey(this.settings.path, path);
@@ -114,6 +114,7 @@ export class QiniuProvider implements IOssProvider {
             if (response.status === 200) {
                 const data = getRecord(response.json as unknown);
                 if (getString(data?.hash)) {
+                    progress.finish();
                     return this.buildPublicUrl(key);
                 } else {
                     throw new Error(getString(data?.error) || 'Upload failed');
@@ -122,6 +123,7 @@ export class QiniuProvider implements IOssProvider {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('Qiniu upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -254,7 +256,9 @@ export class QiniuProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Secret Key'))
             .setDesc(t('Qiniu Secret Key'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('Enter your Secret Key')
                 .setValue(settings.providers.qiniu?.secretKey || '')
                 .onChange(async (value) => {
@@ -270,7 +274,8 @@ export class QiniuProvider implements IOssProvider {
                     }
                     settings.providers.qiniu.secretKey = value;
                     await saveSettings();
-                }));
+                });
+            });
 
         new Setting(containerEl)
             .setName(t('Bucket'))

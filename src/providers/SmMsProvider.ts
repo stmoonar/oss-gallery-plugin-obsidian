@@ -40,9 +40,9 @@ export class SmMsProvider implements IOssProvider {
             body: bodyArrayBuffer
         };
 
-        try {
-            simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
+        try {
             const response = await requestUrl(requestParams);
 
             const data = getRecord(response.json as unknown);
@@ -52,13 +52,16 @@ export class SmMsProvider implements IOssProvider {
             const code = getString(data?.code);
 
             if (getBoolean(data?.success) && imageUrl) {
+                progress.finish();
                 return imageUrl;
             } else if (code === 'image_repeated' && repeatedImageUrl) {
+                progress.finish();
                 return repeatedImageUrl;
             } else {
                 throw new Error(getString(data?.message) || `Upload failed with code: ${code ?? 'unknown'}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('SM.MS upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -149,12 +152,15 @@ export class SmMsProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Token'))
             .setDesc(t('SM.MS Secret Token'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('Enter your token')
                 .setValue(settings.providers.smms.token)
                 .onChange(async (value) => {
                     settings.providers.smms.token = value;
                     await saveSettings();
-                }));
+                });
+            });
     }
 }

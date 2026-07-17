@@ -12,6 +12,7 @@ import {
 	getNumber,
 	getRecord,
 	getString,
+	mergeWithDefaults,
 } from "../utils/typeGuards";
 
 interface LegacyMinioSettings {
@@ -61,15 +62,14 @@ function mergeProviderSettings<K extends ProviderName>(
 	defaultSettings: ProviderSettingsMap[K],
 	storedSettings: unknown
 ): ProviderSettingsMap[K] {
-	const record = getRecord(storedSettings);
-	if (!record) {
-		return { ...defaultSettings };
-	}
-
-	return {
-		...defaultSettings,
-		...record,
-	} as ProviderSettingsMap[K];
+	// Per-field, type-checked merge driven by the default object's keys and
+	// value types. Stored values are adopted only when their type matches the
+	// default (numeric strings accepted for number fields); mismatched values
+	// fall back to defaults and unknown fields are discarded.
+	return mergeWithDefaults(
+		defaultSettings as unknown as Record<string, unknown>,
+		storedSettings
+	) as unknown as ProviderSettingsMap[K];
 }
 
 function setProviderSettings<K extends ProviderName>(

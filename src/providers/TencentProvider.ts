@@ -65,7 +65,7 @@ export class TencentProvider implements IOssProvider {
         }
 
         // Simulate progress since requestUrl doesn't support it
-        simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
         const objectKey = buildObjectKey(this.settings.path, path);
         const host = this.getHost();
@@ -92,11 +92,13 @@ export class TencentProvider implements IOssProvider {
             const response = await requestUrl(requestParams);
 
             if (response.status >= 200 && response.status < 300) {
+                progress.finish();
                 return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('Tencent COS upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -213,7 +215,9 @@ export class TencentProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Secret Key'))
             .setDesc(t('Tencent COS Secret Key'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('Enter your Secret Key')
                 .setValue(settings.providers.tencent?.secretKey || '')
                 .onChange(async (value) => {
@@ -229,7 +233,8 @@ export class TencentProvider implements IOssProvider {
                     }
                     settings.providers.tencent.secretKey = value;
                     await saveSettings();
-                }));
+                });
+            });
 
         new Setting(containerEl)
             .setName(t('Bucket'))

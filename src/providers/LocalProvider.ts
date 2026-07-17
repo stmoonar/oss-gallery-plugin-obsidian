@@ -54,11 +54,9 @@ export class LocalProvider implements IOssProvider {
     /**
      * Ensure the storage directory exists.
      */
-    private ensureStorageDir(): void {
+    private async ensureStorageDir(): Promise<void> {
         const dir = this.getAbsoluteStoragePath();
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+        await fs.promises.mkdir(dir, { recursive: true });
     }
 
     async upload(
@@ -70,7 +68,7 @@ export class LocalProvider implements IOssProvider {
             throw new Error(t('Please configure local storage path first'));
         }
 
-        this.ensureStorageDir();
+        await this.ensureStorageDir();
 
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
@@ -79,11 +77,9 @@ export class LocalProvider implements IOssProvider {
 
         const destAbsolute = this.resolveWithinStorage(filePath);
         const destDir = path.dirname(destAbsolute);
-        if (!fs.existsSync(destDir)) {
-            fs.mkdirSync(destDir, { recursive: true });
-        }
+        await fs.promises.mkdir(destDir, { recursive: true });
 
-        fs.writeFileSync(destAbsolute, buffer);
+        await fs.promises.writeFile(destAbsolute, buffer);
 
         if (onProgress) onProgress({ loaded: buffer.length, total: buffer.length, percentage: 100 });
 
@@ -98,10 +94,14 @@ export class LocalProvider implements IOssProvider {
         if (!this.settings.storagePath) return [];
 
         const baseDir = this.getAbsoluteStoragePath();
-        if (!fs.existsSync(baseDir)) return [];
+        try {
+            await fs.promises.access(baseDir);
+        } catch {
+            return [];
+        }
 
         const images: OssImage[] = [];
-        this.scanDirectory(baseDir, '', images, prefix);
+        await this.scanDirectory(baseDir, '', images, prefix);
 
         // Sort by lastModified descending
         images.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
@@ -120,12 +120,12 @@ export class LocalProvider implements IOssProvider {
         return this.toFileUrl(absolutePath);
     }
 
-    private scanDirectory(baseDir: string, relativePath: string, images: OssImage[], prefix?: string): void {
+    private async scanDirectory(baseDir: string, relativePath: string, images: OssImage[], prefix?: string): Promise<void> {
         const currentDir = relativePath ? path.join(baseDir, relativePath) : baseDir;
 
         let entries: fs.Dirent[];
         try {
-            entries = fs.readdirSync(currentDir, { withFileTypes: true });
+            entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
         } catch {
             return;
         }
@@ -134,12 +134,12 @@ export class LocalProvider implements IOssProvider {
             const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
             if (entry.isDirectory()) {
-                this.scanDirectory(baseDir, entryRelative, images, prefix);
+                await this.scanDirectory(baseDir, entryRelative, images, prefix);
             } else if (entry.isFile() && isImageFile(entry.name)) {
                 if (prefix && !entryRelative.startsWith(prefix)) continue;
 
                 const fullPath = path.join(currentDir, entry.name);
-                const stat = fs.statSync(fullPath);
+                const stat = await fs.promises.stat(fullPath);
 
                 // For gallery display, use a URL the <img> tag can load
                 const vaultRelative = this.settings.useRelativePath
@@ -160,7 +160,9 @@ export class LocalProvider implements IOssProvider {
     async deleteImage(key: string): Promise<void> {
         const fullPath = this.resolveWithinStorage(key);
 
-        if (!fs.existsSync(fullPath)) {
+        try {
+            await fs.promises.access(fullPath);
+        } catch {
             throw new Error(`File not found: ${key}`);
         }
 
@@ -172,7 +174,7 @@ export class LocalProvider implements IOssProvider {
                 throw new Error(t('Failed to move file to system trash'));
             }
         } else {
-            fs.unlinkSync(fullPath);
+            await fs.promises.unlink(fullPath);
         }
     }
 

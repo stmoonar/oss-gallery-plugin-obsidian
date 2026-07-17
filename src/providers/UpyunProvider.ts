@@ -153,7 +153,7 @@ export class UpyunProvider implements IOssProvider {
         }
 
         // Simulate progress since requestUrl doesn't support it
-        simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
         const objectKey = buildObjectKey(this.settings.path, path);
         const arrayBuffer = await file.arrayBuffer();
@@ -187,11 +187,13 @@ export class UpyunProvider implements IOssProvider {
             const response = await requestUrl(requestParams);
 
             if (response.status >= 200 && response.status < 300) {
+                progress.finish();
                 return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('Upyun upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -279,7 +281,9 @@ export class UpyunProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Password'))
             .setDesc(t('Upyun Operator password'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('Enter your password')
                 .setValue(settings.providers.upyun?.password || '')
                 .onChange(async (value) => {
@@ -295,7 +299,8 @@ export class UpyunProvider implements IOssProvider {
                     }
                     settings.providers.upyun.password = value;
                     await saveSettings();
-                }));
+                });
+            });
 
         new Setting(containerEl)
             .setName(t('Bucket'))

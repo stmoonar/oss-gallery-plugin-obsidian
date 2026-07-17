@@ -37,7 +37,7 @@ export class ImgurProvider implements IOssProvider {
         }
 
         // Simulate progress since requestUrl doesn't support it
-        simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
         // Convert file to base64
         const base64 = await this.fileToBase64(file);
@@ -65,6 +65,7 @@ export class ImgurProvider implements IOssProvider {
                 const image = getRecord(data?.data);
                 const link = getString(image?.link);
                 if (getBoolean(data?.success) && link) {
+                    progress.finish();
                     return link;
                 } else {
                     throw new Error(getString(image?.error) || 'Upload failed');
@@ -73,6 +74,7 @@ export class ImgurProvider implements IOssProvider {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('Imgur upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }

@@ -1,45 +1,67 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { S3Settings, PluginSettings } from '../types/settings';
-import { requestUrl, Setting } from 'obsidian';
+import { Setting } from 'obsidian';
 import { t } from '../i18n';
 import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
-import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './shared/s3xml';
-import { extractSignedHeaders } from './shared/aws4helpers';
-import mime from 'mime';
-import * as aws4 from 'aws4';
+import { S3CompatibleProvider } from './shared/S3CompatibleProvider';
 
-export class S3Provider implements IOssProvider {
+export class S3Provider extends S3CompatibleProvider<S3Settings> {
     name = 's3';
 
-    constructor(private settings: S3Settings) {}
-
-    private getHost(): string {
-        const clean = normalizeEndpointHost(this.settings.endpoint);
-        return this.settings.forcePathStyle
-            ? clean
-            : `${this.settings.bucket.trim()}.${clean}`;
+    constructor(settings: S3Settings) {
+        super(settings);
     }
 
-    private getRequestPath(objectPath: string): string {
+    protected isConfigured(): boolean {
+        return Boolean(
+            this.settings.endpoint
+            && this.settings.accessKeyId
+            && this.settings.secretAccessKey
+            && this.settings.bucket
+        );
+    }
+
+    protected getConfigurationError(): Error {
+        return new Error(t('Please configure S3 settings first'));
+    }
+
+    protected getCredentials() {
+        return {
+            accessKeyId: this.settings.accessKeyId,
+            secretAccessKey: this.settings.secretAccessKey,
+        };
+    }
+
+    protected getSignedHost(): string {
+        const endpoint = normalizeEndpointHost(this.settings.endpoint);
+        return this.settings.forcePathStyle
+            ? endpoint
+            : `${this.settings.bucket.trim()}.${endpoint}`;
+    }
+
+    protected getRegion(): string {
+        return this.settings.region || 'us-east-1';
+    }
+
+    protected getRequestUrl(path: string): string {
+        const protocol = this.settings.useSSL ? 'https' : 'http';
+        return `${protocol}://${this.getSignedHost()}${path}`;
+    }
+
+    protected getObjectRequestPath(objectKey: string): string {
+        const objectPath = `/${encodeObjectKeyForUrl(objectKey)}`;
         return this.settings.forcePathStyle
             ? `/${this.settings.bucket.trim()}${objectPath}`
             : objectPath;
     }
 
-    private getUrl(path: string): string {
-        const protocol = this.settings.useSSL ? 'https' : 'http';
-        const host = this.getHost();
-        return `${protocol}://${host}${path}`;
+    protected getListRequestPath(query: string): string {
+        const basePath = this.settings.forcePathStyle
+            ? `/${this.settings.bucket}`
+            : '';
+        return `${basePath}/?${query}`;
     }
 
-    private signRequest(opts: Parameters<typeof aws4.sign>[0]) {
-        aws4.sign(opts, {
-            accessKeyId: this.settings.accessKeyId,
-            secretAccessKey: this.settings.secretAccessKey,
-        });
-    }
-
-    private generateAccessUrl(objectKey: string): string {
+    protected generateAccessUrl(objectKey: string): string {
         const encodedKey = encodeObjectKeyForUrl(objectKey);
         if (this.settings.publicUrl) {
             let url = this.settings.publicUrl.replace(/\/+$/, '');
@@ -48,152 +70,22 @@ export class S3Provider implements IOssProvider {
             }
             return `${url}/${encodedKey}`;
         }
-        const path = this.getRequestPath(`/${encodedKey}`);
-        return this.getUrl(path);
+        return this.getRequestUrl(this.getObjectRequestPath(objectKey));
     }
 
-    async upload(
-        file: File,
-        path: string,
-        onProgress?: (progress: UploadProgressInfo) => void
-    ): Promise<string> {
-        if (!this.settings.endpoint || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
-            throw new Error(t('Please configure S3 settings first'));
-        }
-
-        const arrayBuffer = await file.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-        const contentType = file.type || mime.getType(file.name) || 'application/octet-stream';
-
-        const requestPath = this.getRequestPath(`/${encodeObjectKeyForUrl(path)}`);
-        const opts = {
-            host: this.getHost(),
-            path: requestPath,
-            service: 's3',
-            region: this.settings.region || 'us-east-1',
-            method: 'PUT',
-            body: buffer,
-            headers: {
-                'Content-Type': contentType,
-            },
-        };
-
-        this.signRequest(opts);
-
-        if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
-
-        try {
-            const response = await requestUrl({
-                url: this.getUrl(requestPath),
-                method: 'PUT',
-                headers: extractSignedHeaders(opts.headers as Record<string, string>),
-                body: arrayBuffer,
-            });
-
-            if (response.status >= 200 && response.status < 300) {
-                if (onProgress) onProgress({ loaded: buffer.length, total: buffer.length, percentage: 100 });
-                return this.generateAccessUrl(path);
-            } else {
-                throw new Error(`Upload failed with status: ${response.status}`);
-            }
-        } catch (error) {
-            console.error('S3 upload error:', error);
-            throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+    protected handleUploadError(error: unknown): never {
+        console.error('S3 upload error:', error);
+        throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
-        if (!this.settings.endpoint || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
-            return [];
-        }
-
-        try {
-            const images: OssImage[] = [];
-            let continuationToken: string | undefined;
-
-            do {
-                const queryParams = new URLSearchParams({ 'list-type': '2', 'max-keys': '1000' });
-                if (prefix) {
-                    queryParams.append('prefix', prefix);
-                }
-                if (continuationToken) {
-                    queryParams.append('continuation-token', continuationToken);
-                }
-
-                const basePath = this.settings.forcePathStyle
-                    ? `/${this.settings.bucket}`
-                    : '';
-                const requestPath = `${basePath}/?${queryParams.toString()}`;
-
-                const opts = {
-                    host: this.getHost(),
-                    path: requestPath,
-                    service: 's3',
-                    region: this.settings.region || 'us-east-1',
-                    method: 'GET',
-                    headers: { 'Accept': 'application/xml' },
-                };
-
-                this.signRequest(opts);
-
-                const response = await requestUrl({
-                    url: this.getUrl(requestPath),
-                    method: 'GET',
-                    headers: extractSignedHeaders(opts.headers as Record<string, string>),
-                });
-
-                if (response.status !== 200) {
-                    throw new Error(`List objects failed with status ${response.status}`);
-                }
-
-                images.push(...this.parseListObjectsResponse(response.text));
-
-                const page = parseS3ListObjectsPage(response.text);
-                continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
-            } while (continuationToken);
-
-            return images;
-        } catch (error) {
-            console.error('Failed to list S3 images:', error);
-            throw error;
-        }
+    protected handleListError(error: unknown): never {
+        console.error('Failed to list S3 images:', error);
+        throw error;
     }
 
-    async deleteImage(key: string): Promise<void> {
-        if (!this.settings.endpoint || !this.settings.accessKeyId || !this.settings.secretAccessKey || !this.settings.bucket) {
-            throw new Error(t('Please configure S3 settings first'));
-        }
-
-        try {
-            const requestPath = this.getRequestPath(`/${encodeObjectKeyForUrl(key)}`);
-            const opts = {
-                host: this.getHost(),
-                path: requestPath,
-                service: 's3',
-                region: this.settings.region || 'us-east-1',
-                method: 'DELETE',
-                headers: {},
-            };
-
-            this.signRequest(opts);
-
-            const response = await requestUrl({
-                url: this.getUrl(requestPath),
-                method: 'DELETE',
-                headers: extractSignedHeaders(opts.headers as Record<string, string>),
-            });
-
-            if (response.status < 200 || response.status >= 300) {
-                throw new Error(`Delete failed with status: ${response.status}`);
-            }
-        } catch (error) {
-            console.error('Failed to delete S3 image:', error);
-            throw new Error(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-
-    private parseListObjectsResponse(xml: string): OssImage[] {
-        return parseS3ListObjectsXml(xml, (key) => this.generateAccessUrl(key));
+    protected handleDeleteError(error: unknown): never {
+        console.error('Failed to delete S3 image:', error);
+        throw new Error(`Delete failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
@@ -235,13 +127,15 @@ export class S3Provider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Secret Access Key'))
             .setDesc(t('S3 Secret Access Key'))
-            .addText(text => text
-                .setPlaceholder('Enter your Secret Access Key')
-                .setValue(s3?.secretAccessKey || '')
-                .onChange(async (value) => {
-                    settings.providers.s3.secretAccessKey = value;
-                    await saveSettings();
-                }));
+            .addText(text => {
+                text.inputEl.type = 'password';
+                text.setPlaceholder('Enter your Secret Access Key')
+                    .setValue(s3?.secretAccessKey || '')
+                    .onChange(async (value) => {
+                        settings.providers.s3.secretAccessKey = value;
+                        await saveSettings();
+                    });
+            });
 
         new Setting(containerEl)
             .setName(t('Bucket'))

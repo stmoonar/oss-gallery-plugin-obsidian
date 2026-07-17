@@ -106,7 +106,7 @@ export class AliyunProvider implements IOssProvider {
         }
 
         // Simulate progress since requestUrl doesn't support it
-        simulateProgress(onProgress, file.size);
+        const progress = simulateProgress(onProgress, file.size);
 
         // Build object key
         const objectKey = buildObjectKey(this.settings.path, path);
@@ -131,11 +131,13 @@ export class AliyunProvider implements IOssProvider {
             }));
 
             if (response.status === 200) {
+                progress.finish();
                 return this.buildPublicUrl(objectKey);
             } else {
                 throw new Error(`Upload failed with status: ${response.status}`);
             }
         } catch (error) {
+            progress.fail();
             console.error('Aliyun OSS upload error:', error);
             throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -249,7 +251,9 @@ export class AliyunProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Access Key Secret'))
             .setDesc(t('Aliyun OSS Access Key Secret'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('Enter your Access Key Secret')
                 .setValue(settings.providers.aliyun?.accessKeySecret || '')
                 .onChange(async (value) => {
@@ -265,7 +269,8 @@ export class AliyunProvider implements IOssProvider {
                     }
                     settings.providers.aliyun.accessKeySecret = value;
                     await saveSettings();
-                }));
+                });
+            });
 
         new Setting(containerEl)
             .setName(t('Bucket'))

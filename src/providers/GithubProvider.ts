@@ -186,6 +186,13 @@ export class GithubProvider implements IOssProvider {
         // Optimization 2: First try to get repository's Git tree to avoid multiple API calls
         try {
             const treeData = await this.getRepositoryTree(repo);
+            // The Git tree API silently truncates responses for very large
+            // repositories; when that happens the tree is incomplete, so fall
+            // back to the directory-based search to avoid missing images.
+            if (getRecord(treeData)?.truncated === true) {
+                console.warn('Tree API response truncated, falling back to directory search');
+                return await this.searchCommonDirectories(repo);
+            }
             return this.extractImagesFromTree(treeData);
         } catch {
             // Fallback to directory-based search if tree API fails
@@ -411,13 +418,16 @@ export class GithubProvider implements IOssProvider {
         new Setting(containerEl)
             .setName(t('Token'))
             .setDesc(t('GitHub Personal Access Token'))
-            .addText(text => text
+            .addText(text => {
+                text.inputEl.type = 'password';
+                return text
                 .setPlaceholder('ghp_...')
                 .setValue(settings.providers.github.token)
                 .onChange(async (value) => {
                     settings.providers.github.token = value;
                     await saveSettings();
-                }));
+                });
+            });
 
         new Setting(containerEl)
             .setName(t('Custom Domain'))
