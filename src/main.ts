@@ -64,7 +64,7 @@ export default class OssGalleryPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "open-oss-gallery",
+			id: "open-gallery",
 			name: t("Open OSS gallery"),
 			icon: "image-file",
 			callback: () => {

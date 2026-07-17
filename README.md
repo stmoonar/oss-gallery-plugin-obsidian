@@ -4,6 +4,8 @@
 
 This plugin uploads files from Obsidian to multiple object storage providers and offers a gallery view for providers that support listing.
 
+> **Note**: This plugin is desktop-only. It relies on Node.js APIs (crypto signing, local file system) that are not available in Obsidian mobile.
+
 It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and now supports a broader multi-provider workflow.
 
 ## Supported providers

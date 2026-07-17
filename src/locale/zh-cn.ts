@@ -190,6 +190,12 @@ export default {
 	"Path escapes the storage directory": "路径超出了存储目录范围",
 	"Failed to move file to system trash": "移动文件到系统回收站失败",
 
+	// MinIO
+	"Minio endpoint (e.g. play.min.io)": "Minio 端点(例如: play.min.io)",
+	"Port": "端口",
+	"Minio port": "Minio 端口",
+	"Optional custom domain for public access": "公开访问的自定义域名(可选)",
+
 	// GitHub
 	"Repo Name": "仓库名称",
 	"username/reponame": "用户名/仓库名",

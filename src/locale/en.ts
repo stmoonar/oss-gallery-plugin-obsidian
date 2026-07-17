@@ -203,6 +203,12 @@ export default {
 	"Path escapes the storage directory": "Path escapes the storage directory",
 	"Failed to move file to system trash": "Failed to move file to system trash",
 
+	// MinIO
+	"Minio endpoint (e.g. play.min.io)": "Minio endpoint (e.g. play.min.io)",
+	"Port": "Port",
+	"Minio port": "Minio port",
+	"Optional custom domain for public access": "Optional custom domain for public access",
+
 	// GitHub (avoid duplication)
 	"GitHub Custom Domain": "GitHub Custom Domain",
 	"Imgur image deletion is not supported in this version": "Imgur image deletion is not supported in this version",

@@ -1,5 +1,5 @@
 {
-	"name": "obsidian-oss-gallery",
+	"name": "oss-gallery",
 	"version": "2.0.1",
 	"description": "Upload and manage media and documents across multiple OSS providers for Obsidian.",
 	"main": "main.js",

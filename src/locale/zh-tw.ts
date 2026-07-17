@@ -188,6 +188,12 @@ export default {
 	"Path escapes the storage directory": "路徑超出了儲存目錄範圍",
 	"Failed to move file to system trash": "移動檔案到系統資源回收筒失敗",
 
+	// MinIO
+	"Minio endpoint (e.g. play.min.io)": "Minio 端點(例如: play.min.io)",
+	"Port": "連接埠",
+	"Minio port": "Minio 連接埠",
+	"Optional custom domain for public access": "公開存取的自訂網域(可選)",
+
 	// GitHub
 	"Token": "存取權杖",
 	"SM.MS Secret Token": "SM.MS 存取權杖",

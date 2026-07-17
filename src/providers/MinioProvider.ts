@@ -125,8 +125,8 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
         const minioSettings = settings.providers.minio;
 
         new Setting(containerEl)
-            .setName('Endpoint')
-            .setDesc('Minio endpoint (e.g. play.min.io)')
+            .setName(t('Endpoint'))
+            .setDesc(t('Minio endpoint (e.g. play.min.io)'))
             .addText(text => text
                 .setValue(minioSettings.endpoint)
                 .onChange(async (value) => {
@@ -136,8 +136,8 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Port')
-            .setDesc('Minio port')
+            .setName(t('Port'))
+            .setDesc(t('Minio port'))
             .addText(text => text
                 .setValue(String(minioSettings.port))
                 .onChange(async (value) => {
@@ -151,7 +151,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Use SSL')
+            .setName(t('Use SSL'))
             .addToggle(toggle => toggle
                 .setValue(minioSettings.useSSL)
                 .onChange(async (value) => {
@@ -161,7 +161,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Access Key')
+            .setName(t('Access Key'))
             .addText(text => text
                 .setValue(minioSettings.accessKey)
                 .onChange(async (value) => {
@@ -171,7 +171,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Secret Key')
+            .setName(t('Secret Key'))
             .addText(text => {
                 text.inputEl.type = 'password';
                 text.setPlaceholder('Secret Key')
@@ -184,7 +184,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
             });
 
         new Setting(containerEl)
-            .setName('Bucket')
+            .setName(t('Bucket'))
             .addText(text => text
                 .setValue(minioSettings.bucket)
                 .onChange(async (value) => {
@@ -194,7 +194,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Region')
+            .setName(t('Region'))
             .addText(text => text
                 .setValue(minioSettings.region)
                 .onChange(async (value) => {
@@ -204,8 +204,8 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
                 }));
 
         new Setting(containerEl)
-            .setName('Custom Domain')
-            .setDesc('Optional custom domain for public access')
+            .setName(t('Custom Domain'))
+            .setDesc(t('Optional custom domain for public access'))
             .addText(text => text
                 .setValue(minioSettings.customDomain)
                 .onChange(async (value) => {
