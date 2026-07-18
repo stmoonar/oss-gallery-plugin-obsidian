@@ -196,7 +196,7 @@ export default {
 
 	// GitHub
 	"Token": "存取權杖",
-	"SM.MS Secret Token": "SM.MS 存取權杖",
+	"SM.MS Secret Token": "S.EE API Key（SM.MS 已遷移）",
 	"Repo Name": "倉庫名稱",
 	"username/reponame": "使用者名稱/倉庫名",
 	"Branch": "分支",

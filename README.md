@@ -75,7 +75,7 @@ Choose an active provider in the plugin settings, then configure:
 
 #### SM.MS
 
-- API token
+- S.EE API key (SM.MS has migrated to S.EE; create a key under S.EE **Tools > API Token**)
 
 #### GitHub
 

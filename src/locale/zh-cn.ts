@@ -202,7 +202,7 @@ export default {
 	"Branch": "分支",
 	"main or master": "main或master",
 	"Token": "访问令牌",
-	"SM.MS Secret Token": "SM.MS 访问令牌",
+	"SM.MS Secret Token": "S.EE API Key（SM.MS 已迁移）",
 	"GitHub Personal Access Token": "GitHub个人访问令牌",
 	"GitHub Custom Domain": "GitHub自定义域名",
 	"e.g. https://cdn.jsdelivr.net/gh/user/repo": "例如: https://cdn.jsdelivr.net/gh/user/repo",

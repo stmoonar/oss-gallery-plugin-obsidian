@@ -75,7 +75,7 @@
 
 #### SM.MS
 
-- API Token
+- S.EE API Key（SM.MS 已迁移至 S.EE，请在 S.EE 的 **工具 > API Token** 中创建）
 
 #### GitHub
 

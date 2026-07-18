@@ -80,7 +80,7 @@ export default {
 	"Please configure OSS settings first": "Please configure OSS settings first",
 	"Enter your base path(e.g. /path)": "Enter your base path (e.g. /path)",
 	"Token": "Token",
-	"SM.MS Secret Token": "SM.MS Secret Token",
+	"SM.MS Secret Token": "S.EE API key (SM.MS has migrated)",
 	"Repo Name": "Repo Name",
 	"username/reponame": "username/reponame",
 	"Branch": "Branch",

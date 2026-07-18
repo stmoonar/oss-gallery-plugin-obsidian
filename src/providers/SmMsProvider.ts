@@ -4,7 +4,26 @@ import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
-import { getArray, getBoolean, getNumber, getRecord, getString } from '../utils/typeGuards';
+import { getArray, getBoolean, getNumber, getNumberLike, getRecord, getString } from '../utils/typeGuards';
+
+const SEE_API_BASE_URL = 'https://s.ee/api/v1';
+const SEE_HISTORY_PAGE_SIZE = 30;
+
+function parseCreatedAt(value: unknown): Date | undefined {
+    const numericValue = getNumberLike(value);
+    const date = numericValue !== undefined
+        ? new Date(numericValue < 1_000_000_000_000 ? numericValue * 1000 : numericValue)
+        : new Date(getString(value) ?? '');
+    return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function parseJsonResponse(text: string): Record<string, unknown> | undefined {
+    try {
+        return getRecord(JSON.parse(text) as unknown);
+    } catch {
+        return undefined;
+    }
+}
 
 export class SmMsProvider implements IOssProvider {
     name = 'smms';
@@ -31,10 +50,11 @@ export class SmMsProvider implements IOssProvider {
         ], boundary);
 
         const requestParams: RequestUrlParam = {
-            url: 'https://sm.ms/api/v2/upload',
+            url: `${SEE_API_BASE_URL}/file/upload`,
             method: 'POST',
             headers: {
                 'Authorization': this.settings.token,
+                'Accept': 'application/json',
                 'Content-Type': `multipart/form-data; boundary=${boundary}`
             },
             body: bodyArrayBuffer
@@ -43,13 +63,19 @@ export class SmMsProvider implements IOssProvider {
         const progress = simulateProgress(onProgress, file.size);
 
         try {
-            const response = await requestUrl(requestParams);
+            const response = await requestUrl({ ...requestParams, throw: false });
+            const data = parseJsonResponse(response.text);
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(getString(data?.message) || `Request failed with status ${response.status}`);
+            }
+            if (!data) {
+                throw new Error('S.EE returned an invalid JSON response');
+            }
 
-            const data = getRecord(response.json as unknown);
             const uploadData = getRecord(data?.data);
             const imageUrl = getString(uploadData?.url);
             const repeatedImageUrl = getString(data?.images);
-            const code = getString(data?.code);
+            const code = getString(data?.code) ?? getNumber(data?.code)?.toString();
 
             if (getBoolean(data?.success) && imageUrl) {
                 progress.finish();
@@ -68,34 +94,50 @@ export class SmMsProvider implements IOssProvider {
     }
 
     async listImages(prefix?: string): Promise<OssImage[]> {
-        // SM.MS upload history API: https://sm.ms/api/v2/upload_history (paginated)
         if (!this.settings.token) {
             return [];
         }
 
         try {
             const images: OssImage[] = [];
+            const seenPages = new Set<string>();
             let page = 1;
 
             while (true) {
                 const response = await requestUrl({
-                    url: `https://sm.ms/api/v2/upload_history?page=${page}`,
+                    url: `${SEE_API_BASE_URL}/files?page=${page}`,
                     method: 'GET',
                     headers: {
-                        'Authorization': this.settings.token
-                    }
+                        'Authorization': this.settings.token,
+                        'Accept': 'application/json'
+                    },
+                    throw: false
                 });
 
-                if (response.status !== 200) {
-                    throw new Error(`List failed with status: ${response.status}`);
+                const data = parseJsonResponse(response.text);
+                if (response.status < 200 || response.status >= 300) {
+                    throw new Error(getString(data?.message) || `Request failed with status ${response.status}`);
                 }
-
-                const data = getRecord(response.json as unknown);
-                if (!getBoolean(data?.success)) {
+                if (!data) {
+                    throw new Error('S.EE returned an invalid JSON response');
+                }
+                if (getBoolean(data.success) !== true) {
                     throw new Error(getString(data?.message) || 'List failed');
                 }
 
                 const items = getArray(data?.data) ?? [];
+                const pageFingerprint = items.map((item) => {
+                    const record = getRecord(item);
+                    return getString(record?.hash)
+                        ?? getNumber(record?.file_id)?.toString()
+                        ?? getString(record?.url)
+                        ?? '';
+                }).join('\n');
+                if (items.length > 0 && seenPages.has(pageFingerprint)) {
+                    return images;
+                }
+                seenPages.add(pageFingerprint);
+
                 images.push(...items.flatMap((item) => {
                     const record = getRecord(item);
                     const key = getString(record?.hash);
@@ -104,18 +146,20 @@ export class SmMsProvider implements IOssProvider {
                         return [];
                     }
 
-                    const createdAt = getString(record?.created_at);
                     return [{
                         key,
                         url,
-                        lastModified: createdAt ? new Date(createdAt) : undefined,
+                        lastModified: parseCreatedAt(record?.created_at),
                         size: getNumber(record?.size) ?? 0,
                     }];
                 }));
 
                 const totalPages = getNumber(data?.TotalPages)
                     ?? getNumber(getRecord(data?.meta)?.total_pages);
-                if (items.length === 0 || !totalPages || page >= totalPages) {
+                const isLastPage = totalPages !== undefined
+                    ? page >= totalPages
+                    : items.length < SEE_HISTORY_PAGE_SIZE;
+                if (items.length === 0 || isLastPage) {
                     return images;
                 }
                 page++;
@@ -127,20 +171,25 @@ export class SmMsProvider implements IOssProvider {
     }
 
     async deleteImage(key: string): Promise<void> {
-        // SM.MS delete API: https://sm.ms/api/v2/delete/:hash
         try {
             const response = await requestUrl({
-                url: `https://sm.ms/api/v2/delete/${key}`,
-                method: 'GET', // Documentation says GET for delete? Or DELETE? Usually GET for SM.MS delete link, but API might be different.
-                // Checking docs: https://doc.sm.ms/#api-Image-Deletion
-                // It says GET /delete/:hash
+                url: `${SEE_API_BASE_URL}/file/delete/${encodeURIComponent(key)}`,
+                method: 'GET',
                 headers: {
-                    'Authorization': this.settings.token
-                }
+                    'Authorization': this.settings.token,
+                    'Accept': 'application/json'
+                },
+                throw: false
             });
-            
-            const data = getRecord(response.json as unknown);
-            if (response.status !== 200 || !getBoolean(data?.success)) {
+
+            const data = parseJsonResponse(response.text);
+            if (response.status < 200 || response.status >= 300) {
+                throw new Error(getString(data?.message) || `Request failed with status ${response.status}`);
+            }
+            if (!data) {
+                throw new Error('S.EE returned an invalid JSON response');
+            }
+            if (getBoolean(data.success) !== true) {
                 throw new Error(getString(data?.message) || 'Delete failed');
             }
         } catch (e) {
