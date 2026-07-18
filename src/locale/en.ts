@@ -205,8 +205,11 @@ export default {
 
 	// MinIO
 	"Minio endpoint (e.g. play.min.io)": "Minio endpoint (e.g. play.min.io)",
+	"MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)": "MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)",
 	"Port": "Port",
 	"Minio port": "Minio port",
+	"Used for host-only endpoints; an explicit http:// or https:// URL takes precedence": "Used for host-only endpoints; an explicit http:// or https:// URL takes precedence",
+	"MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.": "MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.",
 	"Optional custom domain for public access": "Optional custom domain for public access",
 
 	// GitHub (avoid duplication)

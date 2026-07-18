@@ -2,7 +2,7 @@ import { MinioSettings, PluginSettings } from '../types/settings';
 import { Setting } from 'obsidian';
 import { t } from '../i18n';
 import { handleUploadError } from '../utils/ErrorHandler';
-import { encodeObjectKeyForUrl, normalizeEndpointHost } from './shared/path';
+import { encodeObjectKeyForUrl } from './shared/path';
 import { S3CompatibleProvider } from './shared/S3CompatibleProvider';
 
 export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
@@ -12,14 +12,30 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
         super(settings);
     }
 
+    private endpointHasExplicitPort(endpoint: string): boolean {
+        const authority = endpoint.split(/[/?#]/, 1)[0];
+        return /^\[[^\]]+\]:\d+$/.test(authority) || /:\d+$/.test(authority);
+    }
+
     private getEndpointUrl(): URL {
+        const endpoint = this.settings.endpoint.trim();
+        const hasExplicitProtocol = /^https?:\/\//i.test(endpoint);
         const protocol = this.settings.useSSL ? 'https' : 'http';
-        const host = normalizeEndpointHost(this.settings.endpoint, protocol);
-        const url = new URL(`${protocol}://${host}`);
-        if (!url.port) {
+        const url = new URL(hasExplicitProtocol ? endpoint : `${protocol}://${endpoint}`);
+
+        // A complete URL is authoritative. For a host-only endpoint, use the
+        // separate port setting unless the endpoint already includes a port.
+        if (!hasExplicitProtocol && !this.endpointHasExplicitPort(endpoint)) {
             url.port = String(this.settings.port);
         }
         return url;
+    }
+
+    private throwConnectionError(error: unknown): never {
+        if (error instanceof Error && error.message.includes('ERR_SSL_PROTOCOL_ERROR')) {
+            throw new Error(t('MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.'));
+        }
+        throw error;
     }
 
     updateSettings(settings: MinioSettings): void {
@@ -104,7 +120,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
 
     protected handleUploadError(error: unknown, fileName: string): never {
         handleUploadError(error, fileName);
-        throw error;
+        this.throwConnectionError(error);
     }
 
     protected logListResponseFailure(status: number, responseText: string): void {
@@ -113,12 +129,12 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
 
     protected handleListError(error: unknown): never {
         console.error('List images failed:', error);
-        throw error;
+        this.throwConnectionError(error);
     }
 
     protected handleDeleteError(error: unknown): never {
         console.error('Delete image failed:', error);
-        throw error;
+        this.throwConnectionError(error);
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
@@ -126,7 +142,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
 
         new Setting(containerEl)
             .setName(t('Endpoint'))
-            .setDesc(t('Minio endpoint (e.g. play.min.io)'))
+            .setDesc(t('MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)'))
             .addText(text => text
                 .setValue(minioSettings.endpoint)
                 .onChange(async (value) => {
@@ -152,6 +168,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
 
         new Setting(containerEl)
             .setName(t('Use SSL'))
+            .setDesc(t('Used for host-only endpoints; an explicit http:// or https:// URL takes precedence'))
             .addToggle(toggle => toggle
                 .setValue(minioSettings.useSSL)
                 .onChange(async (value) => {

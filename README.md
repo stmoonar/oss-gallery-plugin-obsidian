@@ -148,9 +148,9 @@ Note: Imgur uploads are supported, but gallery listing and deletion are not.
 
 #### MinIO
 
-- Endpoint
-- Port
-- Use SSL
+- Endpoint: host name or complete URL; an explicit `http://` / `https://` scheme and port take precedence
+- Port: used when Endpoint is a host name without a port
+- Use SSL: used when Endpoint does not include a URL scheme
 - Access Key
 - Secret Key
 - Bucket

@@ -148,9 +148,9 @@
 
 #### MinIO
 
-- Endpoint
-- Port
-- Use SSL
+- Endpoint：主机名或完整 URL；显式填写的 `http://` / `https://` 协议和端口优先
+- Port：Endpoint 为未指定端口的主机名时使用
+- Use SSL：Endpoint 未包含 URL 协议时使用
 - Access Key
 - Secret Key
 - Bucket

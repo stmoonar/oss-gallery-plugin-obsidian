@@ -190,8 +190,11 @@ export default {
 
 	// MinIO
 	"Minio endpoint (e.g. play.min.io)": "Minio 端點(例如: play.min.io)",
+	"MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)": "MinIO 端點主機或完整 URL（例如 play.min.io 或 http://localhost:9000）",
 	"Port": "連接埠",
 	"Minio port": "Minio 連接埠",
+	"Used for host-only endpoints; an explicit http:// or https:// URL takes precedence": "僅用於未填寫通訊協定的主機位址；明確填寫的 http:// 或 https:// URL 優先",
+	"MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.": "MinIO TLS 連線失敗。非 TLS 服務請使用 http:// 位址；HTTPS 服務請檢查連接埠和憑證。",
 	"Optional custom domain for public access": "公開存取的自訂網域(可選)",
 
 	// GitHub
