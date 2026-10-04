@@ -81,9 +81,8 @@ export interface S3Settings {
 }
 
 export interface LocalSettings {
+    /** Folder inside the vault (vault-relative). */
     storagePath: string;
-    useRelativePath: boolean;
-    deleteToTrash: boolean;
 }
 
 export interface ProviderSettingsMap {
@@ -202,8 +201,6 @@ export const DEFAULT_S3_SETTINGS: S3Settings = {
 
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     storagePath: 'attachments',
-    useRelativePath: true,
-    deleteToTrash: true,
 };
 
 export const DEFAULT_SETTINGS: PluginSettings = {

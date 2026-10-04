@@ -182,17 +182,10 @@ export default {
 	// Local
 	"Local": "本地存储",
 	"Storage path": "存储路径",
-	"Local directory for storing images": "本地图片存储目录",
-	"Vault-relative directory or absolute directory inserted as file:/// links": "仓库相对目录，或会插入为 file:/// 链接的绝对目录",
-	"Use vault-relative path": "使用仓库相对路径",
-	"Resolve storage path relative to vault root": "存储路径相对于仓库根目录解析",
-	"Resolve storage path relative to vault root (desktop file-system vault only)": "存储路径相对于仓库根目录解析（仅桌面端本地文件仓库）",
-	"Delete to trash": "删除到回收站",
-	"Move deleted files to system trash instead of permanent deletion": "删除文件时移到系统回收站而非永久删除",
+	"Folder inside the vault where uploaded files are stored": "仓库内用于存放上传文件的文件夹",
+	"Absolute paths are no longer supported. Use a folder inside the vault.": "已不再支持绝对路径，请使用仓库内的文件夹。",
 	"Please configure local storage path first": "请先配置本地存储路径",
-	"Vault-relative local storage requires a file-system vault": "仓库相对路径模式仅支持桌面端本地文件仓库",
 	"Path escapes the storage directory": "路径超出了存储目录范围",
-	"Failed to move file to system trash": "移动文件到系统回收站失败",
 
 	// MinIO
 	"Minio endpoint (e.g. play.min.io)": "MinIO 端点(例如: play.min.io)",

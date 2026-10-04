@@ -6,13 +6,13 @@ This plugin uploads files from Obsidian to multiple object storage providers and
 
 > **Requires** Obsidian 1.7.2 or later.
 
-> **Note**: This plugin is desktop-only. It relies on Node.js APIs (crypto signing, local file system) that are not available in Obsidian mobile.
+> **Note**: This plugin is desktop-only. Several providers rely on Node.js crypto signing, which is not available in Obsidian mobile.
 
 It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and now supports a broader multi-provider workflow.
 
 ## Supported providers
 
-- **Local**: desktop-only local file storage with gallery management
+- **Local**: stores files in a folder inside your vault, with gallery management
 - **SM.MS**: image hosting
 - **GitHub**: repository-backed uploads
 - **Aliyun OSS**
@@ -70,10 +70,10 @@ Choose an active provider in the plugin settings, then configure:
 
 #### Local
 
-- Available in Obsidian desktop only
-- Storage path: vault-relative directory, or absolute directory inserted as `file:///` links
-- Use vault-relative path: toggle (default on, requires a local file-system vault)
-- Delete to trash: move deleted files to system trash (default on)
+- Storage path: a folder inside the vault (vault-relative, e.g. `attachments`); missing folders are created on upload. Inserted links are vault-relative paths.
+- Files are written through the Obsidian vault API. If a file with the same name exists, the upload gets a numbered name (`name 1.png`, `name 2.png`, ...) instead of overwriting it.
+- Deleting from the gallery follows Obsidian's **Files and links > Deleted files** setting (system trash, vault `.trash` folder, or permanent).
+- Absolute storage paths (outside the vault, `file:///` links) are no longer supported. If your settings still contain one, Local is treated as not configured until you change it to a vault folder.
 
 #### SM.MS
 
@@ -180,6 +180,6 @@ This plugin makes network requests only to the storage service you configure. It
   - Local: no network access
 - **Document preview.** If you set the document preview option to Google Docs or Office Online, the public URL of the document is sent to `docs.google.com/viewer` or `view.officeapps.live.com` so they can render it. Keep it Disabled to avoid this.
 - **Accounts and cost.** Every provider except Local needs an account (or self-hosted server) of your own. Some services are paid; check each provider's pricing.
-- **Local files outside the vault.** The Local provider can use an absolute storage path. In that mode it reads, writes, and (optionally) moves to the system trash files outside your vault, because the gallery needs to list and manage the directory you chose. It only touches that directory.
+- **Local files stay in the vault.** The Local provider only reads, writes, and deletes files inside the storage folder you choose in your vault, through the Obsidian vault API. It does not access files outside the vault.
 - **Credentials are stored in plain text.** Access keys, tokens, and secrets are saved in the plugin's `data.json` under your vault's `.obsidian/plugins/` folder. If you sync or commit your vault (Git, cloud drives), exclude that file or use least-privilege keys.
 - **No telemetry.** The plugin does not collect usage data or crash reports.
