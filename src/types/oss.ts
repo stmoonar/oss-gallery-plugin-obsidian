@@ -30,6 +30,12 @@ export interface IStorageProvider {
         onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string>;
 
+    /**
+     * List stored images. `prefix` is a directory relative to the provider's
+     * own path setting (the same space as the `path` passed to upload), used
+     * to scope the listing to the configured base path. Providers without
+     * folders (e.g. S.EE) ignore it.
+     */
     listImages(prefix?: string): Promise<OssImage[]>;
 
     deleteImage(key: string): Promise<void>;

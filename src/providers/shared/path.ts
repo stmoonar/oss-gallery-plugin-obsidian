@@ -60,3 +60,13 @@ export function normalizeBaseUrl(url: string, defaultProtocol = 'https'): string
     }
     return cleaned;
 }
+
+/**
+ * Combine a provider's own path setting with the caller's list prefix (a
+ * directory relative to that path, e.g. the global base path) into the key
+ * prefix uploads land under. Returns '' or a prefix ending with '/'.
+ */
+export function buildListPrefix(providerPath: string | undefined, prefix: string | undefined): string {
+    const parts = [normalizePath(providerPath), normalizePath(prefix)].filter(Boolean);
+    return parts.length > 0 ? `${parts.join('/')}/` : '';
+}

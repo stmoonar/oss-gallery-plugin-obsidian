@@ -1,6 +1,5 @@
 import { SyncChanges, ServiceDependencies } from '../types/gallery';
 import { OssImage } from '../types/oss';
-import { ImageCache } from '../utils/ImageCache';
 
 export class SyncService {
     constructor(private deps: ServiceDependencies) {}
@@ -13,13 +12,6 @@ export class SyncService {
             const remoteObjects = await this.fetchRemoteObjects();
             const changes = this.detectChanges(localObjects, remoteObjects);
 
-            if (changes.hasChanges) {
-                // Clean up deleted files from cache
-                changes.deleted.forEach(objectName => {
-                    ImageCache.delete(objectName);
-                });
-            }
-
             return {
                 objects: remoteObjects,
                 changes
@@ -31,10 +23,11 @@ export class SyncService {
     }
 
     /**
-     * Fetch remote objects
+     * Fetch remote objects, scoped to the configured base path (if any).
      */
     private async fetchRemoteObjects(): Promise<OssImage[]> {
-        const objects = await this.deps.provider.listImages();
+        const prefix = this.deps.listPrefix || undefined;
+        const objects = await this.deps.provider.listImages(prefix);
         return objects.sort((a, b) =>
             (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
         );
@@ -85,6 +78,5 @@ export class SyncService {
      */
     async deleteObject(objectName: string): Promise<void> {
         await this.deps.provider.deleteImage(objectName);
-        ImageCache.delete(objectName);
     }
 }

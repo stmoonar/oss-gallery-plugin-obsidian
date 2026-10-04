@@ -14,16 +14,10 @@ export class ObjectKeyBuilder {
 
     private generatePath(file: File): string {
         const segments: string[] = [];
-        const basePath = this.settings.basepath.trim().replace(/^\/+/, '').replace(/\/+$/, '');
+        const basePath = normalizeBasePath(this.settings.basepath);
 
         if (basePath) {
-            // Drop empty / "." / ".." segments so the base path cannot escape the storage root.
-            const safeSegments = basePath
-                .split('/')
-                .filter((segment) => segment && segment !== '.' && segment !== '..');
-            if (safeSegments.length > 0) {
-                segments.push(safeSegments.join('/'));
-            }
+            segments.push(basePath);
         }
 
         switch (this.settings.pathRule) {
@@ -84,6 +78,19 @@ export class ObjectKeyBuilder {
     updateSettings(settings: PluginSettings): void {
         this.settings = settings;
     }
+}
+
+/**
+ * Normalize the global base path the way object keys use it: trimmed,
+ * without leading/trailing slashes, and with empty / "." / ".." segments
+ * dropped so it cannot escape the storage root. Returns '' when unset.
+ */
+export function normalizeBasePath(basepath: string | undefined): string {
+    return (basepath ?? '')
+        .trim()
+        .split('/')
+        .filter((segment) => segment && segment !== '.' && segment !== '..')
+        .join('/');
 }
 
 /**

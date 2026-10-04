@@ -5,6 +5,8 @@ import { IOssProvider, OssImage, UploadProgressInfo } from '../../types/oss';
 import { PluginSettings } from '../../types/settings';
 import { extractSignedHeaders } from './aws4helpers';
 import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './s3xml';
+import { buildListPrefix } from './path';
+import { MAX_LIST_PAGES, warnListingCapped } from './listing';
 
 interface S3Credentials {
     accessKeyId: string;
@@ -173,15 +175,23 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
 
         try {
             const images: OssImage[] = [];
+            const listPrefix = buildListPrefix(undefined, prefix);
             let continuationToken: string | undefined;
+            let pages = 0;
 
             do {
+                if (pages >= MAX_LIST_PAGES) {
+                    warnListingCapped(this.name, MAX_LIST_PAGES);
+                    break;
+                }
+                pages++;
+
                 const queryParams = new URLSearchParams({
                     'list-type': '2',
                     'max-keys': '1000',
                 });
-                if (prefix) {
-                    queryParams.append('prefix', prefix);
+                if (listPrefix) {
+                    queryParams.append('prefix', listPrefix);
                 }
                 if (continuationToken) {
                     queryParams.append('continuation-token', continuationToken);

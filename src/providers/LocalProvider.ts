@@ -3,6 +3,7 @@ import { LocalSettings, PluginSettings } from '../types/settings';
 import { App, FileSystemAdapter, Setting, normalizePath } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
+import { buildListPrefix } from './shared/path';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -101,7 +102,7 @@ export class LocalProvider implements IOssProvider {
         }
 
         const images: OssImage[] = [];
-        await this.scanDirectory(baseDir, '', images, prefix);
+        await this.scanDirectory(baseDir, '', images, buildListPrefix(undefined, prefix));
 
         // Sort by lastModified descending
         images.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
@@ -134,7 +135,13 @@ export class LocalProvider implements IOssProvider {
             const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
             if (entry.isDirectory()) {
-                await this.scanDirectory(baseDir, entryRelative, images, prefix);
+                // Only descend into directories that can contain matches.
+                const canMatch = !prefix
+                    || `${entryRelative}/`.startsWith(prefix)
+                    || prefix.startsWith(`${entryRelative}/`);
+                if (canMatch) {
+                    await this.scanDirectory(baseDir, entryRelative, images, prefix);
+                }
             } else if (entry.isFile() && isImageFile(entry.name)) {
                 if (prefix && !entryRelative.startsWith(prefix)) continue;
 

@@ -50,7 +50,7 @@ Choose an active provider in the plugin settings, then configure:
 
 ### Global settings
 
-- **Base path**: optional prefix applied to every uploaded object key
+- **Base path**: optional prefix applied to every uploaded object key; the gallery only lists files under it (and under the provider's own path prefix, if set)
 - **Object naming rules**
   - `local`
   - `time`
@@ -127,7 +127,7 @@ Choose an active provider in the plugin settings, then configure:
 - Client ID
 - Proxy URL: optional, required in some regions
 
-Note: Imgur uploads are supported, but gallery listing and deletion are not.
+Note: Imgur uploads are supported for image files only; gallery listing and deletion are not.
 
 #### Cloudflare R2
 

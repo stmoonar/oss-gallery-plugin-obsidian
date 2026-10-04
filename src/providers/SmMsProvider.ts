@@ -4,10 +4,31 @@ import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
+import { isImageFile } from './shared/image';
+import { warnListingCapped } from './shared/listing';
 import { getArray, getBoolean, getNumber, getNumberLike, getRecord, getString } from '../utils/typeGuards';
 
 const SEE_API_BASE_URL = 'https://s.ee/api/v1';
 const SEE_HISTORY_PAGE_SIZE = 30;
+// History pages are small (30 files), so allow more of them than the
+// 1000-key pages of object storage listings.
+const SEE_MAX_PAGES = 100;
+
+/**
+ * S.EE hosts arbitrary files; keep only images for the gallery. Prefer the
+ * reported MIME type, otherwise fall back to the file name / URL extension.
+ */
+function isSeeImage(record: Record<string, unknown> | undefined, url: string): boolean {
+    const mimeType = getString(record?.mime_type) ?? getString(record?.mimetype) ?? getString(record?.mime);
+    if (mimeType) {
+        return mimeType.toLowerCase().startsWith('image/');
+    }
+    const filename = getString(record?.filename) ?? getString(record?.name);
+    if (filename && isImageFile(filename)) {
+        return true;
+    }
+    return isImageFile(url.split(/[?#]/)[0]);
+}
 
 function parseCreatedAt(value: unknown): Date | undefined {
     const numericValue = getNumberLike(value);
@@ -104,6 +125,11 @@ export class SmMsProvider implements IOssProvider {
             let page = 1;
 
             while (true) {
+                if (page > SEE_MAX_PAGES) {
+                    warnListingCapped(this.name, SEE_MAX_PAGES);
+                    return images;
+                }
+
                 const response = await requestUrl({
                     url: `${SEE_API_BASE_URL}/files?page=${page}`,
                     method: 'GET',
@@ -142,7 +168,7 @@ export class SmMsProvider implements IOssProvider {
                     const record = getRecord(item);
                     const key = getString(record?.hash);
                     const url = getString(record?.url);
-                    if (!key || !url) {
+                    if (!key || !url || !isSeeImage(record, url)) {
                         return [];
                     }
 

@@ -17,7 +17,8 @@ export interface GalleryState {
 	isSearching: boolean;
 	savedSearchTerm: string;
 	useRegexSearch: boolean;
-	currentPreviewIndex: number | null;
+	/** Key of the image shown in the preview modal (keys survive deletes, indexes do not). */
+	currentPreviewKey: string | null;
 	isLoading: boolean;
 }
 
@@ -31,4 +32,6 @@ export interface LazyImageOptions {
 
 export interface ServiceDependencies {
 	provider: IOssProvider;
+	/** Directory to scope listings to (the global base path), '' for all. */
+	listPrefix?: string;
 }

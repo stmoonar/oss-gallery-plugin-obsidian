@@ -1,9 +1,8 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, setIcon, debounce } from 'obsidian';
 import { t } from '../i18n';
 import { IOssProvider, OssImage } from '../types/oss';
 import { ImagePreviewModal } from '../modals/ImagePreviewModal';
 import { ConfirmModal } from '../modals/ConfirmModal';
-import { ImageCache } from '../utils/ImageCache';
 import { SearchService } from '../services/SearchService';
 import { SyncService } from '../services/SyncService';
 import { ImageGrid } from '../components/ImageGrid';
@@ -14,13 +13,32 @@ import { providerRegistry } from '../providers/registry';
 
 export const GALLERY_VIEW_TYPE = 'oss-gallery-view';
 
+/** Delay before re-listing after the active provider's settings were edited. */
+const SETTINGS_RELOAD_DELAY = 1000;
+
 export class OssGalleryView extends ItemView {
     private provider: IOssProvider;
-    private container: HTMLElement;
+    /** Directory listings are scoped to (the global base path), '' for all. */
+    private listPrefix: string;
+    private container: HTMLElement | null = null;
     private refreshBtn: HTMLButtonElement;
     private backToTopBtn: HTMLButtonElement | null = null;
     private scrollTimeout: number | null = null;
     private lastLoadTime: number = 0;
+    /**
+     * Incremented whenever a load starts or the provider changes; a load
+     * whose generation is no longer current drops its results.
+     */
+    private loadGeneration = 0;
+    /** A forced reload was requested while another load was running. */
+    private reloadQueued = false;
+    private readonly scheduleReload = debounce(
+        () => {
+            void this.loadGallery(true);
+        },
+        SETTINGS_RELOAD_DELAY,
+        true
+    );
 
     // Services and Components
     private searchService: SearchService;
@@ -35,30 +53,53 @@ export class OssGalleryView extends ItemView {
         isSearching: false,
         savedSearchTerm: '',
         useRegexSearch: false,
-        currentPreviewIndex: null,
+        currentPreviewKey: null,
         isLoading: false
     };
 
-    constructor(leaf: WorkspaceLeaf, provider: IOssProvider) {
+    constructor(leaf: WorkspaceLeaf, provider: IOssProvider, listPrefix = '') {
         super(leaf);
         this.provider = provider;
+        this.listPrefix = listPrefix;
         this.initializeServices();
     }
 
-    updateProvider(provider: IOssProvider) {
-        // saveSettings calls this on every settings keystroke; only force a
-        // remote reload when the active provider actually changed.
-        const providerChanged = this.provider.name !== provider.name;
+    /**
+     * Called after every settings change. The provider manager only creates
+     * a new provider instance when that provider's settings changed, so an
+     * unchanged instance and prefix means there is nothing to reload.
+     */
+    updateProvider(provider: IOssProvider, listPrefix: string = this.listPrefix): void {
+        if (provider === this.provider && listPrefix === this.listPrefix) {
+            return;
+        }
+
+        const providerSwitched = provider.name !== this.provider.name;
         this.provider = provider;
+        this.listPrefix = listPrefix;
         this.initializeServices();
-        if (providerChanged) {
+
+        // Anything still loading belongs to the previous provider/settings.
+        this.invalidateLoads();
+
+        if (providerSwitched) {
+            // Never keep showing the previous provider's images.
+            this.scheduleReload.cancel();
+            this.state.remoteObjects = [];
+            this.state.visibleImages = [];
             void this.loadGallery(true);
+        } else {
+            // Bucket, credentials or base path edited: wait for typing to settle.
+            this.scheduleReload();
         }
     }
 
     private initializeServices(): void {
         this.searchService = new SearchService();
-        this.syncService = new SyncService({ provider: this.provider });
+        this.syncService = new SyncService({
+            provider: this.provider,
+            listPrefix: this.listPrefix,
+        });
     }
 
     getViewType(): string {
@@ -74,22 +115,20 @@ export class OssGalleryView extends ItemView {
     }
 
     async onOpen() {
-        await ImageCache.init();
-
         const container = this.containerEl.children[1] as HTMLElement;
         if (!container) throw new Error("Failed to get container element");
 
         this.container = container;
         this.container.empty();
 
-        this.createToolbar();
+        this.createToolbar(container);
         await this.loadGallery();
         this.startAutoSync();
-        this.setupScrollListener();
+        this.setupScrollListener(container);
     }
 
-    private createToolbar(): void {
-        const toolbar = this.container.createEl('div', { cls: 'oss-gallery-toolbar' });
+    private createToolbar(container: HTMLElement): void {
+        const toolbar = container.createDiv({ cls: 'oss-gallery-toolbar' });
 
         this.searchComponent = new SearchComponent(toolbar, {
             placeholder: t('Search by URL...'),
@@ -111,17 +150,26 @@ export class OssGalleryView extends ItemView {
     }
 
     async loadGallery(forceRefresh = false): Promise<void> {
-        if (this.state.isLoading) return;
+        const container = this.container;
+        // Not opened yet (e.g. a deferred leaf): onOpen loads later.
+        if (!container) return;
+
+        if (this.state.isLoading) {
+            // Don't drop a forced refresh (e.g. after the last upload of a
+            // batch): run it once the current load finishes.
+            if (forceRefresh) {
+                this.reloadQueued = true;
+            }
+            return;
+        }
 
         if (!providerRegistry.supports(this.provider.name, 'list')) {
             this.cleanupImageGrid();
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
+            this.clearStatusMessages();
 
-            const existingMessages = this.container.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error');
-            existingMessages.forEach(el => el.remove());
-
-            this.container.createEl('div', {
+            container.createDiv({
                 cls: 'oss-gallery-error',
                 text: t('Image listing is not available'),
             });
@@ -134,78 +182,138 @@ export class OssGalleryView extends ItemView {
             return;
         }
 
-        this.state.isLoading = true;
-        this.refreshBtn?.addClass('loading');
+        const generation = this.beginLoad();
         this.lastLoadTime = currentTime;
+        this.clearStatusMessages();
 
-        this.cleanupImageGrid();
-
-        // Clear any existing loading or error messages
-        const existingMessages = this.container.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error');
-        existingMessages.forEach(el => el.remove());
-
-        // If we have cached data and not forcing refresh, use it first
-        if (!forceRefresh && this.state.remoteObjects.length > 0) {
-            // Show cached data immediately for better UX
-            this.createImageGrid();
-            await this.imageGrid!.renderImages(this.state.remoteObjects);
-            this.state.visibleImages = this.state.remoteObjects;
-            this.state.isSearching = false;
-
-            // Then load fresh data in background
-            void this.refreshDataInBackground();
-            return;
-        }
-
-        const loading = this.container.createEl('div', { cls: 'oss-gallery-loading-spinner' });
+        // With cached data and no forced refresh, show it first and refresh
+        // quietly in the background.
+        const showCachedFirst = !forceRefresh && this.state.remoteObjects.length > 0;
+        let loading: HTMLElement | null = null;
 
         try {
-            const { objects } = await this.syncService.sync(this.state.remoteObjects);
+            if (showCachedFirst) {
+                await this.renderCurrentObjects();
+            } else {
+                this.cleanupImageGrid();
+                loading = container.createDiv({ cls: 'oss-gallery-loading-spinner' });
+            }
+
+            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
+            if (!this.isCurrentLoad(generation)) return;
+
             this.state.remoteObjects = objects;
-
-            // Filter logic might need adjustment if listImages returns non-images
-            // But IOssProvider.listImages implies images.
-            const imageObjects = objects;
-
-            this.createImageGrid();
-            await this.imageGrid!.renderImages(imageObjects);
-
-            this.state.visibleImages = imageObjects;
-            this.state.isSearching = false;
-
-            loading.remove();
+            loading?.remove();
+            if (!showCachedFirst || changes.hasChanges) {
+                await this.renderCurrentObjects();
+            }
         } catch (err) {
-            loading.removeClass('oss-gallery-loading-spinner');
-            loading.addClass('oss-gallery-error');
-            
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            loading.setText(`${t('Load failed')}: ${errorMessage}`);
+            if (!this.isCurrentLoad(generation)) return;
             console.error(err);
+            // A failed background refresh keeps the cached grid silently.
+            if (loading) {
+                loading.removeClass('oss-gallery-loading-spinner');
+                loading.addClass('oss-gallery-error');
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                loading.setText(`${t('Load failed')}: ${errorMessage}`);
+            }
         } finally {
-            this.state.isLoading = false;
-            this.refreshBtn?.removeClass('loading');
+            if (!this.isCurrentLoad(generation)) {
+                loading?.remove();
+            }
+            this.endLoad(generation);
         }
     }
 
-    private createImageGrid(): void {
-        const gridContainer = this.container.createEl('div', {
+    private beginLoad(): number {
+        this.state.isLoading = true;
+        this.refreshBtn?.addClass('loading');
+        return ++this.loadGeneration;
+    }
+
+    private isCurrentLoad(generation: number): boolean {
+        return generation === this.loadGeneration;
+    }
+
+    private endLoad(generation: number): void {
+        if (!this.isCurrentLoad(generation)) return;
+
+        this.state.isLoading = false;
+        this.refreshBtn?.removeClass('loading');
+
+        if (this.reloadQueued) {
+            this.reloadQueued = false;
+            void this.loadGallery(true);
+        }
+    }
+
+    /**
+     * Make every running load stale so its results are dropped.
+     */
+    private invalidateLoads(): void {
+        this.loadGeneration++;
+        this.reloadQueued = false;
+        this.state.isLoading = false;
+        this.refreshBtn?.removeClass('loading');
+    }
+
+    private clearStatusMessages(): void {
+        this.container
+            ?.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error')
+            .forEach(el => el.remove());
+    }
+
+    /**
+     * Render the loaded objects, re-applying the active search (if any).
+     */
+    private async renderCurrentObjects(): Promise<void> {
+        let objects = this.state.remoteObjects;
+        if (this.state.isSearching) {
+            try {
+                const result = await this.searchService.search(
+                    objects,
+                    this.state.savedSearchTerm,
+                    this.state.useRegexSearch
+                );
+                objects = result.matchedObjects;
+            } catch (error) {
+                // Already reported when the term was entered.
+                console.warn('Search failed, showing all images:', error);
+            }
+        }
+        await this.renderObjects(objects);
+    }
+
+    private async renderObjects(objects: OssImage[]): Promise<void> {
+        this.state.visibleImages = objects;
+        this.clearStatusMessages();
+        this.cleanupImageGrid();
+        const grid = this.createImageGrid();
+        await grid?.renderImages(objects);
+    }
+
+    private createImageGrid(): ImageGrid | null {
+        if (!this.container) return null;
+
+        const gridContainer = this.container.createDiv({
             cls: 'oss-gallery-container'
         });
 
         this.imageGrid = new ImageGrid(gridContainer, {
             getObjectUrl: async (objectName) => await this.getObjectUrl(objectName),
             canDelete: providerRegistry.supports(this.provider.name, 'delete'),
-            onPreview: (index) => {
-                void this.openImagePreview(index);
+            onPreview: (objectName) => {
+                this.openImagePreview(objectName);
             },
             onDelete: (objectName, element) => {
                 void this.handleDelete(objectName, element);
             }
         });
+        return this.imageGrid;
     }
 
     private cleanupImageGrid(): void {
-        const existingContainer = this.container.querySelector('.oss-gallery-container');
+        const existingContainer = this.container?.querySelector('.oss-gallery-container');
         existingContainer?.remove();
 
         if (this.imageGrid) {
@@ -215,64 +323,58 @@ export class OssGalleryView extends ItemView {
     }
 
     private async handleSearch(searchText: string): Promise<void> {
-        if (this.state.isLoading) return;
+        const term = searchText.trim() === '' ? '' : searchText;
+        this.state.savedSearchTerm = term;
+        this.state.isSearching = term !== '';
 
-        this.state.isSearching = true;
-        this.state.savedSearchTerm = searchText;
-
+        // Filters the data loaded so far; a running load re-applies the term
+        // when it renders its results.
         try {
-            let objectsToRender: OssImage[];
-
-            if (searchText.trim() === '') {
-                objectsToRender = this.state.remoteObjects;
-                this.state.isSearching = false;
-                this.state.savedSearchTerm = '';
-            } else {
-                const result = await this.searchService.search(
+            const objectsToRender = term === ''
+                ? this.state.remoteObjects
+                : (await this.searchService.search(
                     this.state.remoteObjects,
-                    searchText,
+                    term,
                     this.state.useRegexSearch
-                );
-                objectsToRender = result.matchedObjects;
-            }
+                )).matchedObjects;
 
-            this.state.visibleImages = objectsToRender;
-
-            this.cleanupImageGrid();
-            this.createImageGrid();
-            await this.imageGrid!.renderImages(objectsToRender);
+            await this.renderObjects(objectsToRender);
         } catch (error) {
             new Notice(error instanceof Error ? error.message : t('Search failed'));
             console.error('Search error:', error);
         }
     }
 
-    private async openImagePreview(imageIndex: number): Promise<void> {
-        if (imageIndex < 0 || imageIndex >= this.state.visibleImages.length || this.state.isLoading) {
+    /**
+     * Open the preview by object key: grid tiles must not capture indexes,
+     * which shift after deletes and re-renders.
+     */
+    private openImagePreview(objectName: string): void {
+        const imageIndex = this.state.visibleImages.findIndex(obj => obj.key === objectName);
+        const object = this.state.visibleImages[imageIndex];
+        if (!object) {
             return;
         }
 
-        const object = this.state.visibleImages[imageIndex];
-        // 使用 object.url 而不是异步搜索
-        const objectUrl = object.url;
+        this.state.currentPreviewKey = object.key;
 
-        const modalInstance = new ImagePreviewModal(this.app, objectUrl, object.key, {
+        const modalInstance = new ImagePreviewModal(this.app, object.url, object.key, {
             onNavigate: (direction: 'prev' | 'next') => {
-                const currentIndex = this.state.currentPreviewIndex ?? imageIndex;
+                const currentIndex = this.state.visibleImages.findIndex(
+                    obj => obj.key === this.state.currentPreviewKey
+                );
+                if (currentIndex < 0) return;
+
                 const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
-                if (newIndex >= 0 && newIndex < this.state.visibleImages.length) {
-                    // 直接更新，不需要再次调用 openImagePreview
-                    const nextObject = this.state.visibleImages[newIndex];
-                    if (nextObject) {
-                        modalInstance.updateImage(nextObject.url, nextObject.key);
-                        this.state.currentPreviewIndex = newIndex;
-                    }
+                const nextObject = this.state.visibleImages[newIndex];
+                if (nextObject) {
+                    modalInstance.updateImage(nextObject.url, nextObject.key);
+                    this.state.currentPreviewKey = nextObject.key;
+                    this.preloadAdjacentImages(newIndex);
                 }
             }
         });
         modalInstance.open();
-
-        this.state.currentPreviewIndex = imageIndex;
 
         // 预加载相邻图片
         this.preloadAdjacentImages(imageIndex);
@@ -313,24 +415,20 @@ export class OssGalleryView extends ItemView {
     private async deleteConfirmed(objectName: string, element: HTMLElement): Promise<void> {
         try {
             await this.syncService.deleteObject(objectName);
-            element.remove();
-
-            this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
-            this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
-
-            ImageCache.delete(objectName);
-
-            const { objects } = await this.syncService.sync(this.state.remoteObjects);
-            this.state.remoteObjects = objects;
-
-            new Notice(t('Delete success'));
         } catch (err) {
             new Notice(t('Delete failed'));
             console.error(err);
+            return;
         }
+
+        // Update in-memory state instead of re-listing the whole bucket.
+        element.remove();
+        this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
+        this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
+
+        new Notice(t('Delete success'));
     }
 
-    
     private async getObjectUrl(objectName: string): Promise<string> {
         // Try to find object in remoteObjects to get URL directly if available
         const obj = this.state.remoteObjects.find(o => o.key === objectName);
@@ -341,30 +439,6 @@ export class OssGalleryView extends ItemView {
         return '';
     }
 
-    private async refreshDataInBackground(): Promise<void> {
-        try {
-            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
-
-            if (changes.hasChanges) {
-                this.state.remoteObjects = objects;
-
-                // Update gallery if user hasn't changed anything
-                if (!this.state.isSearching) {
-                    this.cleanupImageGrid();
-                    this.createImageGrid();
-                    await this.imageGrid!.renderImages(objects);
-                    this.state.visibleImages = objects;
-                }
-            }
-        } catch (error) {
-            console.error('Background refresh failed:', error);
-            // Don't show error to user for background refresh
-        } finally {
-            this.state.isLoading = false;
-            this.refreshBtn?.removeClass('loading');
-        }
-    }
-
     private startAutoSync(): void {
         this.registerInterval(window.setInterval(() => {
             void this.runAutoSync();
@@ -372,43 +446,40 @@ export class OssGalleryView extends ItemView {
     }
 
     private async runAutoSync(): Promise<void> {
-        if (this.state.isLoading) return;
+        if (!this.container || this.state.isLoading) return;
+        if (!providerRegistry.supports(this.provider.name, 'list')) return;
 
+        const generation = this.beginLoad();
         try {
             const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
-            if (!changes.hasChanges) return;
+            if (!this.isCurrentLoad(generation) || !changes.hasChanges) return;
 
             this.state.remoteObjects = objects;
-
-            // Re-render so the grid (and the indices captured in its click
-            // handlers) stays consistent with the new object list.
-            if (!this.state.isSearching) {
-                this.cleanupImageGrid();
-                this.createImageGrid();
-                await this.imageGrid!.renderImages(objects);
-                this.state.visibleImages = objects;
-            }
+            await this.renderCurrentObjects();
         } catch (error) {
+            if (!this.isCurrentLoad(generation)) return;
             handleError(error, {
                 operation: 'AutoSync',
                 additionalInfo: {
                     interval: '120000ms'
                 }
             });
+        } finally {
+            this.endLoad(generation);
         }
     }
 
-    private setupScrollListener(): void {
+    private setupScrollListener(container: HTMLElement): void {
         const throttledHandleScroll = () => {
             if (this.scrollTimeout) return;
 
             this.scrollTimeout = window.setTimeout(() => {
-                const scrollTop = this.container.scrollTop;
-                const containerHeight = this.container.clientHeight;
+                const scrollTop = container.scrollTop;
+                const containerHeight = container.clientHeight;
                 const showThreshold = containerHeight * 0.5;
 
                 if (scrollTop > showThreshold) {
-                    this.showBackToTopButton();
+                    this.showBackToTopButton(container);
                 } else {
                     this.hideBackToTopButton();
                 }
@@ -417,18 +488,18 @@ export class OssGalleryView extends ItemView {
             }, 16);
         };
 
-        this.registerDomEvent(this.container, 'scroll', throttledHandleScroll, { passive: true });
+        this.registerDomEvent(container, 'scroll', throttledHandleScroll, { passive: true });
     }
 
-    private showBackToTopButton(): void {
+    private showBackToTopButton(container: HTMLElement): void {
         if (!this.backToTopBtn) {
-            this.backToTopBtn = this.container.createEl('button', {
+            this.backToTopBtn = container.createEl('button', {
                 cls: 'oss-gallery-back-to-top'
             });
             setIcon(this.backToTopBtn, 'chevron-up');
 
             this.backToTopBtn.onclick = () => {
-                this.container.scrollTo({ top: 0, behavior: 'smooth' });
+                container.scrollTo({ top: 0, behavior: 'smooth' });
             };
         }
 
@@ -441,8 +512,12 @@ export class OssGalleryView extends ItemView {
 
     async onClose(): Promise<void> {
         // The auto-sync interval is cleaned up via registerInterval.
+        this.scheduleReload.cancel();
+        // Drop the results of any load that is still running.
+        this.invalidateLoads();
+
         if (this.scrollTimeout) {
-            clearTimeout(this.scrollTimeout);
+            window.clearTimeout(this.scrollTimeout);
             this.scrollTimeout = null;
         }
 

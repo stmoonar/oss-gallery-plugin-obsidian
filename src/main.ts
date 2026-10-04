@@ -1,4 +1,5 @@
 import {
+	debounce,
 	Editor,
 	MarkdownFileInfo,
 	MarkdownView,
@@ -11,7 +12,7 @@ import { t } from "./i18n";
 import { OssGalleryView, GALLERY_VIEW_TYPE } from "./views/OssGalleryView";
 import { PluginSettings, DEFAULT_SETTINGS } from "./types/settings";
 import { SettingsManager } from "./settings/SettingsManager";
-import { ObjectKeyBuilder } from "./services/ObjectKeyBuilder";
+import { normalizeBasePath, ObjectKeyBuilder } from "./services/ObjectKeyBuilder";
 import { EmbedRenderer } from "./services/EmbedRenderer";
 import { UploadService, UploadProgress } from "./services/UploadService";
 import { getFileTypeByMime } from "./utils/FileUtils";
@@ -53,6 +54,30 @@ export default class OssGalleryPlugin extends Plugin {
 	private keyBuilder: ObjectKeyBuilder;
 	private embedRenderer: EmbedRenderer;
 	private uploadService: UploadService | null = null;
+
+	/**
+	 * Settings fire on every keystroke: write data.json once typing pauses.
+	 * Pending writes are flushed in onunload.
+	 */
+	private readonly requestSaveData = debounce(
+		() => {
+			this.saveData(this.settings).catch((error) => {
+				console.error("Failed to save settings", error);
+			});
+		},
+		500,
+		true
+	);
+
+	/**
+	 * Re-list galleries once a batch of uploads settles instead of after
+	 * every single file.
+	 */
+	private readonly requestGalleryRefresh = debounce(
+		() => this.refreshGalleryViews(),
+		1500,
+		true
+	);
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -162,7 +187,7 @@ export default class OssGalleryPlugin extends Plugin {
 				const provider = this.providerManager.getActiveProvider()
 					?? this.providerManager.getAllProviders()[0];
 				if (!provider) throw new Error(t("No active provider"));
-				return new OssGalleryView(leaf, provider);
+				return new OssGalleryView(leaf, provider, this.getGalleryListPrefix());
 			}
 		);
 
@@ -190,12 +215,9 @@ export default class OssGalleryPlugin extends Plugin {
 		}
 
 		const { workspace } = this.app;
-		let leaf: WorkspaceLeaf | null = null;
-		const currentView = workspace.getActiveViewOfType(OssGalleryView);
-
-		if (currentView) {
-			leaf = currentView.leaf;
-		}
+		// Reuse an existing gallery (even if it is not the active view)
+		// instead of opening a duplicate.
+		let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(GALLERY_VIEW_TYPE)[0] ?? null;
 
 		if (!leaf) {
 			leaf = workspace.getLeftLeaf(false);
@@ -207,7 +229,16 @@ export default class OssGalleryPlugin extends Plugin {
 			});
 		}
 
-		void workspace.revealLeaf(leaf);
+		await workspace.revealLeaf(leaf);
+	}
+
+	/**
+	 * Directory the gallery lists: the global base path, so it shows what
+	 * this plugin uploads rather than the whole bucket.
+	 */
+	private getGalleryListPrefix(): string {
+		const basePath = normalizeBasePath(this.settings.basepath);
+		return basePath ? `${basePath}/` : "";
 	}
 
 	private createUploadTarget(
@@ -220,15 +251,12 @@ export default class OssGalleryPlugin extends Plugin {
 	private triggerFileUpload(target: UploadTarget): void {
 		const input = document.createElement("input");
 		input.setAttribute("type", "file");
-		input.setAttribute(
-			"accept",
-			"image/*,video/*,audio/*,.doc,.docx,.pdf,.pptx,.xlsx,.xls"
-		);
+		input.setAttribute("accept", this.getFilePickerAccept());
 
 		input.onchange = async (event: Event) => {
 			const file = (event.target as HTMLInputElement)?.files?.[0];
 			if (file && getFileTypeByMime(file)) {
-				await this.uploadFiles(target, [file]);
+				await this.uploadFiles(target, this.filterAcceptedFiles([file]));
 			}
 		};
 
@@ -288,7 +316,7 @@ export default class OssGalleryPlugin extends Plugin {
 			this.uploadProgress.update(id, { percent: 100, status: "done" });
 			const finalText = this.embedRenderer.render(fileType, url, file.name);
 			await this.replacePlaceholder(target, id, finalText);
-			this.refreshGalleryViews();
+			this.requestGalleryRefresh();
 		} catch (error) {
 			handleUploadError(error, file.name);
 			this.uploadProgress.update(id, { status: "failed" });
@@ -437,11 +465,16 @@ export default class OssGalleryPlugin extends Plugin {
 		info: MarkdownView | MarkdownFileInfo
 	): Promise<void> {
 		if (evt.defaultPrevented) return;
+		if (this.isRichTextPaste(evt)) return;
 
 		const files = this.extractFilesFromEvent(evt);
 		const supported = files.filter((f) => getFileTypeByMime(f));
 		if (supported.length === 0) return;
 		if (!this.validateSettings()) return;
+
+		const accepted = this.filterAcceptedFiles(supported);
+		// Nothing the active provider can take: leave the event to Obsidian.
+		if (accepted.length === 0) return;
 
 		evt.preventDefault();
 
@@ -450,7 +483,57 @@ export default class OssGalleryPlugin extends Plugin {
 			new Notice(t("Some files are not supported and were skipped"));
 		}
 
-		await this.uploadFiles(this.createUploadTarget(editor, info), supported);
+		await this.uploadFiles(this.createUploadTarget(editor, info), accepted);
+	}
+
+	/**
+	 * Office / Excel / browsers put a rendered image next to the copied text
+	 * on the clipboard. When there is text, it is a text paste: let Obsidian
+	 * handle it instead of uploading the rendering.
+	 */
+	private isRichTextPaste(evt: ClipboardEvent | DragEvent): boolean {
+		if (evt.type !== "paste") return false;
+		const text = (evt as ClipboardEvent).clipboardData?.getData("text/plain") ?? "";
+		return text.trim() !== "";
+	}
+
+	/**
+	 * Drop files the active provider cannot take (e.g. non-images for
+	 * Imgur), telling the user which ones were skipped.
+	 */
+	private filterAcceptedFiles(files: File[]): File[] {
+		const providerId = this.settings.activeProvider;
+		const accepted: File[] = [];
+		for (const file of files) {
+			if (providerRegistry.acceptsFileType(providerId, getFileTypeByMime(file), this.app)) {
+				accepted.push(file);
+			} else {
+				new Notice(
+					t("File type not supported by provider")
+						.replace("{provider}", () => providerRegistry.getLabel(providerId, this.app))
+						.replace("{name}", () => file.name)
+				);
+			}
+		}
+		return accepted;
+	}
+
+	/**
+	 * File picker filter matching the active provider's accepted types.
+	 */
+	private getFilePickerAccept(): string {
+		const acceptByType: Record<string, string> = {
+			image: "image/*",
+			video: "video/*",
+			audio: "audio/*",
+			doc: ".doc,.docx,.pdf,.pptx,.xlsx,.xls",
+		};
+		return Object.entries(acceptByType)
+			.filter(([type]) =>
+				providerRegistry.acceptsFileType(this.settings.activeProvider, type, this.app)
+			)
+			.map(([, accept]) => accept)
+			.join(",");
 	}
 
 	private extractFilesFromEvent(evt: ClipboardEvent | DragEvent): File[] {
@@ -498,6 +581,10 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		// Write settings still waiting for the debounce, and drop the
+		// pending gallery refresh.
+		this.requestSaveData.run();
+		this.requestGalleryRefresh.cancel();
 		// Drop progress entries and revoke thumbnail object URLs.
 		this.uploadProgress.clear();
 	}
@@ -519,7 +606,8 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
-		await this.saveData(this.settings);
+		// Apply in memory right away; the disk write is debounced.
+		this.requestSaveData();
 
 		this.keyBuilder?.updateSettings(this.settings);
 		this.embedRenderer?.updateSettings(this.settings);
@@ -534,10 +622,12 @@ export default class OssGalleryPlugin extends Plugin {
 				this.uploadService = new UploadService(activeProvider);
 			}
 
-			// Update all gallery views
+			// Update all gallery views; they reload only when the provider
+			// instance (rebuilt only on changed settings) or base path changed.
+			const listPrefix = this.getGalleryListPrefix();
 			this.app.workspace.getLeavesOfType(GALLERY_VIEW_TYPE).forEach(leaf => {
 				if (leaf.view instanceof OssGalleryView) {
-					leaf.view.updateProvider(activeProvider);
+					leaf.view.updateProvider(activeProvider, listPrefix);
 				}
 			});
 		}

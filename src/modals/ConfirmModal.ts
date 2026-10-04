@@ -15,10 +15,7 @@ export class ConfirmModal extends Modal {
         const {contentEl} = this;
         contentEl.empty();
         
-        contentEl.createEl("h3", {
-            text: t('Delete'),
-            cls: 'oss-gallery-confirm-title'
-        });
+        this.setTitle(t('Delete'));
         
         contentEl.createEl("p", {
             text: t('Confirm delete?'),

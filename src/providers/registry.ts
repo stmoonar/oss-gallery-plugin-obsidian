@@ -19,10 +19,15 @@ export interface ProviderCapabilities {
     delete: boolean;
 }
 
+/** File categories as returned by getFileTypeByMime. */
+export type UploadFileCategory = 'image' | 'video' | 'audio' | 'doc';
+
 export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = keyof ProviderSettingsMap> {
     id: K;
     label: string;
     capabilities: ProviderCapabilities;
+    /** File categories the provider accepts for upload; all when omitted. */
+    acceptedFileTypes?: UploadFileCategory[];
     defaultSettings: ProviderSettingsMap[K];
     isAvailable?(app?: App): boolean;
     isConfigured(settings: ProviderSettingsMap[K], app?: App): boolean;
@@ -98,7 +103,8 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         defaultSettings: DEFAULT_QINIU_SETTINGS,
         isConfigured: (settings) => {
             const qiniu = settings as QiniuSettings;
-            return Boolean(qiniu.accessKey && qiniu.secretKey && qiniu.bucket);
+            // The CDN domain is required: Qiniu has no usable default public URL.
+            return Boolean(qiniu.accessKey && qiniu.secretKey && qiniu.bucket && qiniu.url?.trim());
         },
         create: (settings) => new QiniuProvider(settings as QiniuSettings),
     },
@@ -109,7 +115,8 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         defaultSettings: DEFAULT_UPYUN_SETTINGS,
         isConfigured: (settings) => {
             const upyun = settings as UpyunSettings;
-            return Boolean(upyun.operator && upyun.password && upyun.bucket);
+            // The acceleration domain is required: Upyun has no usable default public URL.
+            return Boolean(upyun.operator && upyun.password && upyun.bucket && upyun.url?.trim());
         },
         create: (settings) => new UpyunProvider(settings as UpyunSettings),
     },
@@ -117,6 +124,8 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         id: 'imgur',
         label: 'Imgur',
         capabilities: { upload: true, list: false, delete: false },
+        // The plugin uploads through Imgur's image endpoint only.
+        acceptedFileTypes: ['image'],
         defaultSettings: DEFAULT_IMGUR_SETTINGS,
         isConfigured: (settings) => Boolean((settings as ImgurSettings).clientId),
         create: (settings) => new ImgurProvider(settings as ImgurSettings),
@@ -197,6 +206,23 @@ export class ProviderRegistry {
 
     supports(id: string, capability: keyof ProviderCapabilities, app?: App): boolean {
         return Boolean(this.get(id, app)?.capabilities[capability]);
+    }
+
+    /**
+     * Whether the provider accepts a file of the given category
+     * (see getFileTypeByMime). Unknown providers accept nothing.
+     */
+    acceptsFileType(id: string, fileType: string, app?: App): boolean {
+        const entry = this.get(id, app);
+        if (!entry) {
+            return false;
+        }
+        return !entry.acceptedFileTypes
+            || (entry.acceptedFileTypes as string[]).includes(fileType);
+    }
+
+    getLabel(id: string, app?: App): string {
+        return this.get(id, app)?.label ?? id;
     }
 
     isConfigured(

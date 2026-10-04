@@ -56,7 +56,7 @@ export class S3Provider extends S3CompatibleProvider<S3Settings> {
 
     protected getListRequestPath(query: string): string {
         const basePath = this.settings.forcePathStyle
-            ? `/${this.settings.bucket}`
+            ? `/${this.settings.bucket.trim()}`
             : '';
         return `${basePath}/?${query}`;
     }

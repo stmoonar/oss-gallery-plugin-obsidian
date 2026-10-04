@@ -3,6 +3,8 @@ import { GithubSettings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
+import { MAX_LIST_REQUESTS, warnListingCapped } from './shared/listing';
+import { buildListPrefix } from './shared/path';
 import { getArray, getNumber, getRecord, getString } from '../utils/typeGuards';
 
 interface GithubFileEntry {
@@ -12,6 +14,17 @@ interface GithubFileEntry {
     downloadUrl?: string;
     size?: number;
     sha?: string;
+}
+
+/** Directory depth limit for the fallback walk (the root is depth 0). */
+const GITHUB_MAX_WALK_DEPTH = 10;
+
+/**
+ * Drop the query string: for private repositories download_url carries a
+ * short-lived "?token=..." that would make the inserted link expire.
+ */
+function stripQuery(url: string): string {
+    return url.split(/[?#]/)[0];
 }
 
 export class GithubProvider implements IOssProvider {
@@ -148,7 +161,7 @@ export class GithubProvider implements IOssProvider {
                     return `${cleanCustomUrl}/${this.encodePath(cleanPath)}`;
                 }
                 if (downloadUrl) {
-                    return downloadUrl;
+                    return stripQuery(downloadUrl);
                 }
                 return this.buildCustomUrl(cleanPath);
             } else {
@@ -175,34 +188,39 @@ export class GithubProvider implements IOssProvider {
             return [];
         }
 
-        // Remove leading slash from prefix if present
-        const path = prefix ? prefix.replace(/^\//, '') : '';
+        const listPrefix = buildListPrefix(undefined, prefix);
 
-        // Optimization 1: If a specific prefix is provided, search only that directory
-        if (path) {
-            return await this.searchDirectory(repo, path);
-        }
-
-        // Optimization 2: First try to get repository's Git tree to avoid multiple API calls
-        try {
-            const treeData = await this.getRepositoryTree(repo);
-            // The Git tree API silently truncates responses for very large
-            // repositories; when that happens the tree is incomplete, so fall
-            // back to the directory-based search to avoid missing images.
-            if (getRecord(treeData)?.truncated === true) {
-                console.warn('Tree API response truncated, falling back to directory search');
-                return await this.searchCommonDirectories(repo);
+        // One request for the whole repository when the Git tree API works.
+        const treeData = await this.getRepositoryTree(repo);
+        if (treeData !== null) {
+            // The tree API silently truncates very large repositories; walk
+            // the directories instead so images are not missed.
+            if (getRecord(treeData)?.truncated !== true) {
+                return this.extractImagesFromTree(treeData, listPrefix);
             }
-            return this.extractImagesFromTree(treeData);
-        } catch {
-            // Fallback to directory-based search if tree API fails
-            console.warn('Tree API failed, falling back to directory search');
-            return await this.searchCommonDirectories(repo);
+            console.warn('GitHub: tree API response truncated, walking directories instead');
         }
+
+        return await this.walkDirectories(repo, listPrefix);
+    }
+
+    private listStatusError(status: number): Error {
+        if (status === 401) {
+            return new Error('GitHub authentication failed. Please check your token.');
+        }
+        if (status === 403) {
+            return new Error('GitHub permission denied or rate limited. Please check your token and try again later.');
+        }
+        if (status === 404) {
+            return new Error('GitHub repository or branch not found. Please check the repository name and branch.');
+        }
+        return new Error(`GitHub list request failed with status ${status}`);
     }
 
     /**
-     * Get repository's Git tree with all files at once
+     * Get the repository's Git tree with all files at once. Returns null
+     * when the tree API is unusable and a directory walk should be tried;
+     * auth / not-found errors are thrown since a walk would fail the same way.
      */
     private async getRepositoryTree(repo: string): Promise<unknown> {
         const url = `https://api.github.com/repos/${repo}/git/trees/${this.getEncodedBranch()}?recursive=1`;
@@ -215,30 +233,44 @@ export class GithubProvider implements IOssProvider {
                 'User-Agent': 'Obsidian-OSS-Gallery',
                 'Accept': 'application/vnd.github.v3+json',
                 'X-GitHub-Api-Version': '2022-11-28'
-            }
+            },
+            throw: false,
         });
 
         if (response.status === 200) {
-            return response.json;
+            return response.json as unknown;
         }
-        throw new Error(`Tree API failed: ${response.status}`);
+        if (response.status === 409) {
+            // "Git Repository is empty"
+            return { tree: [] };
+        }
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+            throw this.listStatusError(response.status);
+        }
+        console.warn(`GitHub: tree API failed with status ${response.status}, walking directories instead`);
+        return null;
     }
 
     /**
-     * Extract images from Git tree data
+     * Extract images under `listPrefix` from Git tree data
      */
-    private extractImagesFromTree(treeData: unknown): OssImage[] {
+    private extractImagesFromTree(treeData: unknown, listPrefix: string): OssImage[] {
         const images: OssImage[] = [];
         const tree = getArray(getRecord(treeData)?.tree) ?? [];
 
         for (const item of tree) {
             const entry = this.parseFileEntry(item);
-            if (entry?.type === 'blob' && entry.path && isImageFile(entry.path)) {
-                    images.push({
-                        key: entry.path,
-                        url: this.buildCustomUrl(entry.path),
-                        size: entry.size ?? 0
-                    });
+            if (
+                entry?.type === 'blob'
+                && entry.path
+                && entry.path.startsWith(listPrefix)
+                && isImageFile(entry.path)
+            ) {
+                images.push({
+                    key: entry.path,
+                    url: this.buildCustomUrl(entry.path),
+                    size: entry.size ?? 0
+                });
             }
         }
 
@@ -246,82 +278,76 @@ export class GithubProvider implements IOssProvider {
     }
 
     /**
-     * Search specific directory
+     * List one directory through the Contents API. A missing directory
+     * yields no entries; other failures are thrown.
      */
-    private async searchDirectory(repo: string, path: string): Promise<OssImage[]> {
+    private async listDirectoryEntries(repo: string, path: string): Promise<GithubFileEntry[]> {
         const url = `https://api.github.com/repos/${repo}/contents/${this.encodePath(path)}?ref=${this.getEncodedBranch()}`;
 
-        try {
-            const response = await requestUrl({
-                url: url,
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${this.settings.token}`,
-                    'User-Agent': 'Obsidian-OSS-Gallery',
-                    'Accept': 'application/vnd.github.v3+json',
-                    'X-GitHub-Api-Version': '2022-11-28'
-                }
-            });
+        const response = await requestUrl({
+            url: url,
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${this.settings.token}`,
+                'User-Agent': 'Obsidian-OSS-Gallery',
+                'Accept': 'application/vnd.github.v3+json',
+                'X-GitHub-Api-Version': '2022-11-28'
+            },
+            throw: false,
+        });
 
-            if (response.status === 200) {
-                const data = response.json as unknown;
-                const file = this.parseFileEntry(data);
-
-                // Handle single file
-                if (file?.type === 'file' && file.name && file.path) {
-                    if (isImageFile(file.name)) {
-                        return [{
-                            key: file.path,
-                            url: file.downloadUrl || this.buildCustomUrl(file.path),
-                            size: file.size ?? 0
-                        }];
-                    }
-                    return [];
-                }
-
-                // Handle directory
-                const items = this.parseFileEntries(data);
-                if (items.length > 0) {
-                    return items
-                        .filter((item) => item.type === 'file' && item.name && item.path && isImageFile(item.name))
-                        .map((item) => ({
-                            key: item.path as string,
-                            url: item.downloadUrl || this.buildCustomUrl(item.path as string),
-                            size: item.size ?? 0
-                        }));
-                }
-            }
-        } catch (error) {
-            console.warn(`Failed to search directory ${path}:`, error);
+        if (response.status === 404) {
+            return [];
+        }
+        if (response.status !== 200) {
+            throw this.listStatusError(response.status);
         }
 
-        return [];
+        const data = response.json as unknown;
+        if (Array.isArray(data)) {
+            return this.parseFileEntries(data);
+        }
+        // The path points at a single file.
+        const file = this.parseFileEntry(data);
+        return file ? [file] : [];
     }
 
     /**
-     * Search common directories as fallback (limited recursive search)
+     * Breadth-first directory walk (fallback when the tree API is unusable),
+     * bounded by depth and request count.
      */
-    private async searchCommonDirectories(repo: string): Promise<OssImage[]> {
-        const allImages: OssImage[] = [];
-        const commonImageDirs = ['images', 'img', 'assets', 'static', 'pictures', 'media', 'uploads'];
+    private async walkDirectories(repo: string, listPrefix: string): Promise<OssImage[]> {
+        const images: OssImage[] = [];
+        const queue: Array<{ path: string; depth: number }> = [
+            { path: listPrefix.replace(/\/$/, ''), depth: 0 },
+        ];
+        let requests = 0;
 
-        // Add root directory to search
-        const directoriesToSearch = [''];
+        for (let next = queue.shift(); next; next = queue.shift()) {
+            if (requests >= MAX_LIST_REQUESTS) {
+                warnListingCapped(this.name, MAX_LIST_REQUESTS);
+                break;
+            }
+            requests++;
 
-        // Add common image directories if they exist
-        for (const dir of commonImageDirs) {
-            directoriesToSearch.push(dir);
+            const entries = await this.listDirectoryEntries(repo, next.path);
+            for (const entry of entries) {
+                if (!entry.path) continue;
+                if (entry.type === 'dir') {
+                    if (next.depth < GITHUB_MAX_WALK_DEPTH) {
+                        queue.push({ path: entry.path, depth: next.depth + 1 });
+                    }
+                } else if (entry.type === 'file' && isImageFile(entry.name ?? entry.path)) {
+                    images.push({
+                        key: entry.path,
+                        url: this.buildCustomUrl(entry.path),
+                        size: entry.size ?? 0
+                    });
+                }
+            }
         }
 
-        // Batch search requests
-        const searchPromises = directoriesToSearch.map(path => this.searchDirectory(repo, path));
-        const results = await Promise.all(searchPromises);
-
-        results.forEach(images => {
-            allImages.push(...images);
-        });
-
-        return allImages;
+        return images;
     }
 
     /**

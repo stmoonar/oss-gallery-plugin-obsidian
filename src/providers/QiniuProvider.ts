@@ -5,7 +5,8 @@ import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
-import { buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
 import {
     createQiniuAccessTokenV2,
     createQiniuUploadToken,
@@ -77,6 +78,9 @@ export class QiniuProvider implements IOssProvider {
         if (!this.settings.accessKey || !this.settings.secretKey || !this.settings.bucket) {
             throw new Error(t('Please configure Qiniu settings first'));
         }
+        // Resolve the public base URL before uploading so a missing CDN domain
+        // fails up front instead of after the file is already stored.
+        this.getPublicBaseUrl();
 
         // Simulate progress since requestUrl doesn't support it
         const progress = simulateProgress(onProgress, file.size);
@@ -138,15 +142,21 @@ export class QiniuProvider implements IOssProvider {
         try {
             const host = 'rsf.qiniuapi.com';
             const images: OssImage[] = [];
+            const listPrefix = buildListPrefix(this.settings.path, prefix);
             let marker = '';
 
-            while (true) {
+            for (let pages = 0; ; pages++) {
+                if (pages >= MAX_LIST_PAGES) {
+                    warnListingCapped(this.name, MAX_LIST_PAGES);
+                    return images;
+                }
+
                 const query = new URLSearchParams({
                     bucket: this.settings.bucket,
                     limit: '1000',
                 });
-                if (prefix) {
-                    query.append('prefix', prefix);
+                if (listPrefix) {
+                    query.append('prefix', listPrefix);
                 }
                 if (marker) {
                     query.append('marker', marker);

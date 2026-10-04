@@ -1,7 +1,7 @@
 export default {
 	"File upload": "选择文件上传",
 
-	"Minio OSS": "Minio OSS 配置",
+	"Minio OSS": "MinIO OSS 配置",
 	Required: "必填",
 	Optional: "可选",
 	"Enter your access key": "请输入 Access Key",
@@ -67,7 +67,7 @@ export default {
 	Cancel: "取消",
 	"Confirm delete?": "确认删除该图片吗？",
 	"Invalid regex pattern": "无效的正则表达式",
-	"Open OSS gallery": "打开 OSS 图库",
+	"Open OSS gallery": "打开图库",
 	"Some files are not supported and were skipped": "部分文件类型不支持，已跳过",
 	"Toggle background": "切换背景",
 	"Toggle regex search": "切换正则搜索",
@@ -86,7 +86,7 @@ export default {
 	"Upyun": "又拍云",
 	"Imgur": "Imgur图床",
 	"Cloudflare R2": "Cloudflare R2",
-	"Minio Provider": "Minio OSS",
+	"Minio Provider": "MinIO OSS",
 
 	// Aliyun OSS
 	"Access Key ID": "Access Key ID",
@@ -193,10 +193,10 @@ export default {
 	"Failed to move file to system trash": "移动文件到系统回收站失败",
 
 	// MinIO
-	"Minio endpoint (e.g. play.min.io)": "Minio 端点(例如: play.min.io)",
+	"Minio endpoint (e.g. play.min.io)": "MinIO 端点(例如: play.min.io)",
 	"MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)": "MinIO 端点主机或完整 URL（例如 play.min.io 或 http://localhost:9000）",
 	"Port": "端口",
-	"Minio port": "Minio 端口",
+	"Minio port": "MinIO 端口",
 	"Used for host-only endpoints; an explicit http:// or https:// URL takes precedence": "仅用于未填写协议的主机地址；显式填写的 http:// 或 https:// URL 优先",
 	"MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.": "MinIO TLS 连接失败。非 TLS 服务请使用 http:// 地址；HTTPS 服务请检查端口和证书。",
 	"Optional custom domain for public access": "公开访问的自定义域名(可选)",
@@ -212,4 +212,8 @@ export default {
 	"GitHub Custom Domain": "GitHub自定义域名",
 	"e.g. https://cdn.jsdelivr.net/gh/user/repo": "例如: https://cdn.jsdelivr.net/gh/user/repo",
 	"Imgur image deletion is not supported in this version": "当前版本不支持Imgur图片删除",
+
+	// Gallery / upload gating
+	"Copy failed": "复制失败",
+	"File type not supported by provider": "{provider} 不支持此文件类型，已跳过：{name}",
 };

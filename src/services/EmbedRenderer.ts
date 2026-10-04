@@ -5,7 +5,7 @@ export class EmbedRenderer {
 
     render(type: string, url: string, name: string): string {
         const safeUrl = escapeHtmlAttr(url);
-        const mdLink = `[${escapeMarkdownLinkText(name)}](${encodeMarkdownLinkUrl(url)})`;
+        const mdLink = `[${escapeMarkdownLinkText(name)}](${toMarkdownDestination(url)})`;
 
         switch (type) {
             case 'image':
@@ -30,7 +30,13 @@ export class EmbedRenderer {
 
         const format = this.settings.embedFormat || '![]($URL)';
         // Replacement callbacks keep "$&"-style patterns in the values literal.
-        return format.replace(/\$URL/g, () => url).replace(/\$NAME/g, () => name) + '\n';
+        // A $URL right after "(" is a markdown link destination and must
+        // survive spaces / parentheses (e.g. local vault paths); other
+        // occurrences (HTML attributes, plain text) get the raw URL.
+        return format
+            .replace(/(\(\s*)\$URL/g, (_match, open: string) => open + toMarkdownDestination(url))
+            .replace(/\$URL/g, () => url)
+            .replace(/\$NAME/g, () => name) + '\n';
     }
 
     updateSettings(settings: PluginSettings): void {
@@ -50,7 +56,13 @@ function escapeMarkdownLinkText(value: string): string {
     return value.replace(/([\\[\]])/g, '\\$1');
 }
 
-function encodeMarkdownLinkUrl(value: string): string {
-    // Spaces and parentheses break markdown link syntax.
-    return value.replace(/ /g, '%20').replace(/\(/g, '%28').replace(/\)/g, '%29');
+/**
+ * Markdown link destination: whitespace and parentheses break the plain
+ * form, so such URLs use the CommonMark angle-bracket form `<...>`.
+ */
+function toMarkdownDestination(value: string): string {
+    if (!/[\s()]/.test(value)) {
+        return value;
+    }
+    return `<${value.replace(/[<>]/g, (char) => `\\${char}`)}>`;
 }

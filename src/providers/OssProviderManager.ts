@@ -6,6 +6,8 @@ import { providerRegistry } from "./registry";
 export class OssProviderManager {
     private providers: Map<string, IOssProvider> = new Map();
     private activeProviderName: string;
+    /** JSON of each provider's settings at the time its instance was created. */
+    private snapshots: Map<string, string> = new Map();
 
     constructor(private settings: PluginSettings, private app: App) {
         this.activeProviderName = settings.activeProvider;
@@ -18,8 +20,17 @@ export class OssProviderManager {
     private initializeProviders(): void {
         for (const entry of providerRegistry.getAll(this.app)) {
             const providerSettings = this.settings.providers[entry.id];
+            const snapshot = JSON.stringify(providerSettings ?? null);
+            if (this.providers.has(entry.id) && this.snapshots.get(entry.id) === snapshot) {
+                // Unchanged settings: keep the instance (views compare by identity).
+                continue;
+            }
+
+            this.snapshots.set(entry.id, snapshot);
             if (providerSettings) {
                 this.providers.set(entry.id, entry.create(providerSettings, this.app));
+            } else {
+                this.providers.delete(entry.id);
             }
         }
     }
@@ -47,8 +58,7 @@ export class OssProviderManager {
     updateSettings(settings: PluginSettings) {
         this.settings = settings;
         this.activeProviderName = settings.activeProvider;
-        // Re-create providers with new settings
-        this.providers.clear();
+        // Only re-create providers whose settings actually changed.
         this.initializeProviders();
     }
 }

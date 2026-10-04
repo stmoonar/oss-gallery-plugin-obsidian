@@ -3,7 +3,8 @@ import { TencentSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { simulateProgress } from './shared/progress';
-import { buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
+import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
 import { parseS3ListObjectsPage } from './shared/s3xml';
 import { isImageFile } from './shared/image';
 import { createTencentCosAuthorization } from './shared/tencentcos';
@@ -113,12 +114,18 @@ export class TencentProvider implements IOssProvider {
         try {
             const host = this.getHost();
             const images: OssImage[] = [];
+            const listPrefix = buildListPrefix(this.settings.path, prefix);
             let marker = '';
 
-            while (true) {
+            for (let pages = 0; ; pages++) {
+                if (pages >= MAX_LIST_PAGES) {
+                    warnListingCapped(this.name, MAX_LIST_PAGES);
+                    return images;
+                }
+
                 const query: Record<string, string> = { 'max-keys': '1000' };
-                if (prefix) {
-                    query.prefix = prefix;
+                if (listPrefix) {
+                    query.prefix = listPrefix;
                 }
                 if (marker) {
                     query.marker = marker;

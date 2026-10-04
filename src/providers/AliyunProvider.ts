@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { createHmac } from 'crypto';
 import { simulateProgress } from './shared/progress';
 import {
+    buildListPrefix,
     buildObjectKey,
     encodeObjectKeyForUrl,
     normalizeBaseUrl,
@@ -12,6 +13,7 @@ import {
 } from './shared/path';
 import { parseS3ListObjectsPage } from './shared/s3xml';
 import { isImageFile } from './shared/image';
+import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
 
 export class AliyunProvider implements IOssProvider {
     name = 'aliyun';
@@ -151,14 +153,20 @@ export class AliyunProvider implements IOssProvider {
 
         try {
             const images: OssImage[] = [];
+            const listPrefix = buildListPrefix(this.settings.path, prefix);
             let marker = '';
 
-            while (true) {
+            for (let pages = 0; ; pages++) {
+                if (pages >= MAX_LIST_PAGES) {
+                    warnListingCapped(this.name, MAX_LIST_PAGES);
+                    return images;
+                }
+
                 const date = new Date().toUTCString();
                 const authorization = this.createAuthorization('GET', date);
                 const query = new URLSearchParams({ 'max-keys': '1000' });
-                if (prefix) {
-                    query.append('prefix', prefix);
+                if (listPrefix) {
+                    query.append('prefix', listPrefix);
                 }
                 if (marker) {
                     query.append('marker', marker);

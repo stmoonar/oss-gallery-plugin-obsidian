@@ -4,7 +4,9 @@ import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
+import { MAX_LIST_REQUESTS, warnListingCapped } from './shared/listing';
 import {
+    buildListPrefix,
     buildObjectKey,
     encodeObjectKeyForUrl,
     normalizeBaseUrl,
@@ -58,9 +60,9 @@ export class UpyunProvider implements IOssProvider {
 
     private async listDirectory(
         directory: string,
-        filterPrefix: string,
         visitedDirectories: Set<string>,
-        seenPaths: Set<string>
+        seenPaths: Set<string>,
+        budget: { requests: number }
     ): Promise<OssImage[]> {
         const directoryKey = normalizePath(directory);
         if (visitedDirectories.has(directoryKey)) {
@@ -73,6 +75,12 @@ export class UpyunProvider implements IOssProvider {
         let iter = '';
 
         while (true) {
+            if (budget.requests >= MAX_LIST_REQUESTS) {
+                warnListingCapped(this.name, MAX_LIST_REQUESTS);
+                return images;
+            }
+            budget.requests++;
+
             const date = new Date().toUTCString();
             const signedUri = this.getSignedUri(directory);
             const authorization = createUpyunAuthorization(
@@ -93,8 +101,14 @@ export class UpyunProvider implements IOssProvider {
                     'x-list-limit': '1000',
                     ...(iter ? { 'x-list-iter': iter } : {}),
                 },
+                throw: false,
             });
 
+            // A missing directory (e.g. the base path before the first
+            // upload) simply has no images.
+            if (response.status === 404) {
+                return images;
+            }
             if (response.status !== 200) {
                 throw new Error(`List failed with status: ${response.status}`);
             }
@@ -111,18 +125,9 @@ export class UpyunProvider implements IOssProvider {
                 }
                 if (isUpyunDirectory(entry.type)) {
                     seenPaths.add(entryPath);
-                    // Only recurse into directories that can still contain matches.
-                    const canMatchPrefix = !filterPrefix
-                        || entryPath.startsWith(filterPrefix)
-                        || filterPrefix.startsWith(`${entryPath}/`);
-                    if (canMatchPrefix) {
-                        images.push(
-                            ...await this.listDirectory(entryPath, filterPrefix, visitedDirectories, seenPaths)
-                        );
-                    }
-                    continue;
-                }
-                if (filterPrefix && !entryPath.startsWith(filterPrefix)) {
+                    images.push(
+                        ...await this.listDirectory(entryPath, visitedDirectories, seenPaths, budget)
+                    );
                     continue;
                 }
                 if (isImageFile(entryPath)) {
@@ -151,6 +156,9 @@ export class UpyunProvider implements IOssProvider {
         if (!this.settings.operator || !this.settings.password || !this.settings.bucket) {
             throw new Error(t('Please configure Upyun settings first'));
         }
+        // Resolve the public base URL before uploading so a missing domain
+        // fails up front instead of after the file is already stored.
+        this.getPublicBaseUrl();
 
         // Simulate progress since requestUrl doesn't support it
         const progress = simulateProgress(onProgress, file.size);
@@ -206,15 +214,13 @@ export class UpyunProvider implements IOssProvider {
         }
 
         try {
-            const normalizedPrefix = normalizePath(prefix);
-            const rootDirectory = normalizedPrefix.includes('/')
-                ? normalizedPrefix.split('/').slice(0, -1).join('/')
-                : '';
+            // Uploads land under "<path>/<base path>/", so walk that directory.
+            const rootDirectory = normalizePath(buildListPrefix(this.settings.path, prefix));
             return await this.listDirectory(
                 rootDirectory,
-                normalizedPrefix,
                 new Set<string>(),
-                new Set<string>()
+                new Set<string>(),
+                { requests: 0 }
             );
         } catch (error) {
             console.error('Failed to list Upyun images:', error);

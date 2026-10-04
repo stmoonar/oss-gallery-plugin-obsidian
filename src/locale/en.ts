@@ -1,7 +1,7 @@
 export default {
 	"File upload": "File upload",
 
-	"Minio OSS": "Minio OSS",
+	"Minio OSS": "MinIO OSS",
 	Required: "Required",
 	Optional: "Optional",
 	"Enter your access key": "Enter your access key",
@@ -47,7 +47,7 @@ export default {
 	"Docs preview description":
 		"After opening, load the document through the online document preview service. Note: online preview requires a link that can be accessed through a public network",
 	Disabled: "Disabled",
-	"Google docs": "Google docs",
+	"Google docs": "Google Docs",
 	"Office online": "Office online",
 
 	Uploading: "Uploading",
@@ -63,7 +63,7 @@ export default {
 	"Delete success": "Delete successfully",
 	"Delete failed": "Delete failed",
 	"Search by URL...": "Search by URL...",
-	"Open OSS gallery": "Open OSS Gallery",
+	"Open OSS gallery": "Open gallery",
 	"Some files are not supported and were skipped":
 		"Some files are not supported and were skipped",
 	"Toggle background": "Toggle background",
@@ -76,19 +76,19 @@ export default {
 	"Invalid regex pattern": "Invalid regex pattern",
 	"Toggle regex search": "Toggle regex search",
 	"Settings": "Settings",
-	"Select Provider": "Select Provider",
+	"Select Provider": "Select provider",
 	"Choose the OSS provider you want to use": "Choose the OSS provider you want to use",
 	"No active provider": "No active provider",
 	"Please configure OSS settings first": "Please configure OSS settings first",
 	"Enter your base path(e.g. /path)": "Enter your base path (e.g. /path)",
 	"Token": "Token",
 	"SM.MS Secret Token": "S.EE API key (SM.MS has migrated)",
-	"Repo Name": "Repo Name",
+	"Repo Name": "Repository name",
 	"username/reponame": "username/reponame",
 	"Branch": "Branch",
 	"main or master": "main or master",
-	"GitHub Personal Access Token": "GitHub Personal Access Token",
-	"Custom Domain": "Custom Domain",
+	"GitHub Personal Access Token": "GitHub personal access token",
+	"Custom Domain": "Custom domain",
 	"e.g. https://cdn.jsdelivr.net/gh/user/repo": "e.g. https://cdn.jsdelivr.net/gh/user/repo",
 
 	// OSS Provider names
@@ -100,13 +100,13 @@ export default {
 	"Upyun": "Upyun",
 	"Imgur": "Imgur",
 	"Cloudflare R2": "Cloudflare R2",
-	"Minio Provider": "Minio OSS",
+	"Minio Provider": "MinIO OSS",
 
 	// Aliyun OSS
-	"Access Key ID": "Access Key ID",
-	"Aliyun OSS Access Key ID": "Aliyun OSS Access Key ID",
-	"Access Key Secret": "Access Key Secret",
-	"Aliyun OSS Access Key Secret": "Aliyun OSS Access Key Secret",
+	"Access Key ID": "Access key ID",
+	"Aliyun OSS Access Key ID": "Aliyun OSS access key ID",
+	"Access Key Secret": "Access key secret",
+	"Aliyun OSS Access Key Secret": "Aliyun OSS access key secret",
 	"Bucket": "Bucket",
 	"Aliyun OSS Bucket name": "Aliyun OSS Bucket name",
 	"Region": "Region",
@@ -119,17 +119,17 @@ export default {
 
 	// Tencent COS
 	"Secret ID": "Secret ID",
-	"Tencent COS Secret ID": "Tencent COS Secret ID",
-	"Secret Key": "Secret Key",
-	"Tencent COS Secret Key": "Tencent COS Secret Key",
+	"Tencent COS Secret ID": "Tencent COS secret ID",
+	"Secret Key": "Secret key",
+	"Tencent COS Secret Key": "Tencent COS secret key",
 	"Tencent COS Bucket name": "Tencent COS Bucket name",
 	"Tencent COS Region (e.g., ap-shanghai)": "Tencent COS Region (e.g., ap-shanghai)",
 	"Please configure Tencent COS settings first": "Please configure Tencent COS settings first",
 
 	// Qiniu
-	"Access Key": "Access Key",
-	"Qiniu Access Key": "Qiniu Access Key",
-	"Qiniu Secret Key": "Qiniu Secret Key",
+	"Access Key": "Access key",
+	"Qiniu Access Key": "Qiniu access key",
+	"Qiniu Secret Key": "Qiniu secret key",
 	"Qiniu Bucket name": "Qiniu Bucket name",
 	"URL": "URL",
 	"Qiniu CDN domain URL": "Qiniu CDN domain URL",
@@ -140,9 +140,9 @@ export default {
 
 	// Upyun
 	"Operator": "Operator",
-	"Upyun Operator name": "Upyun Operator name",
+	"Upyun Operator name": "Upyun operator name",
 	"Password": "Password",
-	"Upyun Operator password": "Upyun Operator password",
+	"Upyun Operator password": "Upyun operator password",
 	"Service name": "Service name",
 	"Upyun service name": "Upyun service name",
 	"Upyun acceleration domain URL": "Upyun acceleration domain URL",
@@ -153,7 +153,7 @@ export default {
 
 	// Imgur
 	"Client ID": "Client ID",
-	"Imgur OAuth Client ID": "Imgur OAuth Client ID",
+	"Imgur OAuth Client ID": "Imgur OAuth client ID",
 	"Proxy": "Proxy",
 	"HTTP proxy URL (optional, required in some regions)": "HTTP proxy URL (optional, required in some regions)",
 	"Imgur API mirror base URL (optional, required in some regions)": "Imgur API mirror base URL (optional, required in some regions)",
@@ -166,10 +166,10 @@ export default {
 
 	// Cloudflare R2
 	"Account ID": "Account ID",
-	"Cloudflare Account ID": "Cloudflare Account ID",
-	"Secret Access Key": "Secret Access Key",
-	"R2 API Token Access Key ID": "R2 API Token Access Key ID",
-	"R2 API Token Secret Access Key": "R2 API Token Secret Access Key",
+	"Cloudflare Account ID": "Cloudflare account ID",
+	"Secret Access Key": "Secret access key",
+	"R2 API Token Access Key ID": "R2 API token access key ID",
+	"R2 API Token Secret Access Key": "R2 API token secret access key",
 	"R2 Bucket name": "R2 Bucket name",
 	"Public URL": "Public URL",
 	"R2 public access URL (custom domain or r2.dev URL)": "R2 public access URL (custom domain or r2.dev URL)",
@@ -180,8 +180,8 @@ export default {
 	"Endpoint": "Endpoint",
 	"S3-compatible endpoint (e.g. s3.amazonaws.com)": "S3-compatible endpoint (e.g. s3.amazonaws.com)",
 	"S3 region": "S3 region",
-	"S3 Access Key ID": "S3 Access Key ID",
-	"S3 Secret Access Key": "S3 Secret Access Key",
+	"S3 Access Key ID": "S3 access key ID",
+	"S3 Secret Access Key": "S3 secret access key",
 	"S3 Bucket name": "S3 Bucket name",
 	"Use SSL": "Use SSL",
 	"Use HTTPS for S3 requests": "Use HTTPS for S3 requests",
@@ -206,15 +206,19 @@ export default {
 	"Failed to move file to system trash": "Failed to move file to system trash",
 
 	// MinIO
-	"Minio endpoint (e.g. play.min.io)": "Minio endpoint (e.g. play.min.io)",
+	"Minio endpoint (e.g. play.min.io)": "MinIO endpoint (e.g. play.min.io)",
 	"MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)": "MinIO endpoint host or URL (e.g. play.min.io or http://localhost:9000)",
 	"Port": "Port",
-	"Minio port": "Minio port",
+	"Minio port": "MinIO port",
 	"Used for host-only endpoints; an explicit http:// or https:// URL takes precedence": "Used for host-only endpoints; an explicit http:// or https:// URL takes precedence",
 	"MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.": "MinIO TLS connection failed. Use an http:// endpoint for a non-TLS server, or verify the HTTPS port and certificate.",
 	"Optional custom domain for public access": "Optional custom domain for public access",
 
 	// GitHub (avoid duplication)
-	"GitHub Custom Domain": "GitHub Custom Domain",
+	"GitHub Custom Domain": "GitHub custom domain",
 	"Imgur image deletion is not supported in this version": "Imgur image deletion is not supported in this version",
+
+	// Gallery / upload gating
+	"Copy failed": "Copy failed",
+	"File type not supported by provider": "{provider} does not accept this file type, skipped: {name}",
 };

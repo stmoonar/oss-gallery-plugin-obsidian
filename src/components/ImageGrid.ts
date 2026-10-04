@@ -15,7 +15,8 @@ export class ImageGrid {
 		private options: {
 			getObjectUrl: (objectName: string) => Promise<string>;
 			canDelete?: boolean;
-			onPreview?: (index: number) => void;
+			/** Called with the object key: indexes shift after deletes. */
+			onPreview?: (objectName: string) => void;
 			onCopy?: (url: string) => void;
 			onDelete?: (objectName: string, element: HTMLElement) => void;
 		}
@@ -41,16 +42,13 @@ export class ImageGrid {
 
 			const batch = objects.slice(i, i + batchSize);
 			await Promise.all(
-				batch.map((obj, idx) => this.renderImageItem(obj.key, i + idx))
+				batch.map((obj) => this.renderImageItem(obj.key))
 			);
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		}
 	}
 
-	private async renderImageItem(
-		objectName: string,
-		imageIndex: number
-	): Promise<void> {
+	private async renderImageItem(objectName: string): Promise<void> {
 		const objectUrl = await this.options.getObjectUrl(objectName);
 
 		const imgDiv = this.container.createEl("div", {
@@ -71,7 +69,7 @@ export class ImageGrid {
 		this.lazyImageService.observe(img);
 
 		img.onclick = () => {
-			this.options.onPreview?.(imageIndex);
+			this.options.onPreview?.(objectName);
 		};
 
 		const buttonContainer = imgDiv.createEl("div", {
@@ -153,7 +151,13 @@ export class ImageGrid {
 		setIcon(copyBtn, "copy");
 
 		copyBtn.onclick = async () => {
-			await navigator.clipboard.writeText(url);
+			try {
+				await navigator.clipboard.writeText(url);
+			} catch (error) {
+				console.error("Copy URL failed", error);
+				new Notice(t("Copy failed"));
+				return;
+			}
 			new Notice(t("URL copied"));
 			this.options.onCopy?.(url);
 		};
