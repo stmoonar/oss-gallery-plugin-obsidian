@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, FileSystemAdapter, Platform } from 'obsidian';
 import { MinioSettings, SmMsSettings, GithubSettings, AliyunSettings, TencentSettings, QiniuSettings, UpyunSettings, ImgurSettings, R2Settings, S3Settings, LocalSettings, DEFAULT_MINIO_SETTINGS, DEFAULT_SMMS_SETTINGS, DEFAULT_GITHUB_SETTINGS, DEFAULT_ALIYUN_SETTINGS, DEFAULT_TENCENT_SETTINGS, DEFAULT_QINIU_SETTINGS, DEFAULT_UPYUN_SETTINGS, DEFAULT_IMGUR_SETTINGS, DEFAULT_R2_SETTINGS, DEFAULT_S3_SETTINGS, DEFAULT_LOCAL_SETTINGS, ProviderSettingsMap } from '../types/settings';
 import { IOssProvider } from '../types/oss';
 import { MinioProvider } from './MinioProvider';
@@ -11,7 +11,7 @@ import { UpyunProvider } from './UpyunProvider';
 import { ImgurProvider } from './ImgurProvider';
 import { R2Provider } from './R2Provider';
 import { S3Provider } from './S3Provider';
-import { LocalProvider, resolveLocalStorageFolder } from './LocalProvider';
+import { LocalProvider } from './LocalProvider';
 
 export interface ProviderCapabilities {
     upload: boolean;
@@ -40,9 +40,19 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         label: 'Local',
         capabilities: { upload: true, list: true, delete: true },
         defaultSettings: DEFAULT_LOCAL_SETTINGS,
-        // Vault API only; absolute paths saved by older versions are rejected.
-        isConfigured: (settings) =>
-            resolveLocalStorageFolder((settings as LocalSettings).storagePath) !== null,
+        isAvailable: () => Platform.isDesktopApp,
+        isConfigured: (settings, app) => {
+            const local = settings as LocalSettings;
+            if (!Platform.isDesktopApp || !local.storagePath) {
+                return false;
+            }
+
+            if (!local.useRelativePath) {
+                return true;
+            }
+
+            return Boolean(app?.vault.adapter instanceof FileSystemAdapter);
+        },
         create: (settings, app) => new LocalProvider(settings as LocalSettings, app!),
     },
     {

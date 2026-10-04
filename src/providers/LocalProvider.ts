@@ -1,135 +1,63 @@
 import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
 import { LocalSettings, PluginSettings } from '../types/settings';
-import { App, Setting, TFile, TFolder, normalizePath } from 'obsidian';
+import { App, FileSystemAdapter, Setting, normalizePath } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
 import { buildListPrefix } from './shared/path';
-
-/** Highest numeric suffix tried when picking a non-colliding file name. */
-const MAX_NAME_SUFFIX = 999;
-
-/**
- * Split a relative path into clean segments, or return null when it is
- * absolute (leading slash / backslash, drive letter) or contains "..".
- */
-function toSafeSegments(value: string): string[] | null {
-    const trimmed = value.trim();
-    if (/^[\\/]/.test(trimmed) || /^[a-zA-Z]:/.test(trimmed)) {
-        return null;
-    }
-    const segments = trimmed
-        .split(/[\\/]+/)
-        .filter((segment) => segment !== '' && segment !== '.');
-    return segments.includes('..') ? null : segments;
-}
-
-/**
- * Vault-relative folder for a Local storage path, or null when the path is
- * empty, absolute, or escapes the vault (no longer supported).
- */
-export function resolveLocalStorageFolder(storagePath: string | undefined): string | null {
-    const segments = toSafeSegments(storagePath ?? '');
-    if (!segments || segments.length === 0) {
-        return null;
-    }
-    return normalizePath(segments.join('/'));
-}
-
-/**
- * Whether a non-empty Local storage path is rejected because it is absolute
- * or leaves the vault (e.g. settings saved by an older plugin version).
- */
-export function isUnsupportedLocalStoragePath(storagePath: string | undefined): boolean {
-    return Boolean(storagePath?.trim()) && resolveLocalStorageFolder(storagePath) === null;
-}
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class LocalProvider implements IOssProvider {
     name = 'local';
 
     constructor(private settings: LocalSettings, private app: App) {}
 
-    private getStorageFolder(): string {
-        const folder = resolveLocalStorageFolder(this.settings.storagePath);
-        if (!folder) {
-            throw new Error(this.settings.storagePath?.trim()
-                ? t('Absolute paths are no longer supported. Use a folder inside the vault.')
-                : t('Please configure local storage path first'));
-        }
-        return folder;
+    private getFileSystemAdapter(): FileSystemAdapter | null {
+        const adapter = this.app.vault.adapter;
+        return adapter instanceof FileSystemAdapter ? adapter : null;
+    }
+
+    private toFileUrl(absolutePath: string): string {
+        const normalized = absolutePath.replace(/\\/g, '/').replace(/^\/+/, '');
+        return encodeURI(`file:///${normalized}`);
     }
 
     /**
-     * Resolve a storage-relative key to a vault path, rejecting keys that are
-     * absolute or contain ".." so nothing escapes the storage folder.
+     * Resolve storagePath to an absolute directory.
+     * If useRelativePath is true, resolve relative to the vault root.
+     * Otherwise treat storagePath as an absolute path.
      */
-    private toVaultPath(key: string): string {
-        const segments = toSafeSegments(key);
-        if (!segments || segments.length === 0) {
+    private getAbsoluteStoragePath(): string {
+        if (this.settings.useRelativePath) {
+            const adapter = this.getFileSystemAdapter();
+            if (!adapter) {
+                throw new Error(t('Vault-relative local storage requires a file-system vault'));
+            }
+
+            return path.join(adapter.getBasePath(), this.settings.storagePath);
+        }
+        return this.settings.storagePath;
+    }
+
+    /**
+     * Resolve a storage-relative path to an absolute path, rejecting any
+     * path (e.g. containing "..") that escapes the storage directory.
+     */
+    private resolveWithinStorage(relativePath: string): string {
+        const baseDir = path.resolve(this.getAbsoluteStoragePath());
+        const resolved = path.resolve(baseDir, relativePath);
+        if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) {
             throw new Error(t('Path escapes the storage directory'));
         }
-        return normalizePath(`${this.getStorageFolder()}/${segments.join('/')}`);
+        return resolved;
     }
 
     /**
-     * Create every missing folder along `folderPath`, tolerating folders that
-     * appear concurrently (e.g. two uploads into the same new folder).
+     * Ensure the storage directory exists.
      */
-    private async ensureFolder(folderPath: string): Promise<TFolder> {
-        const vault = this.app.vault;
-        let current = '';
-        for (const segment of folderPath.split('/')) {
-            current = current ? `${current}/${segment}` : segment;
-            const existing = vault.getAbstractFileByPath(current);
-            if (existing instanceof TFolder) continue;
-            if (existing) {
-                throw new Error(`Not a folder: ${current}`);
-            }
-            try {
-                await vault.createFolder(current);
-            } catch (error) {
-                if (!vault.getFolderByPath(current)) throw error;
-            }
-        }
-
-        const folder = vault.getFolderByPath(folderPath);
-        if (!folder) {
-            throw new Error(`Folder not found: ${folderPath}`);
-        }
-        return folder;
-    }
-
-    /**
-     * Write the file under `vaultPath`, or under "name 1.ext", "name 2.ext"...
-     * when that name is taken. Never overwrites. Returns the created file.
-     */
-    private async createWithoutOverwrite(vaultPath: string, data: ArrayBuffer): Promise<TFile> {
-        const slash = vaultPath.lastIndexOf('/');
-        const parentPath = vaultPath.slice(0, slash);
-        const fileName = vaultPath.slice(slash + 1);
-        const dot = fileName.lastIndexOf('.');
-        const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
-        const ext = dot > 0 ? fileName.slice(dot) : '';
-
-        const parent = await this.ensureFolder(parentPath);
-        // Compare case-insensitively: Windows and macOS file systems treat
-        // "A.png" and "a.png" as the same file.
-        const taken = new Set(parent.children.map((child) => child.name.toLowerCase()));
-
-        for (let n = 0; n <= MAX_NAME_SUFFIX; n++) {
-            const candidateName = n === 0 ? fileName : `${stem} ${n}${ext}`;
-            if (taken.has(candidateName.toLowerCase())) continue;
-
-            const candidatePath = `${parentPath}/${candidateName}`;
-            try {
-                return await this.app.vault.createBinary(candidatePath, data);
-            } catch (error) {
-                // Another upload claimed this name in the meantime: try the next.
-                if (!this.app.vault.getAbstractFileByPath(candidatePath)) throw error;
-                taken.add(candidateName.toLowerCase());
-            }
-        }
-
-        throw new Error(`No free file name for: ${vaultPath}`);
+    private async ensureStorageDir(): Promise<void> {
+        const dir = this.getAbsoluteStoragePath();
+        await fs.promises.mkdir(dir, { recursive: true });
     }
 
     async upload(
@@ -137,89 +65,191 @@ export class LocalProvider implements IOssProvider {
         filePath: string,
         onProgress?: (progress: UploadProgressInfo) => void
     ): Promise<string> {
-        const vaultPath = this.toVaultPath(filePath);
+        if (!this.settings.storagePath) {
+            throw new Error(t('Please configure local storage path first'));
+        }
+
+        await this.ensureStorageDir();
+
         const arrayBuffer = await file.arrayBuffer();
-        const total = arrayBuffer.byteLength;
+        const buffer = Buffer.from(arrayBuffer);
 
-        if (onProgress) onProgress({ loaded: 0, total, percentage: 0 });
+        if (onProgress) onProgress({ loaded: 0, total: buffer.length, percentage: 0 });
 
-        const created = await this.createWithoutOverwrite(vaultPath, arrayBuffer);
+        const destAbsolute = this.resolveWithinStorage(filePath);
+        const destDir = path.dirname(destAbsolute);
+        await fs.promises.mkdir(destDir, { recursive: true });
 
-        if (onProgress) onProgress({ loaded: total, total, percentage: 100 });
+        await fs.promises.writeFile(destAbsolute, buffer);
 
-        // Vault-relative path of the file actually written, for embedding.
-        return created.path;
+        if (onProgress) onProgress({ loaded: buffer.length, total: buffer.length, percentage: 100 });
+
+        // Return vault-relative path or absolute path for markdown embedding
+        if (this.settings.useRelativePath) {
+            return normalizePath(`${this.settings.storagePath}/${filePath}`);
+        }
+        return this.toFileUrl(destAbsolute);
     }
 
-    listImages(prefix?: string): Promise<OssImage[]> {
-        const folderPath = resolveLocalStorageFolder(this.settings.storagePath);
-        const folder = folderPath ? this.app.vault.getFolderByPath(folderPath) : null;
-        if (!folder) return Promise.resolve([]);
+    async listImages(prefix?: string): Promise<OssImage[]> {
+        if (!this.settings.storagePath) return [];
+
+        const baseDir = this.getAbsoluteStoragePath();
+        try {
+            await fs.promises.access(baseDir);
+        } catch {
+            return [];
+        }
 
         const images: OssImage[] = [];
-        this.scanFolder(folder, folder.path.length + 1, images, buildListPrefix(undefined, prefix));
+        await this.scanDirectory(baseDir, '', images, buildListPrefix(undefined, prefix));
 
         // Sort by lastModified descending
         images.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
-        return Promise.resolve(images);
+        return images;
     }
 
-    private scanFolder(folder: TFolder, rootLength: number, images: OssImage[], prefix: string): void {
-        for (const child of folder.children) {
-            const key = child.path.slice(rootLength);
+    /**
+     * Convert an absolute file path to a URL usable in <img> tags.
+     * Uses Obsidian's vault adapter resource path for vault-relative files,
+     * otherwise falls back to file:// URL.
+     */
+    private toDisplayUrl(absolutePath: string, vaultRelativePath?: string): string {
+        if (vaultRelativePath) {
+            return this.app.vault.adapter.getResourcePath(vaultRelativePath);
+        }
+        return this.toFileUrl(absolutePath);
+    }
 
-            if (child instanceof TFolder) {
-                // Only descend into folders that can contain matches.
+    private async scanDirectory(baseDir: string, relativePath: string, images: OssImage[], prefix?: string): Promise<void> {
+        const currentDir = relativePath ? path.join(baseDir, relativePath) : baseDir;
+
+        let entries: fs.Dirent[];
+        try {
+            entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        for (const entry of entries) {
+            const entryRelative = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+            if (entry.isDirectory()) {
+                // Only descend into directories that can contain matches.
                 const canMatch = !prefix
-                    || `${key}/`.startsWith(prefix)
-                    || prefix.startsWith(`${key}/`);
+                    || `${entryRelative}/`.startsWith(prefix)
+                    || prefix.startsWith(`${entryRelative}/`);
                 if (canMatch) {
-                    this.scanFolder(child, rootLength, images, prefix);
+                    await this.scanDirectory(baseDir, entryRelative, images, prefix);
                 }
-            } else if (child instanceof TFile && isImageFile(child.name)) {
-                if (prefix && !key.startsWith(prefix)) continue;
+            } else if (entry.isFile() && isImageFile(entry.name)) {
+                if (prefix && !entryRelative.startsWith(prefix)) continue;
+
+                const fullPath = path.join(currentDir, entry.name);
+                const stat = await fs.promises.stat(fullPath);
+
+                // For gallery display, use a URL the <img> tag can load
+                const vaultRelative = this.settings.useRelativePath
+                    ? normalizePath(`${this.settings.storagePath}/${entryRelative}`)
+                    : undefined;
+                const displayUrl = this.toDisplayUrl(fullPath, vaultRelative);
 
                 images.push({
-                    key,
-                    url: this.app.vault.getResourcePath(child),
-                    lastModified: new Date(child.stat.mtime),
-                    size: child.stat.size,
+                    key: entryRelative,
+                    url: displayUrl,
+                    lastModified: stat.mtime,
+                    size: stat.size,
                 });
             }
         }
     }
 
     async deleteImage(key: string): Promise<void> {
-        const file = this.app.vault.getFileByPath(this.toVaultPath(key));
-        if (!file) {
+        const fullPath = this.resolveWithinStorage(key);
+
+        try {
+            await fs.promises.access(fullPath);
+        } catch {
             throw new Error(`File not found: ${key}`);
         }
 
-        // Follows the user's "Deleted files" preference (system trash,
-        // vault .trash folder, or permanent deletion).
-        await this.app.fileManager.trashFile(file);
+        if (this.settings.deleteToTrash) {
+            const trashed = await this.moveToSystemTrash(fullPath, key);
+            if (!trashed) {
+                // Never silently fall back to permanent deletion when the
+                // user explicitly asked for trash.
+                throw new Error(t('Failed to move file to system trash'));
+            }
+        } else {
+            await fs.promises.unlink(fullPath);
+        }
+    }
+
+    /**
+     * Move a file to the system trash. `trashSystem` expects a vault-relative
+     * path, so it only works in vault-relative mode; for absolute storage
+     * paths fall back to Electron's shell.trashItem.
+     */
+    private async moveToSystemTrash(fullPath: string, key: string): Promise<boolean> {
+        if (this.settings.useRelativePath) {
+            const adapter = this.getFileSystemAdapter();
+            if (adapter) {
+                try {
+                    const vaultRelative = normalizePath(`${this.settings.storagePath}/${key}`);
+                    if (await adapter.trashSystem(vaultRelative)) return true;
+                } catch {
+                    // fall through to Electron
+                }
+            }
+        }
+
+        try {
+            interface ElectronShell { shell?: { trashItem?: (p: string) => Promise<void> } }
+            const requireFn = (window as unknown as { require?: (m: string) => ElectronShell }).require;
+            const electron = requireFn?.('electron');
+            if (electron?.shell?.trashItem) {
+                await electron.shell.trashItem(fullPath);
+                return true;
+            }
+        } catch {
+            // no Electron available (mobile) or trash failed
+        }
+
+        return false;
     }
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         const local = settings.providers.local;
 
-        const storageSetting = new Setting(containerEl)
+        new Setting(containerEl)
             .setName(t('Storage path'))
-            .setDesc(t('Folder inside the vault where uploaded files are stored'));
+            .setDesc(t('Vault-relative directory or absolute directory inserted as file:/// links'))
+            .addText(text => text
+                .setPlaceholder('attachments')
+                .setValue(local?.storagePath || '')
+                .onChange(async (value) => {
+                    settings.providers.local.storagePath = value;
+                    await saveSettings();
+                }));
 
-        const warningEl = storageSetting.descEl.createDiv({
-            cls: 'mod-warning',
-            text: t('Absolute paths are no longer supported. Use a folder inside the vault.'),
-        });
-        warningEl.toggle(isUnsupportedLocalStoragePath(local?.storagePath));
+        new Setting(containerEl)
+            .setName(t('Use vault-relative path'))
+            .setDesc(t('Resolve storage path relative to vault root (desktop file-system vault only)'))
+            .addToggle(toggle => toggle
+                .setValue(local?.useRelativePath ?? true)
+                .onChange(async (value) => {
+                    settings.providers.local.useRelativePath = value;
+                    await saveSettings();
+                }));
 
-        storageSetting.addText(text => text
-            .setPlaceholder('attachments')
-            .setValue(local?.storagePath || '')
-            .onChange(async (value) => {
-                settings.providers.local.storagePath = value;
-                warningEl.toggle(isUnsupportedLocalStoragePath(value));
-                await saveSettings();
-            }));
+        new Setting(containerEl)
+            .setName(t('Delete to trash'))
+            .setDesc(t('Move deleted files to system trash instead of permanent deletion'))
+            .addToggle(toggle => toggle
+                .setValue(local?.deleteToTrash ?? true)
+                .onChange(async (value) => {
+                    settings.providers.local.deleteToTrash = value;
+                    await saveSettings();
+                }));
     }
 }

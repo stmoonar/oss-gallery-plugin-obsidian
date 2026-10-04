@@ -195,10 +195,17 @@ export default {
 	// Local
 	"Local": "Local",
 	"Storage path": "Storage path",
-	"Folder inside the vault where uploaded files are stored": "Folder inside the vault where uploaded files are stored",
-	"Absolute paths are no longer supported. Use a folder inside the vault.": "Absolute paths are no longer supported. Use a folder inside the vault.",
+	"Local directory for storing images": "Local directory for storing images",
+	"Vault-relative directory or absolute directory inserted as file:/// links": "Vault-relative directory or absolute directory inserted as file:/// links",
+	"Use vault-relative path": "Use vault-relative path",
+	"Resolve storage path relative to vault root": "Resolve storage path relative to vault root",
+	"Resolve storage path relative to vault root (desktop file-system vault only)": "Resolve storage path relative to vault root (desktop file-system vault only)",
+	"Delete to trash": "Delete to trash",
+	"Move deleted files to system trash instead of permanent deletion": "Move deleted files to system trash instead of permanent deletion",
 	"Please configure local storage path first": "Please configure local storage path first",
+	"Vault-relative local storage requires a file-system vault": "Vault-relative local storage requires a file-system vault",
 	"Path escapes the storage directory": "Path escapes the storage directory",
+	"Failed to move file to system trash": "Failed to move file to system trash",
 
 	// MinIO
 	"Minio endpoint (e.g. play.min.io)": "MinIO endpoint (e.g. play.min.io)",

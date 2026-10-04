@@ -180,10 +180,17 @@ export default {
 	// Local
 	"Local": "本機儲存",
 	"Storage path": "儲存路徑",
-	"Folder inside the vault where uploaded files are stored": "倉庫內用於存放上傳檔案的資料夾",
-	"Absolute paths are no longer supported. Use a folder inside the vault.": "已不再支援絕對路徑，請使用倉庫內的資料夾。",
+	"Local directory for storing images": "本機圖片儲存目錄",
+	"Vault-relative directory or absolute directory inserted as file:/// links": "倉庫相對目錄，或會插入為 file:/// 連結的絕對目錄",
+	"Use vault-relative path": "使用倉庫相對路徑",
+	"Resolve storage path relative to vault root": "儲存路徑相對於倉庫根目錄解析",
+	"Resolve storage path relative to vault root (desktop file-system vault only)": "儲存路徑相對於倉庫根目錄解析（僅桌面端本機檔案倉庫）",
+	"Delete to trash": "刪除到資源回收筒",
+	"Move deleted files to system trash instead of permanent deletion": "刪除檔案時移到系統資源回收筒而非永久刪除",
 	"Please configure local storage path first": "請先配置本機儲存路徑",
+	"Vault-relative local storage requires a file-system vault": "倉庫相對路徑模式僅支援桌面端本機檔案倉庫",
 	"Path escapes the storage directory": "路徑超出了儲存目錄範圍",
+	"Failed to move file to system trash": "移動檔案到系統資源回收筒失敗",
 
 	// MinIO
 	"Minio endpoint (e.g. play.min.io)": "MinIO 端點(例如: play.min.io)",
