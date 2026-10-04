@@ -139,7 +139,10 @@ export class OssGalleryView extends ItemView {
             }
         });
 
-        this.refreshBtn = toolbar.createEl('button', { cls: 'oss-gallery-icon-btn oss-gallery-refresh-btn' });
+        this.refreshBtn = toolbar.createEl('button', {
+            cls: 'clickable-icon oss-gallery-toolbar-btn oss-gallery-refresh-btn',
+            attr: { type: 'button', 'aria-label': t('Refresh') },
+        });
         setIcon(this.refreshBtn, 'refresh-cw');
         this.refreshBtn.onclick = () => {
             if (!this.state.isLoading) {

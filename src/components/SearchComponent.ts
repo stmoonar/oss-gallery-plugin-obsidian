@@ -11,6 +11,7 @@ export class SearchComponent {
 	private container: HTMLElement;
 	private searchContainer: HTMLElement;
 	private searchInput: HTMLInputElement;
+	private clearBtn: HTMLElement;
 	private searchBtn: HTMLButtonElement;
 	private regexBtn: HTMLButtonElement | null = null;
 	private useRegex: boolean = false;
@@ -30,33 +31,46 @@ export class SearchComponent {
 		});
 		this.searchContainer = searchContainer;
 
-		// 创建搜索框包装器
+		// 复用 Obsidian 原生的 search-input-container（清除按钮 + 右侧装饰按钮定位）
 		const searchInputWrapper = searchContainer.createDiv({
-			cls: "oss-gallery-search-input-wrapper",
+			cls: "search-input-container oss-gallery-search-input-wrapper",
 		});
 
 		// 创建搜索输入框
 		this.searchInput = searchInputWrapper.createEl("input", {
 			cls: "oss-gallery-search",
 			attr: {
-				type: "text",
+				type: "search",
+				enterkeyhint: "search",
+				spellcheck: "false",
 				placeholder: options.placeholder || "Search by URL...",
 			},
 		});
 
+		// 原生清除按钮（输入框为空时由 Obsidian 样式自动隐藏）
+		this.clearBtn = searchInputWrapper.createDiv({
+			cls: "search-input-clear-button",
+			attr: { "aria-label": t("Clear search") },
+		});
+
 		// 创建正则表达式切换按钮
 		this.regexBtn = searchInputWrapper.createEl("button", {
-			cls: "oss-gallery-icon-btn clickable-icon oss-gallery-regex-btn",
+			cls: "clickable-icon input-right-decorator oss-gallery-regex-btn",
 			attr: {
-				title: t("Toggle regex search"),
 				type: "button",
+				"aria-label": t("Use regular expression"),
+				"aria-pressed": "false",
 			},
 		});
 		setIcon(this.regexBtn, "regex");
 
 		// 创建搜索按钮
 		this.searchBtn = searchContainer.createEl("button", {
-			cls: "oss-gallery-icon-btn mod-cta oss-gallery-search-btn",
+			cls: "clickable-icon oss-gallery-toolbar-btn oss-gallery-search-btn",
+			attr: {
+				type: "button",
+				"aria-label": t("Search"),
+			},
 		});
 		setIcon(this.searchBtn, "search");
 
@@ -75,11 +89,19 @@ export class SearchComponent {
 				options.onSearch(this.searchInput.value);
 			} else if (e.key === "Escape") {
 				if (this.searchInput.value) {
+					e.preventDefault();
 					this.searchInput.value = "";
 					// 清空后同步复位搜索结果
 					options.onSearch("");
 				}
 			}
+		};
+
+		// 清除按钮：与 Escape 行为一致
+		this.clearBtn.onclick = () => {
+			this.searchInput.value = "";
+			options.onSearch("");
+			this.searchInput.focus();
 		};
 
 		// 搜索按钮点击事件
@@ -91,23 +113,9 @@ export class SearchComponent {
 		if (this.regexBtn && options.onToggleRegex) {
 			this.regexBtn.onclick = (e) => {
 				e.preventDefault();
-				this.toggleRegex();
+				this.setRegexEnabled(!this.useRegex);
 				options.onToggleRegex?.(this.useRegex);
 			};
-		}
-	}
-
-	/**
-	 * 切换正则表达式模式
-	 */
-	private toggleRegex(): void {
-		this.useRegex = !this.useRegex;
-		if (this.useRegex) {
-			this.regexBtn?.addClass("oss-gallery-active");
-			this.regexBtn?.addClass("mod-cta");
-		} else {
-			this.regexBtn?.removeClass("oss-gallery-active");
-			this.regexBtn?.removeClass("mod-cta");
 		}
 	}
 
@@ -144,13 +152,8 @@ export class SearchComponent {
 	 */
 	setRegexEnabled(enabled: boolean): void {
 		this.useRegex = enabled;
-		if (enabled) {
-			this.regexBtn?.addClass("oss-gallery-active");
-			this.regexBtn?.addClass("mod-cta");
-		} else {
-			this.regexBtn?.removeClass("oss-gallery-active");
-			this.regexBtn?.removeClass("mod-cta");
-		}
+		this.regexBtn?.toggleClass("is-active", enabled);
+		this.regexBtn?.setAttr("aria-pressed", String(enabled));
 	}
 
 	/**
@@ -166,6 +169,7 @@ export class SearchComponent {
 	destroy(): void {
 		// 移除事件监听器
 		this.searchInput.onkeydown = null;
+		this.clearBtn.onclick = null;
 		this.searchBtn.onclick = null;
 		if (this.regexBtn) {
 			this.regexBtn.onclick = null;

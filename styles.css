@@ -18,7 +18,6 @@ If your plugin does not need CSS, delete this file.
     --oss-gallery-transition-duration-fast: 0.2s;
     --oss-gallery-shadow: var(--shadow-s);
     --oss-gallery-shadow-lg: var(--shadow-l);
-    --oss-gallery-border-radius-lg: 8px;
     --oss-gallery-spacing-xl: 30px;
     --oss-gallery-primary: var(--interactive-accent);
     --oss-gallery-primary-hover: var(--interactive-accent-hover);
@@ -28,12 +27,13 @@ If your plugin does not need CSS, delete this file.
 /* Gallery Toolbar */
 .oss-gallery-toolbar {
     display: flex;
-    gap: var(--oss-gallery-spacing-md);
-    padding: var(--oss-gallery-spacing-md);
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
     align-items: center;
     justify-content: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
 }
 
 /* Gallery Grid */
@@ -363,144 +363,81 @@ If your plugin does not need CSS, delete this file.
     padding: 0;
 }
 
-/* Search Container - Redesigned */
+/* Search Toolbar */
 .oss-gallery-search-container {
     display: flex;
     align-items: center;
-    gap: var(--oss-gallery-spacing-sm);
-    flex: 1;
+    gap: var(--size-4-2);
+    flex: 1 1 auto;
+    min-width: 0;
     max-width: 500px;
-    position: relative;
 }
 
-.oss-gallery-search-input-wrapper {
-    display: flex;
-    align-items: center;
-    position: relative;
-    flex: 1;
+/* Obsidian's native search-input-container (clear button + right decorator).
+   The magnifier is hidden because the search button already shows it. */
+.oss-gallery-search-input-wrapper.search-input-container {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.oss-gallery-search-container .oss-gallery-search {
-    flex: 1;
-    padding: 6px 10px;
-    padding-right: 36px;
-    /* 为内部按钮留出空间 */
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    font-size: 14px;
-    transition: border-color 0.15s ease;
-    outline: none;
-    height: 32px;
+.oss-gallery-search-input-wrapper.search-input-container::before {
+    display: none;
 }
 
-.oss-gallery-search-container .oss-gallery-search:focus {
-    border-color: var(--background-modifier-border-focus);
+.oss-gallery-search-input-wrapper.search-input-container input {
+    height: var(--input-height);
+    padding-inline-start: var(--size-4-2);
+    /* Room for the regex toggle */
+    padding-inline-end: calc(var(--size-4-6) + var(--input-icon-inset) + var(--size-4-1));
 }
 
-.oss-gallery-search-container .oss-gallery-search::placeholder {
-    color: var(--text-faint);
+.oss-gallery-search-input-wrapper.search-input-container input:not(:placeholder-shown) {
+    /* Room for the clear button as well */
+    padding-inline-end: calc(var(--size-4-6) + var(--input-icon-inset) + var(--size-4-1) + 28px);
 }
 
-/* 内联正则按钮 - 在搜索框内，模仿 VSCode 原生样式 */
-.oss-gallery-regex-btn {
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
-    color: var(--text-muted);
-    min-width: 24px;
-    min-height: 24px;
-    width: 24px;
-    height: 24px;
+/* Regex toggle inside the input (positioned by .input-right-decorator) */
+.oss-gallery-search-input-wrapper .clickable-icon.oss-gallery-regex-btn {
+    --icon-size: var(--icon-s);
+    --icon-stroke: var(--icon-s-stroke-width);
+    width: var(--size-4-6);
+    height: var(--size-4-6);
     padding: 0;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.1s ease, color 0.1s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.8;
+    border-radius: var(--radius-s);
 }
 
-.oss-gallery-search-input-wrapper .oss-gallery-icon-btn.oss-gallery-regex-btn {
-    border: none;
-    border-color: transparent;
-    box-shadow: none;
-    outline: none;
-    appearance: none;
+.oss-gallery-search-input-wrapper .clickable-icon.oss-gallery-regex-btn.is-active {
+    color: var(--interactive-accent);
+    background-color: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
 }
 
-.oss-gallery-regex-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-    opacity: 1;
+.oss-gallery-search-input-wrapper .clickable-icon.oss-gallery-regex-btn.is-active:hover {
+    background-color: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
 }
 
-.oss-gallery-regex-btn.oss-gallery-active {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    opacity: 1;
-}
-
-.oss-gallery-regex-btn.oss-gallery-active:hover {
-    background: var(--interactive-accent-hover);
-    color: var(--text-on-accent);
-}
-
-/* 外部搜索按钮 */
-.oss-gallery-search-container .oss-gallery-search-btn {
-    min-width: 28px;
-    min-height: 28px;
-    cursor: pointer;
-    transition: background-color var(--oss-gallery-transition-duration) ease;
-}
-
-.oss-gallery-search-container .oss-gallery-search-btn:hover {
-    background: var(--interactive-accent-hover);
-}
-
-.oss-gallery-refresh-btn {
-    min-width: 32px;
-    min-height: 32px;
+/* Search / refresh: plain icon buttons, same height as the input */
+.oss-gallery-toolbar .clickable-icon.oss-gallery-toolbar-btn {
+    flex: 0 0 auto;
+    width: var(--input-height);
+    height: var(--input-height);
     padding: 0;
-    background: var(--background-secondary);
-    color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--oss-gallery-border-radius-lg);
-    cursor: pointer;
-    transition: all var(--oss-gallery-transition-duration-fast) ease;
-    box-shadow: var(--oss-gallery-shadow);
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
-.oss-gallery-refresh-btn:hover {
-    background: var(--background-modifier-hover);
-    border-color: var(--oss-gallery-primary);
-    color: var(--oss-gallery-primary);
-    transform: translateY(-1px);
-    box-shadow: var(--oss-gallery-shadow-lg);
+.oss-gallery-toolbar .clickable-icon.oss-gallery-refresh-btn.oss-gallery-loading {
+    cursor: progress;
 }
 
-.oss-gallery-refresh-btn.oss-gallery-loading {
-    opacity: 0.6;
-    cursor: wait;
-    animation: oss-gallery-pulse 1.5s ease-in-out infinite;
+.oss-gallery-refresh-btn.oss-gallery-loading svg {
+    animation: oss-gallery-spin 1s linear infinite;
 }
 
-@keyframes oss-gallery-pulse {
-
-    0%,
-    100% {
-        opacity: 0.6;
+@media (prefers-reduced-motion: reduce) {
+    .oss-gallery-refresh-btn.oss-gallery-loading svg {
+        animation: none;
     }
 
-    50% {
-        opacity: 1;
+    .oss-gallery-toolbar .clickable-icon.oss-gallery-refresh-btn.oss-gallery-loading {
+        opacity: 0.5;
     }
 }
 

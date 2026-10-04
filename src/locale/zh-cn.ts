@@ -70,7 +70,9 @@ export default {
 	"Open OSS gallery": "打开图库",
 	"Some files are not supported and were skipped": "部分文件类型不支持，已跳过",
 	"Toggle background": "切换背景",
-	"Toggle regex search": "切换正则搜索",
+	"Use regular expression": "使用正则表达式",
+	"Clear search": "清除搜索",
+	Search: "搜索",
 	"No active provider": "没有激活的存储提供商",
 	"Please configure OSS settings first": "请先配置 OSS 设置",
 

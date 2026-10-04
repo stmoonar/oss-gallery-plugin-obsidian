@@ -68,7 +68,9 @@ export default {
 	"Open OSS gallery": "開啟圖庫",
 	"Some files are not supported and were skipped": "部分檔案類型不支援，已跳過",
 	"Toggle background": "切換背景",
-	"Toggle regex search": "切換正規搜尋",
+	"Use regular expression": "使用正規表示式",
+	"Clear search": "清除搜尋",
+	Search: "搜尋",
 	"No active provider": "沒有啟用的儲存供應商",
 	"Please configure OSS settings first": "請先配置 OSS 設定",
 
