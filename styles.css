@@ -690,48 +690,6 @@ If your plugin does not need CSS, delete this file.
     transition: transform 0.1s ease;
 }
 
-/* Upload Preview */
-.upload-preview-container {
-    position: relative;
-    display: inline-block;
-    max-width: 100%;
-    border-radius: var(--oss-gallery-border-radius);
-    overflow: hidden;
-    margin-bottom: 10px;
-}
-
-.upload-preview-container.uploading {
-    filter: brightness(50%);
-}
-
-.upload-preview-container img {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    transition: filter var(--oss-gallery-transition-duration) ease;
-}
-
-.upload-progress {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 80%;
-    background: rgba(255, 255, 255, 0.3);
-    height: 6px;
-    border-radius: 3px;
-    overflow: hidden;
-    z-index: 2;
-}
-
-.upload-progress-bar {
-    height: 100%;
-    background: var(--interactive-accent);
-    width: 0;
-    transition: width 0.3s ease;
-    display: block;
-}
-
 /* Error State */
 .oss-gallery-error {
     color: var(--text-error);

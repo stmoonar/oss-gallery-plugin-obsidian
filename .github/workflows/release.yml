@@ -1,0 +1,39 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v6
+            - name: Install pnpm
+              uses: pnpm/action-setup@v6
+            - name: Use Node.js 24.x
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24.x
+                  cache: "pnpm"
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm run build
+            - name: Verify tag matches manifest version
+              run: |
+                  MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+                  if [ "$GITHUB_REF_NAME" != "$MANIFEST_VERSION" ]; then
+                      echo "Tag $GITHUB_REF_NAME does not match manifest.json version $MANIFEST_VERSION"
+                      exit 1
+                  fi
+            - name: Create GitHub release
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  (cd dist && zip "../oss-gallery-$TAG.zip" main.js manifest.json styles.css)
+                  gh release create "$TAG" dist/main.js dist/manifest.json dist/styles.css "oss-gallery-$TAG.zip" --title "$TAG" --generate-notes

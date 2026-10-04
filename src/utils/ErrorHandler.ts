@@ -31,7 +31,7 @@ const SENSITIVE_KEY_VALUE_PATTERN =
  * @param message 原始消息
  * @returns 过滤后的消息
  */
-function filterSensitiveInfo(message: string): string {
+export function filterSensitiveInfo(message: string): string {
     let filtered = message;
 
     // key=value / key: value 形式的凭据
@@ -79,7 +79,7 @@ export function handleError(
     // 根据级别输出
     switch (level) {
         case ErrorLevel.INFO:
-            console.info(formattedMessage);
+            console.debug(formattedMessage);
             break;
         case ErrorLevel.WARN:
             console.warn(formattedMessage);

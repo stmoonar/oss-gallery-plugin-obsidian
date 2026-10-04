@@ -73,13 +73,26 @@ export class ObjectKeyBuilder {
                 return timestamp + '_' + safeName;
             case 'local':
             default:
-                return safeName;
+                // Clipboard images always share a generic name ("image.png"),
+                // so keeping it as-is would overwrite the previous upload.
+                return isGenericClipboardName(file.name)
+                    ? timestamp + '_' + safeName
+                    : safeName;
         }
     }
 
     updateSettings(settings: PluginSettings): void {
         this.settings = settings;
     }
+}
+
+/**
+ * Names browsers / Obsidian give to pasted clipboard images, which are not
+ * unique across pastes.
+ */
+function isGenericClipboardName(name: string): boolean {
+    return /^image\.(png|jpe?g|gif|webp|bmp)$/i.test(name)
+        || /^Pasted image \d*\.\w+$/i.test(name);
 }
 
 /**

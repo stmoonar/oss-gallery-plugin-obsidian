@@ -2,10 +2,12 @@
  * 文件工具类，提供文件相关的通用功能
  */
 
+import { IMAGE_EXTENSIONS, isImageFile } from '../providers/shared/image';
+
 /**
- * 图片文件扩展名列表
+ * 图片扩展名与判断函数的唯一实现位于 providers/shared/image，这里仅转发
  */
-export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+export { IMAGE_EXTENSIONS, isImageFile };
 
 /**
  * 视频文件扩展名列表
@@ -16,15 +18,6 @@ export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm'
  * 音频文件扩展名列表
  */
 export const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.aac', '.flac', '.m4a'];
-
-/**
- * 检查文件是否为图片类型
- * @param filename 文件名
- * @returns 是否为图片文件
- */
-export function isImageFile(filename: string): boolean {
-    return IMAGE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext));
-}
 
 /**
  * 检查文件是否为视频类型

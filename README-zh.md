@@ -4,6 +4,8 @@
 
 这个插件可以把 Obsidian 中的文件上传到多个对象存储服务，并为支持列举对象的服务提供图库视图。
 
+> **要求**：Obsidian 1.7.2 或更高版本。
+
 > **注意**：本插件仅支持桌面端。它依赖 Obsidian 移动端不具备的 Node.js 能力（crypto 签名、本地文件系统）。
 
 项目最初 fork 自 [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin)，目前已经扩展为多 provider 架构。
@@ -160,3 +162,24 @@
 如果要让 MinIO 返回的链接可直接访问，需要在 Bucket 策略中开放匿名访问或提供公开可访问的对象 URL。
 
 ![Settings](./docs/assets/minio-bucket-setting.png)
+
+## 网络使用与隐私
+
+本插件只会向你配置的存储服务发起网络请求，不含遥测、统计或广告，也不会向插件作者发送任何数据。
+
+- **文件会发送到你选择的服务。** 上传、列表、删除会访问当前 Provider 的端点：
+  - S3（通用） / MinIO：你填写的 Endpoint（MinIO 按配置使用 `http://` 或 `https://`）
+  - Cloudflare R2：你的 R2 S3 端点（`<account>.r2.cloudflarestorage.com`）
+  - 阿里云 OSS：`<bucket>.<area>.aliyuncs.com`（或自定义域名）
+  - 腾讯云 COS：`<bucket>.cos.<region>.myqcloud.com`
+  - 七牛 Kodo：`up-<area>.qiniup.com` 及七牛 API 域名
+  - 又拍云 USS：`v0.api.upyun.com`
+  - GitHub：`api.github.com`（链接默认使用 `raw.githubusercontent.com`，设置自定义域名后则使用你的域名）
+  - Imgur：`api.imgur.com`，或你配置的代理
+  - SM.MS（通过 S.EE）：`s.ee/api/v1`
+  - 本地存储：不联网
+- **文档预览。** 若将文档预览服务设为 Google Docs 或 Office Online，文档的公网 URL 会被发送到 `docs.google.com/viewer` 或 `view.officeapps.live.com` 以便渲染。保持“禁用”即可避免。
+- **账号与费用。** 除本地存储外，每个 Provider 都需要你自己的账号（或自建服务）。部分服务是收费的，请查看各服务的定价。
+- **仓库之外的本地文件。** 本地存储支持绝对路径。该模式下插件会读取、写入并（可选）把文件移入系统回收站，这些文件位于仓库之外，因为画廊需要列出并管理你指定的目录。插件只操作该目录。
+- **凭据以明文保存。** Access Key、Token、Secret 会明文保存在仓库 `.obsidian/plugins/` 下插件的 `data.json` 中。如果你同步或提交仓库（Git、网盘），请排除该文件，或使用最小权限的密钥。
+- **无遥测。** 插件不收集使用数据或崩溃报告。

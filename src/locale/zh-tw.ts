@@ -51,6 +51,7 @@ export default {
 	"Loading...": "載入中...",
 	"Load failed": "載入失敗",
 	"Upload failed": "上傳失敗",
+	"Upload failed with reason": "{name} 上傳失敗：{message}",
 	"Failed to load image": "圖片載入失敗",
 	"Search failed": "搜尋失敗",
 	"Delete success": "刪除成功",

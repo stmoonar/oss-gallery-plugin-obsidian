@@ -226,7 +226,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     videoPreview: true,
     audioPreview: true,
     docsPreview: '',
-    nameRule: 'local',
+    // Timestamp prefix by default: clipboard images are always named like
+    // "image.png", so the bare local name would overwrite earlier uploads.
+    nameRule: 'timeAndLocal',
     pathRule: 'root',
     embedFormat: '![]($URL)',
 };

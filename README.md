@@ -4,6 +4,8 @@
 
 This plugin uploads files from Obsidian to multiple object storage providers and offers a gallery view for providers that support listing.
 
+> **Requires** Obsidian 1.7.2 or later.
+
 > **Note**: This plugin is desktop-only. It relies on Node.js APIs (crypto signing, local file system) that are not available in Obsidian mobile.
 
 It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and now supports a broader multi-provider workflow.
@@ -160,3 +162,24 @@ Note: Imgur uploads are supported, but gallery listing and deletion are not.
 For MinIO public access, enable anonymous or otherwise publicly accessible object URLs in your bucket policy.
 
 ![Settings](./docs/assets/minio-bucket-setting.png)
+
+## Network use and privacy
+
+This plugin makes network requests only to the storage service you configure. It has no telemetry, analytics, or ads, and sends nothing to the plugin author.
+
+- **Files are sent to the service you choose.** Uploading, listing, and deleting contact the active provider's endpoint:
+  - S3 (Generic) / MinIO: the endpoint you enter (for MinIO, `http://` or `https://` as configured)
+  - Cloudflare R2: your R2 S3 endpoint (`<account>.r2.cloudflarestorage.com`)
+  - Aliyun OSS: `<bucket>.<area>.aliyuncs.com` (or your custom domain)
+  - Tencent COS: `<bucket>.cos.<region>.myqcloud.com`
+  - Qiniu Kodo: `up-<area>.qiniup.com` and the Qiniu API hosts
+  - Upyun USS: `v0.api.upyun.com`
+  - GitHub: `api.github.com` (links use `raw.githubusercontent.com` unless you set a custom domain)
+  - Imgur: `api.imgur.com`, or the proxy you configure
+  - SM.MS (via S.EE): `s.ee/api/v1`
+  - Local: no network access
+- **Document preview.** If you set the document preview option to Google Docs or Office Online, the public URL of the document is sent to `docs.google.com/viewer` or `view.officeapps.live.com` so they can render it. Keep it Disabled to avoid this.
+- **Accounts and cost.** Every provider except Local needs an account (or self-hosted server) of your own. Some services are paid; check each provider's pricing.
+- **Local files outside the vault.** The Local provider can use an absolute storage path. In that mode it reads, writes, and (optionally) moves to the system trash files outside your vault, because the gallery needs to list and manage the directory you chose. It only touches that directory.
+- **Credentials are stored in plain text.** Access keys, tokens, and secrets are saved in the plugin's `data.json` under your vault's `.obsidian/plugins/` folder. If you sync or commit your vault (Git, cloud drives), exclude that file or use least-privilege keys.
+- **No telemetry.** The plugin does not collect usage data or crash reports.

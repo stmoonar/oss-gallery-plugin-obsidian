@@ -1,6 +1,5 @@
 import { OssImage, SearchResult } from '../types/oss';
 import { t } from '../i18n';
-import { isImageFile } from '../utils/FileUtils';
 
 export class SearchService {
     /**
@@ -49,9 +48,7 @@ export class SearchService {
             throw new Error(`${t('Invalid regex pattern')}: ${errorMessage}`);
         }
 
-        return objects.filter(
-            (obj) => isImageFile(obj.key) && regex.test(this.getSearchTarget(obj))
-        );
+        return objects.filter((obj) => regex.test(this.getSearchTarget(obj)));
     }
 
     /**
@@ -60,10 +57,8 @@ export class SearchService {
     private textSearch(objects: OssImage[], searchText: string): OssImage[] {
         const lowerSearchText = searchText.toLowerCase();
 
-        return objects.filter(
-            (obj) =>
-                isImageFile(obj.key) &&
-                this.getSearchTarget(obj).toLowerCase().includes(lowerSearchText)
+        return objects.filter((obj) =>
+            this.getSearchTarget(obj).toLowerCase().includes(lowerSearchText)
         );
     }
 

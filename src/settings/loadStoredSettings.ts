@@ -25,7 +25,20 @@ interface LegacyMinioSettings {
 	port?: unknown;
 	customDomain?: unknown;
 	useSSL?: unknown;
+	imgPreview?: unknown;
+	videoPreview?: unknown;
+	audioPreview?: unknown;
+	docsPreview?: unknown;
+	nameRule?: unknown;
+	pathRule?: unknown;
 }
+
+/**
+ * Name rule for stored settings that predate (or lack) an explicit nameRule.
+ * Older versions defaulted to "local", so keep it for existing installs; only
+ * fresh installs get the new DEFAULT_SETTINGS.nameRule.
+ */
+const EXISTING_INSTALL_NAME_RULE: NameRule = "local";
 
 const PROVIDER_NAMES = Object.keys(
 	DEFAULT_SETTINGS.providers
@@ -104,6 +117,16 @@ function migrateLegacyMinioSettings(
 		...defaults,
 		activeProvider: "minio",
 		basepath: getString(stored.basepath) ?? defaults.basepath,
+		imgPreview: getBoolean(stored.imgPreview) ?? defaults.imgPreview,
+		videoPreview: getBoolean(stored.videoPreview) ?? defaults.videoPreview,
+		audioPreview: getBoolean(stored.audioPreview) ?? defaults.audioPreview,
+		docsPreview: getString(stored.docsPreview) ?? defaults.docsPreview,
+		nameRule: isNameRule(stored.nameRule)
+			? stored.nameRule
+			: EXISTING_INSTALL_NAME_RULE,
+		pathRule: isPathRule(stored.pathRule)
+			? stored.pathRule
+			: defaults.pathRule,
 		providers: {
 			...defaults.providers,
 			minio: {
@@ -126,6 +149,15 @@ function migrateLegacyMinioSettings(
 	};
 }
 
+/**
+ * Whether stored data uses the legacy MinIO-only shape (no `providers` map)
+ * and therefore needs to be migrated and saved once.
+ */
+export function isLegacyStoredSettings(storedValue: unknown): boolean {
+	const stored = getRecord(storedValue);
+	return stored !== undefined && stored.providers === undefined;
+}
+
 export function loadStoredSettings(storedValue: unknown): PluginSettings {
 	const defaults = createDefaultSettings();
 	const stored = getRecord(storedValue);
@@ -136,7 +168,7 @@ export function loadStoredSettings(storedValue: unknown): PluginSettings {
 
 	if (stored.providers === undefined) {
 		return migrateLegacyMinioSettings(
-			stored as LegacyMinioSettings,
+			stored,
 			defaults
 		);
 	}
@@ -154,7 +186,7 @@ export function loadStoredSettings(storedValue: unknown): PluginSettings {
 		embedFormat: getString(stored.embedFormat) ?? defaults.embedFormat,
 		nameRule: isNameRule(stored.nameRule)
 			? stored.nameRule
-			: defaults.nameRule,
+			: EXISTING_INSTALL_NAME_RULE,
 		pathRule: isPathRule(stored.pathRule)
 			? stored.pathRule
 			: defaults.pathRule,
