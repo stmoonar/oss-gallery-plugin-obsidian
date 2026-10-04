@@ -4,19 +4,23 @@ import { t } from '../i18n';
 import { OssProviderManager } from '../providers/OssProviderManager';
 import { providerRegistry } from '../providers/registry';
 
+/**
+ * The host plugin as seen by the settings tab. Declared as an interface that
+ * re-declares `settings`, so it refers to our own field rather than
+ * Obsidian 1.13's optional `Plugin.settings` (flagged by no-unsupported-api).
+ */
+interface SettingsHost extends Plugin {
+    settings: PluginSettings;
+    saveSettings(): Promise<void>;
+}
+
 export class SettingsManager extends PluginSettingTab {
-    plugin: Plugin & {
-        settings: PluginSettings;
-        saveSettings(): Promise<void>;
-    };
+    plugin: SettingsHost;
     private providerManager: OssProviderManager;
 
     constructor(
-        app: App, 
-        plugin: Plugin & {
-            settings: PluginSettings;
-            saveSettings(): Promise<void>;
-        },
+        app: App,
+        plugin: SettingsHost,
         providerManager: OssProviderManager
     ) {
         super(app, plugin);
@@ -34,13 +38,15 @@ export class SettingsManager extends PluginSettingTab {
             .setDesc(t('Choose the OSS provider you want to use'))
             .addDropdown(dropdown => {
                 const entries = providerRegistry.getAll(this.app);
-                entries.forEach(e => dropdown.addOption(e.id, e.label));
+                for (const e of entries) {
+                    dropdown.addOption(e.id, e.label);
+                }
                 dropdown.setValue(this.plugin.settings.activeProvider)
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         this.plugin.settings.activeProvider = value as ProviderName;
                         this.providerManager.setActiveProvider(value);
-                        await this.plugin.saveSettings();
-                        this.display(); // Refresh to show new provider settings
+                        // Refresh to show new provider settings once saved
+                        void this.plugin.saveSettings().then(() => this.display());
                     });
             });
 

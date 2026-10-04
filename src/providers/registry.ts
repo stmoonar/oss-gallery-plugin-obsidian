@@ -208,7 +208,7 @@ export class ProviderRegistry {
         if (!entry || !settings) {
             return false;
         }
-        return entry.isConfigured(settings as never, app);
+        return entry.isConfigured(settings, app);
     }
 
     /**
@@ -220,7 +220,7 @@ export class ProviderRegistry {
             this.setProviderSettings(
                 result,
                 entry.id,
-                { ...entry.defaultSettings } as ProviderSettingsMap[typeof entry.id]
+                { ...entry.defaultSettings }
             );
         }
         return result;

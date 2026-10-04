@@ -93,7 +93,9 @@ export class OssGalleryView extends ItemView {
 
         this.searchComponent = new SearchComponent(toolbar, {
             placeholder: t('Search by URL...'),
-            onSearch: (searchText) => this.handleSearch(searchText),
+            onSearch: (searchText) => {
+                void this.handleSearch(searchText);
+            },
             onToggleRegex: (enabled) => {
                 this.state.useRegexSearch = enabled;
             }
@@ -193,9 +195,11 @@ export class OssGalleryView extends ItemView {
         this.imageGrid = new ImageGrid(gridContainer, {
             getObjectUrl: async (objectName) => await this.getObjectUrl(objectName),
             canDelete: providerRegistry.supports(this.provider.name, 'delete'),
-            onPreview: (index) => this.openImagePreview(index),
-            onDelete: async (objectName, element) => {
-                await this.handleDelete(objectName, element);
+            onPreview: (index) => {
+                void this.openImagePreview(index);
+            },
+            onDelete: (objectName, element) => {
+                void this.handleDelete(objectName, element);
             }
         });
     }
@@ -300,26 +304,30 @@ export class OssGalleryView extends ItemView {
             return;
         }
 
-        const modal = new ConfirmModal(this.app, async () => {
-            try {
-                await this.syncService.deleteObject(objectName);
-                element.remove();
-
-                this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
-                this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
-
-                ImageCache.delete(objectName);
-
-                const { objects } = await this.syncService.sync(this.state.remoteObjects);
-                this.state.remoteObjects = objects;
-
-                new Notice(t('Delete success'));
-            } catch (err) {
-                new Notice(t('Delete failed'));
-                console.error(err);
-            }
+        const modal = new ConfirmModal(this.app, () => {
+            void this.deleteConfirmed(objectName, element);
         });
         modal.open();
+    }
+
+    private async deleteConfirmed(objectName: string, element: HTMLElement): Promise<void> {
+        try {
+            await this.syncService.deleteObject(objectName);
+            element.remove();
+
+            this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
+            this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
+
+            ImageCache.delete(objectName);
+
+            const { objects } = await this.syncService.sync(this.state.remoteObjects);
+            this.state.remoteObjects = objects;
+
+            new Notice(t('Delete success'));
+        } catch (err) {
+            new Notice(t('Delete failed'));
+            console.error(err);
+        }
     }
 
     

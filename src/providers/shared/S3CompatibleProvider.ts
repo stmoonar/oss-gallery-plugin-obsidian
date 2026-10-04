@@ -204,7 +204,7 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
                 const response = await requestUrl({
                     url: this.getRequestUrl(requestPath),
                     method: 'GET',
-                    headers: extractSignedHeaders(request.headers as Record<string, string>),
+                    headers: extractSignedHeaders(request.headers),
                 });
 
                 if (response.status !== 200) {
@@ -252,7 +252,7 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
             const response = await requestUrl({
                 url: this.getRequestUrl(requestPath),
                 method: 'DELETE',
-                headers: extractSignedHeaders(request.headers as Record<string, string>),
+                headers: extractSignedHeaders(request.headers),
             });
 
             if (response.status < 200 || response.status >= 300) {
