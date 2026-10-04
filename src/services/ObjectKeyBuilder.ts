@@ -1,5 +1,4 @@
 import { PluginSettings } from '../types/settings';
-import { moment } from 'obsidian';
 import { getFileTypeByMime } from '../utils/FileUtils';
 
 export class ObjectKeyBuilder {
@@ -27,10 +26,10 @@ export class ObjectKeyBuilder {
                 segments.push(getFileTypeByMime(file));
                 break;
             case 'date':
-                segments.push(moment().format('YYYY/MM/DD'));
+                segments.push(formatDatePath(new Date()));
                 break;
             case 'typeAndDate':
-                segments.push(getFileTypeByMime(file), moment().format('YYYY/MM/DD'));
+                segments.push(getFileTypeByMime(file), formatDatePath(new Date()));
                 break;
             default:
                 break;
@@ -44,7 +43,7 @@ export class ObjectKeyBuilder {
      * the same millisecond (batch paste/drop), so keys never collide.
      */
     private nextTimestamp(): string {
-        const timestamp = moment().format('YYYYMMDDHHmmssSSS');
+        const timestamp = formatTimestamp(new Date());
         if (timestamp === this.lastTimestamp) {
             this.timestampSeq++;
             return `${timestamp}_${this.timestampSeq}`;
@@ -107,4 +106,26 @@ function isGenericClipboardName(name: string): boolean {
  */
 function sanitizeFileName(name: string): string {
     return name.replace(/[\\/:*?"<>|#%]/g, '_');
+}
+
+function pad(value: number, length = 2): string {
+    return String(value).padStart(length, '0');
+}
+
+/** Local date as YYYY/MM/DD. */
+function formatDatePath(date: Date): string {
+    return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`;
+}
+
+/** Local time as YYYYMMDDHHmmssSSS. */
+function formatTimestamp(date: Date): string {
+    return (
+        String(date.getFullYear()) +
+        pad(date.getMonth() + 1) +
+        pad(date.getDate()) +
+        pad(date.getHours()) +
+        pad(date.getMinutes()) +
+        pad(date.getSeconds()) +
+        pad(date.getMilliseconds(), 3)
+    );
 }
