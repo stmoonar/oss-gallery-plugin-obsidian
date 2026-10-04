@@ -53,6 +53,7 @@ export default {
 	"Loading...": "加载中...",
 	"Load failed": "加载失败",
 	"Upload failed": "上传失败",
+	"Upload complete": "已上传",
 	"Upload failed with reason": "{name} 上传失败：{message}",
 	"Failed to load image": "图片加载失败",
 	"Search failed": "搜索失败",

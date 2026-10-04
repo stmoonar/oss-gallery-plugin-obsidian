@@ -56,6 +56,7 @@ export default {
 	"Loading...": "Loading...",
 	"Load failed": "Load failed",
 	"Upload failed": "Upload failed",
+	"Upload complete": "Uploaded",
 	"Upload failed with reason": "Failed to upload {name}: {message}",
 	"Failed to load image": "Failed to load image",
 	"Search failed": "Search failed",

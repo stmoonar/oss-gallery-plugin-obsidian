@@ -18,6 +18,7 @@ tsc -noEmit -skipLibCheck
 - `src/providers/`: provider implementations and registry metadata
 - `src/views/OssGalleryView.ts`: gallery view
 - `src/components/`: gallery UI pieces
+- `src/editor/`: CM6 editor extension and Reading-mode post processor that render upload progress cards (display layer only, never written to notes)
 - `src/services/`: upload, sync, object key, search, embed rendering
 - `src/types/`: shared types for settings, providers, and gallery state
 - `src/locale/` and `src/i18n.ts`: localization

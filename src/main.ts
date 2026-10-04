@@ -19,6 +19,10 @@ import { filterSensitiveInfo, handleUploadError } from "./utils/ErrorHandler";
 import { OssProviderManager } from "./providers/OssProviderManager";
 import { providerRegistry } from "./providers/registry";
 import { isLegacyStoredSettings, loadStoredSettings } from "./settings/loadStoredSettings";
+import { UploadProgressStore } from "./services/UploadProgressStore";
+import { createUploadId, placeholderPattern } from "./services/uploadPlaceholder";
+import { uploadProgressExtension } from "./editor/uploadProgressExtension";
+import { createUploadProgressPostProcessor } from "./editor/uploadProgressPostProcessor";
 
 /**
  * Where an upload was started from. The Editor (and MarkdownView) of a leaf is
@@ -42,6 +46,8 @@ export default class OssGalleryPlugin extends Plugin {
 	settings: PluginSettings;
 	providerManager: OssProviderManager;
 	private uploadCounter = 0;
+	/** Upload progress shown in editors/reading view; never written to notes. */
+	private readonly uploadProgress = new UploadProgressStore();
 
 	// Services
 	private keyBuilder: ObjectKeyBuilder;
@@ -58,7 +64,20 @@ export default class OssGalleryPlugin extends Plugin {
 
 		this.initializeServices();
 		this.registerEvents();
+		this.registerUploadProgressRendering();
 		this.setupView();
+	}
+
+	/**
+	 * Render upload placeholders as a progress card (thumbnail + bar) in
+	 * Source/Live Preview and Reading mode. Display-only: the note keeps the
+	 * short placeholder text until the upload finishes.
+	 */
+	private registerUploadProgressRendering(): void {
+		this.registerEditorExtension(uploadProgressExtension(this.uploadProgress));
+		this.registerMarkdownPostProcessor(
+			createUploadProgressPostProcessor(this.uploadProgress)
+		);
 	}
 
 	private initializeServices(): void {
@@ -226,8 +245,14 @@ export default class OssGalleryPlugin extends Plugin {
 
 		const pending: PendingUpload[] = files.map((file) => ({
 			file,
-			id: `oss-upload-${Date.now()}-${++this.uploadCounter}`,
+			id: createUploadId(++this.uploadCounter),
 		}));
+
+		// Register progress entries before the placeholders land in the note so
+		// the first render already shows the progress card.
+		for (const { id, file } of pending) {
+			this.uploadProgress.start(id, file);
+		}
 
 		await this.insertPlaceholders(target, pending);
 
@@ -240,8 +265,6 @@ export default class OssGalleryPlugin extends Plugin {
 		target: UploadTarget,
 		{ file, id }: PendingUpload
 	): Promise<void> {
-		let lastPercent = 0;
-
 		try {
 			const uploadService = this.getUploadService();
 			const objectName = this.keyBuilder.generateObjectName(file);
@@ -255,18 +278,20 @@ export default class OssGalleryPlugin extends Plugin {
 						100,
 						Math.max(0, Math.round(progress.percentage))
 					);
-					// Only touch the note when the displayed value changes.
-					if (!Number.isFinite(percent) || percent === lastPercent) return;
-					lastPercent = percent;
-					this.updatePlaceholderProgress(target, id, file.name, percent);
+					if (!Number.isFinite(percent)) return;
+					// Display-only: the note text is not touched, and the store
+					// ignores unchanged values.
+					this.uploadProgress.update(id, { percent });
 				}
 			);
 
+			this.uploadProgress.update(id, { percent: 100, status: "done" });
 			const finalText = this.embedRenderer.render(fileType, url, file.name);
 			await this.replacePlaceholder(target, id, finalText);
 			this.refreshGalleryViews();
 		} catch (error) {
 			handleUploadError(error, file.name);
+			this.uploadProgress.update(id, { status: "failed" });
 			await this.replacePlaceholder(target, id, "");
 			const message = error instanceof Error ? error.message : String(error);
 			new Notice(
@@ -275,22 +300,20 @@ export default class OssGalleryPlugin extends Plugin {
 					.replace("{message}", () => filterSensitiveInfo(message)),
 				8000
 			);
+		} finally {
+			// Also revokes the thumbnail object URL.
+			this.uploadProgress.remove(id);
 		}
 	}
 
 	/**
-	 * Short, markdown-safe placeholder. It renders as a plain link labelled with
-	 * the progress and carries the upload id in the link target.
+	 * Short, markdown-safe placeholder carrying the upload id in the link
+	 * target. Its text stays constant for the whole upload; progress is drawn
+	 * over it by the editor extension / reading mode post processor.
 	 */
-	private buildPlaceholder(id: string, name: string, percent: number): string {
+	private buildPlaceholder(id: string, name: string): string {
 		const label = name.replace(/[[\]\\\r\n]/g, "_");
-		return `[${t("Uploading")} ${label}... ${percent}%](#${id})`;
-	}
-
-	/** Matches the placeholder with the given id, whatever its current label. */
-	private placeholderPattern(id: string, withTrailingNewline = false): RegExp {
-		// The id only contains [a-z0-9-], so it needs no escaping.
-		return new RegExp(`\\[[^\\]\\n]*\\]\\(#${id}\\)${withTrailingNewline ? "\\n?" : ""}`);
+		return `[${t("Uploading")} ${label}\u2026](#${id})`;
 	}
 
 	private async insertPlaceholders(
@@ -298,7 +321,7 @@ export default class OssGalleryPlugin extends Plugin {
 		pending: PendingUpload[]
 	): Promise<void> {
 		const text = pending
-			.map(({ id, file }) => `${this.buildPlaceholder(id, file.name, 0)}\n`)
+			.map(({ id, file }) => `${this.buildPlaceholder(id, file.name)}\n`)
 			.join("");
 
 		const editor = this.resolveEditor(target);
@@ -373,30 +396,6 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	/**
-	 * Progress updates are cosmetic: they are applied only while the note is
-	 * open in an editor, so a background note is not rewritten on disk for
-	 * every percent.
-	 */
-	private updatePlaceholderProgress(
-		target: UploadTarget,
-		id: string,
-		name: string,
-		percent: number
-	): void {
-		try {
-			const editor = this.resolveEditor(target);
-			if (!editor) return;
-			this.replaceInEditor(
-				editor,
-				this.placeholderPattern(id),
-				this.buildPlaceholder(id, name, percent)
-			);
-		} catch {
-			// Ignore: the next update or the final replacement will retry.
-		}
-	}
-
-	/**
 	 * Replace the placeholder (and the line break inserted with it) with the
 	 * final text, in the editor if the note is still open there, otherwise
 	 * directly in the note file. Returns false when the placeholder is gone.
@@ -406,7 +405,7 @@ export default class OssGalleryPlugin extends Plugin {
 		id: string,
 		text: string
 	): Promise<boolean> {
-		const pattern = this.placeholderPattern(id, true);
+		const pattern = placeholderPattern(id, true);
 		try {
 			const editor = this.resolveEditor(target);
 			if (editor) {
@@ -499,7 +498,8 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	onunload(): void {
-		// Cleanup
+		// Drop progress entries and revoke thumbnail object URLs.
+		this.uploadProgress.clear();
 	}
 
 	async loadSettings(): Promise<void> {

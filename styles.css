@@ -901,3 +901,95 @@ If your plugin does not need CSS, delete this file.
 .oss-gallery-image-preview-container.light .oss-gallery-preview-placeholder-icon svg {
     color: rgba(0, 0, 0, 0.1);
 }
+
+/* Upload progress card: drawn over the upload placeholder in the editor and
+   reading view; never written to the note. */
+.oss-gallery-upload-widget {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-3);
+    max-width: 100%;
+    margin: var(--size-2-1) 0;
+    padding: var(--size-4-2) var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background-color: var(--background-secondary);
+    vertical-align: middle;
+    line-height: var(--line-height-tight);
+    user-select: none;
+    cursor: default;
+}
+
+.oss-gallery-upload-thumb {
+    flex-shrink: 0;
+    width: auto;
+    height: auto;
+    max-width: 160px;
+    max-height: 120px;
+    border-radius: var(--radius-s);
+    object-fit: cover;
+}
+
+.oss-gallery-upload-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+    width: 240px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.oss-gallery-upload-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-upload-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-normal);
+}
+
+.oss-gallery-upload-status {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.oss-gallery-upload-track {
+    display: block;
+    height: 4px;
+    overflow: hidden;
+    border-radius: var(--radius-s);
+    background-color: var(--background-modifier-border);
+}
+
+.oss-gallery-upload-bar {
+    display: block;
+    height: 100%;
+    width: var(--oss-upload-progress, 0%);
+    border-radius: inherit;
+    background-color: var(--interactive-accent);
+    transition: width 0.2s ease-out;
+}
+
+.oss-gallery-upload-widget.is-done .oss-gallery-upload-bar {
+    background-color: var(--text-success);
+}
+
+.oss-gallery-upload-widget.is-failed {
+    border-color: var(--text-error);
+}
+
+.oss-gallery-upload-widget.is-failed .oss-gallery-upload-status {
+    color: var(--text-error);
+}
+
+.oss-gallery-upload-widget.is-failed .oss-gallery-upload-bar {
+    background-color: var(--text-error);
+}
