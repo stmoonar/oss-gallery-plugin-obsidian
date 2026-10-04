@@ -191,7 +191,7 @@ export class MinioProvider extends S3CompatibleProvider<MinioSettings> {
             .setName(t('Secret Key'))
             .addText(text => {
                 text.inputEl.type = 'password';
-                text.setPlaceholder('Secret Key')
+                text.setPlaceholder(t('Secret Key'))
                     .setValue(minioSettings.secretKey)
                     .onChange(async (value) => {
                         minioSettings.secretKey = value;

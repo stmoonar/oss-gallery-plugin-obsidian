@@ -114,7 +114,7 @@ export class ImgurProvider implements IOssProvider {
             .setName(t('Client ID'))
             .setDesc(t('Imgur OAuth Client ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Client ID')
+                .setPlaceholder(t('Enter your client ID'))
                 .setValue(settings.providers.imgur?.clientId || '')
                 .onChange(async (value) => {
                     if (!settings.providers.imgur) {
@@ -145,8 +145,8 @@ export class ImgurProvider implements IOssProvider {
                 }));
 
         // Add note about Imgur limitations
-        const noteDiv = containerEl.createDiv({ cls: 'imgur-settings-note' });
-        const noteTitle = noteDiv.createEl('p', { cls: 'imgur-settings-note-title' });
+        const noteDiv = containerEl.createDiv({ cls: 'oss-gallery-imgur-note' });
+        const noteTitle = noteDiv.createEl('p', { cls: 'oss-gallery-imgur-note-title' });
         noteTitle.createEl('strong', { text: `${t('Note')}:` });
 
         const noteList = noteDiv.createEl('ul');

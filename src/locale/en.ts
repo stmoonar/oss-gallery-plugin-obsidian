@@ -221,4 +221,14 @@ export default {
 	// Gallery / upload gating
 	"Copy failed": "Copy failed",
 	"File type not supported by provider": "{provider} does not accept this file type, skipped: {name}",
+	// Provider settings placeholders
+	"Enter your access key ID": "Enter your access key ID",
+	"Enter your access key secret": "Enter your access key secret",
+	"Enter your client ID": "Enter your client ID",
+	"Enter your secret ID": "Enter your secret ID",
+	"Enter your Cloudflare account ID": "Enter your Cloudflare account ID",
+	"Enter your secret access key": "Enter your secret access key",
+	"Enter your token": "Enter your token",
+	"Enter your operator name": "Enter your operator name",
+	"Enter your password": "Enter your password",
 };

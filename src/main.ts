@@ -249,7 +249,7 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	private triggerFileUpload(target: UploadTarget): void {
-		const input = document.createElement("input");
+		const input = createEl("input");
 		input.setAttribute("type", "file");
 		input.setAttribute("accept", this.getFilePickerAccept());
 

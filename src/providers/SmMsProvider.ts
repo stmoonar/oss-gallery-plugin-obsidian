@@ -230,7 +230,7 @@ export class SmMsProvider implements IOssProvider {
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder('Enter your token')
+                .setPlaceholder(t('Enter your token'))
                 .setValue(settings.providers.smms.token)
                 .onChange(async (value) => {
                     settings.providers.smms.token = value;

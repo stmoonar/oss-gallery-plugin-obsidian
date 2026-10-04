@@ -67,10 +67,10 @@ export class LazyImageService {
 			this.observer.observe(img);
 		};
 
-		if ("requestIdleCallback" in window) {
+		if (typeof window.requestIdleCallback === "function") {
 			requestIdleCallback(deferredObserve, { timeout: 200 });
 		} else {
-			setTimeout(deferredObserve, 0);
+			window.setTimeout(deferredObserve, 0);
 		}
 	}
 
@@ -103,12 +103,12 @@ export class LazyImageService {
 		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			try {
 				await this.loadImage(url, img, timeout);
-				img.classList.add("loaded");
+				img.classList.add("oss-gallery-img-loaded");
 				this.options.onImageLoaded?.(img, url);
 				return;
 			} catch (error) {
 				if (attempt === maxRetries) {
-					img.classList.add("error");
+					img.classList.add("oss-gallery-img-error");
 					img.src = this.getPlaceholderUrl();
 					console.error(
 						"Image load failed after retries:",
@@ -120,7 +120,7 @@ export class LazyImageService {
 
 				// 指数退避
 				const delay = Math.min(1000 * Math.pow(2, attempt - 1), 3000);
-				await new Promise((resolve) => setTimeout(resolve, delay));
+				await new Promise((resolve) => window.setTimeout(resolve, delay));
 			}
 		}
 	}
@@ -134,17 +134,17 @@ export class LazyImageService {
 		timeout: number
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timeoutId = setTimeout(() => {
+			const timeoutId = window.setTimeout(() => {
 				reject(new Error(`Image load timeout: ${url}`));
 			}, timeout);
 
 			img.onload = () => {
-				clearTimeout(timeoutId);
+				window.clearTimeout(timeoutId);
 				resolve();
 			};
 
 			img.onerror = () => {
-				clearTimeout(timeoutId);
+				window.clearTimeout(timeoutId);
 				img.onload = null;
 				img.onerror = null;
 				reject(new Error(`Failed to load image: ${url}`));

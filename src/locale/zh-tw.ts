@@ -214,4 +214,14 @@ export default {
 	// Gallery / upload gating
 	"Copy failed": "複製失敗",
 	"File type not supported by provider": "{provider} 不支援此檔案類型，已略過：{name}",
+	// Provider settings placeholders
+	"Enter your access key ID": "請輸入 Access Key ID",
+	"Enter your access key secret": "請輸入 Access Key Secret",
+	"Enter your client ID": "請輸入 Client ID",
+	"Enter your secret ID": "請輸入 Secret ID",
+	"Enter your Cloudflare account ID": "請輸入 Cloudflare 帳戶 ID",
+	"Enter your secret access key": "請輸入 Secret Access Key",
+	"Enter your token": "請輸入權杖",
+	"Enter your operator name": "請輸入操作員名稱",
+	"Enter your password": "請輸入密碼",
 };

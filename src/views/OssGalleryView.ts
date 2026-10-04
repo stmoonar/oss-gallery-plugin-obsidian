@@ -115,8 +115,7 @@ export class OssGalleryView extends ItemView {
     }
 
     async onOpen() {
-        const container = this.containerEl.children[1] as HTMLElement;
-        if (!container) throw new Error("Failed to get container element");
+        const container = this.contentEl;
 
         this.container = container;
         this.container.empty();
@@ -140,7 +139,7 @@ export class OssGalleryView extends ItemView {
             }
         });
 
-        this.refreshBtn = toolbar.createEl('button', { cls: 'oss-gallery-icon-btn refresh-btn' });
+        this.refreshBtn = toolbar.createEl('button', { cls: 'oss-gallery-icon-btn oss-gallery-refresh-btn' });
         setIcon(this.refreshBtn, 'refresh-cw');
         this.refreshBtn.onclick = () => {
             if (!this.state.isLoading) {
@@ -227,7 +226,7 @@ export class OssGalleryView extends ItemView {
 
     private beginLoad(): number {
         this.state.isLoading = true;
-        this.refreshBtn?.addClass('loading');
+        this.refreshBtn?.addClass('oss-gallery-loading');
         return ++this.loadGeneration;
     }
 
@@ -239,7 +238,7 @@ export class OssGalleryView extends ItemView {
         if (!this.isCurrentLoad(generation)) return;
 
         this.state.isLoading = false;
-        this.refreshBtn?.removeClass('loading');
+        this.refreshBtn?.removeClass('oss-gallery-loading');
 
         if (this.reloadQueued) {
             this.reloadQueued = false;
@@ -254,7 +253,7 @@ export class OssGalleryView extends ItemView {
         this.loadGeneration++;
         this.reloadQueued = false;
         this.state.isLoading = false;
-        this.refreshBtn?.removeClass('loading');
+        this.refreshBtn?.removeClass('oss-gallery-loading');
     }
 
     private clearStatusMessages(): void {
@@ -503,11 +502,11 @@ export class OssGalleryView extends ItemView {
             };
         }
 
-        this.backToTopBtn.classList.add('visible');
+        this.backToTopBtn.classList.add('oss-gallery-visible');
     }
 
     private hideBackToTopButton(): void {
-        this.backToTopBtn?.classList.remove('visible');
+        this.backToTopBtn?.classList.remove('oss-gallery-visible');
     }
 
     async onClose(): Promise<void> {

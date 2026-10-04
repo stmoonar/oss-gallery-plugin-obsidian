@@ -39,7 +39,7 @@ export class ImagePreviewModal extends Modal {
 	 * 设置模态框样式
 	 */
 	private setupModalStyle(): void {
-		requestAnimationFrame(() => {
+		window.requestAnimationFrame(() => {
 			const modalEl = this.modalEl;
 			modalEl.addClass("oss-gallery-image-preview-modal-shell");
 
@@ -83,7 +83,7 @@ export class ImagePreviewModal extends Modal {
 	 * 创建控制栏
 	 */
 	private createControlBar(): void {
-		const controlBar = this.container.createEl("div", {
+		const controlBar = this.container.createDiv({
 			cls: "oss-gallery-preview-control-bar",
 		});
 
@@ -104,7 +104,7 @@ export class ImagePreviewModal extends Modal {
 		};
 
 		// 路径显示
-		this.pathElement = controlBar.createEl("div", {
+		this.pathElement = controlBar.createDiv({
 			cls: "oss-gallery-preview-path",
 			text: this.formatUrlToPath(this.imageUrl),
 		});
@@ -126,7 +126,7 @@ export class ImagePreviewModal extends Modal {
 	 * 创建占位符
 	 */
 	private createPlaceholder(): void {
-		this.placeholderElement = this.container.createEl("div", {
+		this.placeholderElement = this.container.createDiv({
 			cls: "oss-gallery-preview-placeholder",
 		});
 		const iconEl = this.placeholderElement.createDiv({
@@ -183,8 +183,8 @@ export class ImagePreviewModal extends Modal {
 	 * 显示动画
 	 */
 	private showAnimation(): void {
-		requestAnimationFrame(() => {
-			this.container.classList.add("show");
+		window.requestAnimationFrame(() => {
+			this.container.classList.add("oss-gallery-show");
 		});
 	}
 
@@ -206,20 +206,20 @@ export class ImagePreviewModal extends Modal {
 		this.hideLoadingSpinner();
 
 		// 创建错误提示元素
-		const errorContainer = this.container.createEl("div", {
+		const errorContainer = this.container.createDiv({
 			cls: "oss-gallery-preview-error",
 		});
-		errorContainer.createDiv({ cls: "error-icon", text: "⚠️" });
+		errorContainer.createDiv({ cls: "oss-gallery-preview-error-icon", text: "⚠️" });
 		errorContainer.createDiv({
-			cls: "error-message",
+			cls: "oss-gallery-preview-error-message",
 			text: t("Failed to load image"),
 		});
-		errorContainer.createDiv({ cls: "error-url", text: this.imageUrl });
+		errorContainer.createDiv({ cls: "oss-gallery-preview-error-url", text: this.imageUrl });
 
 		this.container.appendChild(errorContainer);
 
 		// 3秒后自动隐藏错误消息
-		setTimeout(() => {
+		window.setTimeout(() => {
 			if (errorContainer && errorContainer.parentNode) {
 				errorContainer.remove();
 			}
@@ -238,12 +238,12 @@ export class ImagePreviewModal extends Modal {
 	 * 应用主题
 	 */
 	private applyTheme(theme: "dark" | "light"): void {
-		this.container.classList.toggle("dark", theme === "dark");
-		this.container.classList.toggle("light", theme === "light");
+		this.container.classList.toggle("oss-gallery-dark", theme === "dark");
+		this.container.classList.toggle("oss-gallery-light", theme === "light");
 	}
 
 	private setHidden(element: HTMLElement | null, hidden: boolean): void {
-		element?.classList.toggle("is-hidden", hidden);
+		element?.classList.toggle("oss-gallery-is-hidden", hidden);
 	}
 
 	/**
@@ -304,7 +304,7 @@ export class ImagePreviewModal extends Modal {
 
 				// 清除延迟计时器
 				if (this.loadingTimer) {
-					clearTimeout(this.loadingTimer);
+					window.clearTimeout(this.loadingTimer);
 					this.loadingTimer = null;
 				}
 
@@ -327,7 +327,7 @@ export class ImagePreviewModal extends Modal {
 
 				// 清除延迟计时器
 				if (this.loadingTimer) {
-					clearTimeout(this.loadingTimer);
+					window.clearTimeout(this.loadingTimer);
 					this.loadingTimer = null;
 				}
 
@@ -351,12 +351,12 @@ export class ImagePreviewModal extends Modal {
 	 */
 	private showLoadingSpinner(): void {
 		if (!this.loadingSpinner) {
-			this.loadingSpinner = this.container.createEl("div", {
-				cls: "oss-gallery-preview-loading is-hidden",
+			this.loadingSpinner = this.container.createDiv({
+				cls: "oss-gallery-preview-loading oss-gallery-is-hidden",
 			});
-			this.loadingSpinner.createDiv({ cls: "loading-spinner" });
+			this.loadingSpinner.createDiv({ cls: "oss-gallery-preview-spinner" });
 			this.loadingSpinner.createDiv({
-				cls: "loading-text",
+				cls: "oss-gallery-preview-loading-text",
 				text: t("Loading..."),
 			});
 			this.container.appendChild(this.loadingSpinner);
@@ -395,12 +395,12 @@ export class ImagePreviewModal extends Modal {
 
 			// 清理计时器
 			if (this.loadingTimer) {
-				clearTimeout(this.loadingTimer);
+				window.clearTimeout(this.loadingTimer);
 				this.loadingTimer = null;
 			}
 
 			// 延迟一点再处理，让当前更新完成
-			setTimeout(() => {
+			window.setTimeout(() => {
 				if (!this.closed) {
 					this.updateImage(pending.url, pending.fileName);
 				}
@@ -413,7 +413,7 @@ export class ImagePreviewModal extends Modal {
 
 		// 清理计时器
 		if (this.loadingTimer) {
-			clearTimeout(this.loadingTimer);
+			window.clearTimeout(this.loadingTimer);
 			this.loadingTimer = null;
 		}
 

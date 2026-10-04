@@ -44,14 +44,14 @@ export class ImageGrid {
 			await Promise.all(
 				batch.map((obj) => this.renderImageItem(obj.key))
 			);
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			await new Promise((resolve) => window.setTimeout(resolve, 10));
 		}
 	}
 
 	private async renderImageItem(objectName: string): Promise<void> {
 		const objectUrl = await this.options.getObjectUrl(objectName);
 
-		const imgDiv = this.container.createEl("div", {
+		const imgDiv = this.container.createDiv({
 			cls: "oss-gallery-item",
 		});
 
@@ -72,7 +72,7 @@ export class ImageGrid {
 			this.options.onPreview?.(objectName);
 		};
 
-		const buttonContainer = imgDiv.createEl("div", {
+		const buttonContainer = imgDiv.createDiv({
 			cls: "oss-gallery-buttons",
 		});
 
@@ -125,7 +125,7 @@ export class ImageGrid {
 				resizeQuality: "high",
 			});
 
-			const canvas = document.createElement("canvas");
+			const canvas = createEl("canvas");
 			canvas.width = bitmap.width;
 			canvas.height = bitmap.height;
 			const ctx = canvas.getContext("2d");
@@ -146,7 +146,7 @@ export class ImageGrid {
 
 	private createCopyButton(container: HTMLElement, url: string): void {
 		const copyBtn = container.createEl("button", {
-			cls: "oss-gallery-icon-btn copy-btn",
+			cls: "oss-gallery-icon-btn oss-gallery-copy-btn",
 		});
 		setIcon(copyBtn, "copy");
 
@@ -169,7 +169,7 @@ export class ImageGrid {
 		imgDiv: HTMLElement
 	): void {
 		const deleteBtn = container.createEl("button", {
-			cls: "oss-gallery-icon-btn delete-btn",
+			cls: "oss-gallery-icon-btn oss-gallery-delete-btn",
 		});
 		setIcon(deleteBtn, "trash");
 

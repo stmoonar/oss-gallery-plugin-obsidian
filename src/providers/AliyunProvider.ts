@@ -239,7 +239,7 @@ export class AliyunProvider implements IOssProvider {
             .setName(t('Access Key ID'))
             .setDesc(t('Aliyun OSS Access Key ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Access Key ID')
+                .setPlaceholder(t('Enter your access key ID'))
                 .setValue(settings.providers.aliyun?.accessKeyId || '')
                 .onChange(async (value) => {
                     if (!settings.providers.aliyun) {
@@ -262,7 +262,7 @@ export class AliyunProvider implements IOssProvider {
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder('Enter your Access Key Secret')
+                .setPlaceholder(t('Enter your access key secret'))
                 .setValue(settings.providers.aliyun?.accessKeySecret || '')
                 .onChange(async (value) => {
                     if (!settings.providers.aliyun) {

@@ -8,7 +8,6 @@ export class ConfirmModal extends Modal {
         super(app);
         this.onConfirm = onConfirm;
         this.containerEl.addClass('oss-gallery-confirm-modal');
-        this.modalEl.addClass('no-shadow-modal');
     }
 
     onOpen() {

@@ -117,7 +117,7 @@ export class S3Provider extends S3CompatibleProvider<S3Settings> {
             .setName(t('Access Key ID'))
             .setDesc(t('S3 Access Key ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Access Key ID')
+                .setPlaceholder(t('Enter your access key ID'))
                 .setValue(s3?.accessKeyId || '')
                 .onChange(async (value) => {
                     settings.providers.s3.accessKeyId = value;
@@ -129,7 +129,7 @@ export class S3Provider extends S3CompatibleProvider<S3Settings> {
             .setDesc(t('S3 Secret Access Key'))
             .addText(text => {
                 text.inputEl.type = 'password';
-                text.setPlaceholder('Enter your Secret Access Key')
+                text.setPlaceholder(t('Enter your secret access key'))
                     .setValue(s3?.secretAccessKey || '')
                     .onChange(async (value) => {
                         settings.providers.s3.secretAccessKey = value;

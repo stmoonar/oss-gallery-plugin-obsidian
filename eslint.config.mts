@@ -33,4 +33,22 @@ export default defineConfig(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		// Example values in setPlaceholder() (regions, bucket names, paths, URLs,
+		// token prefixes) are literal samples, not prose.
+		rules: {
+			"obsidianmd/ui/sentence-case": [
+				"warn",
+				{
+					enforceCamelCaseLower: true,
+					ignoreRegex: [
+						"^[a-z0-9]+(-[a-z0-9]+)+$",
+						"^[a-z0-9]+(/[a-z0-9-]+)+$",
+						"^(https?://|ghp_)",
+						"^(main|z0|attachments)$",
+					],
+				},
+			],
+		},
+	},
 );

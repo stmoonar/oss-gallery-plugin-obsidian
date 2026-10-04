@@ -16,17 +16,13 @@ If your plugin does not need CSS, delete this file.
     --oss-gallery-border-radius: 4px;
     --oss-gallery-transition-duration: 0.3s;
     --oss-gallery-transition-duration-fast: 0.2s;
-    --oss-gallery-overlay-bg: rgba(0, 0, 0, 0.5);
-    --oss-gallery-preview-overlay-bg: rgba(0, 0, 0, 0.9);
-    --oss-gallery-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    --oss-gallery-shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.15);
+    --oss-gallery-shadow: var(--shadow-s);
+    --oss-gallery-shadow-lg: var(--shadow-l);
     --oss-gallery-border-radius-lg: 8px;
     --oss-gallery-spacing-xl: 30px;
     --oss-gallery-primary: var(--interactive-accent);
     --oss-gallery-primary-hover: var(--interactive-accent-hover);
     --oss-gallery-text-on-primary: var(--text-on-accent);
-    --oss-gallery-accent-text: var(--text-accent);
-    --oss-gallery-accent-text-hover: var(--text-accent-hover);
 }
 
 /* Gallery Toolbar */
@@ -80,13 +76,13 @@ If your plugin does not need CSS, delete this file.
         grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     }
 
-    .search-container {
+    .oss-gallery-search-container {
         max-width: 600px;
     }
 }
 
 @media (min-width: 1200px) {
-    .search-container {
+    .oss-gallery-search-container {
         max-width: 700px;
     }
 }
@@ -118,7 +114,7 @@ If your plugin does not need CSS, delete this file.
 
 .oss-gallery-item:hover {
     transform: scale(1.03);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-s);
     filter: brightness(1.05);
 }
 
@@ -144,12 +140,12 @@ If your plugin does not need CSS, delete this file.
 }
 
 
-.oss-gallery-item img.loaded {
+.oss-gallery-item img.oss-gallery-img-loaded {
     opacity: 1;
     transform: scale(1);
 }
 
-.oss-gallery-item img.error {
+.oss-gallery-item img.oss-gallery-img-error {
     opacity: 0.3;
     filter: grayscale(100%) blur(1px);
 }
@@ -197,18 +193,18 @@ If your plugin does not need CSS, delete this file.
     outline: none;
 }
 
-.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.copy-btn:hover {
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-copy-btn:hover {
     background: var(--oss-gallery-primary);
-    color: white;
+    color: var(--text-on-accent);
 }
 
-.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.delete-btn {
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-delete-btn {
     color: var(--text-error);
 }
 
-.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.delete-btn:hover {
-    background: rgb(235, 50, 50);
-    color: white;
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-delete-btn:hover {
+    background: var(--background-modifier-error);
+    color: var(--text-on-accent);
 }
 
 /* Loading States */
@@ -228,95 +224,16 @@ If your plugin does not need CSS, delete this file.
     }
 }
 
-/* Empty State - 空状态设计 */
-.oss-gallery-empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--oss-gallery-spacing-xl);
-    text-align: center;
-    color: var(--text-muted);
-}
-
-.oss-gallery-empty-state-icon {
-    width: 80px;
-    height: 80px;
-    margin-bottom: var(--oss-gallery-spacing-lg);
-    opacity: 0.3;
-    filter: grayscale(100%);
-}
-
-.oss-gallery-empty-state-text {
-    font-size: 16px;
-    margin-bottom: var(--oss-gallery-spacing-sm);
-    color: var(--text-normal);
-}
-
-.oss-gallery-empty-state-subtext {
-    font-size: 14px;
-    color: var(--text-muted);
-    line-height: 1.4;
-}
-
-/* 云朵动画效果 */
-.oss-gallery-empty-state::before {
-    content: '☁';
-    font-size: 60px;
-    position: absolute;
-    top: 20px;
-    opacity: 0.1;
-    animation: oss-gallery-float 6s ease-in-out infinite;
-}
-
-.oss-gallery-empty-state::after {
-    content: '☁';
-    font-size: 40px;
-    position: absolute;
-    top: 40px;
-    right: 60px;
-    opacity: 0.05;
-    animation: oss-gallery-float 8s ease-in-out infinite reverse;
-}
-
-@keyframes oss-gallery-float {
-
-    0%,
-    100% {
-        transform: translateY(0) translateX(0);
-    }
-
-    25% {
-        transform: translateY(-10px) translateX(5px);
-    }
-
-    75% {
-        transform: translateY(5px) translateX(-5px);
-    }
-}
-
-.oss-gallery-icon-btn.loading {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.oss-gallery-icon-btn.loading:hover {
-    background: var(--background-secondary);
-}
-
-.oss-gallery-item.loading::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: var(--background-secondary);
-    opacity: 0.7;
-}
-
 /* Image Preview Modal - 优化动画 */
 .oss-gallery-image-preview-container {
+    /* The lightbox has its own dark/light switch, independent of the app theme */
+    --oss-gallery-lightbox-bg: color-mix(in srgb, black 90%, transparent);
+    --oss-gallery-lightbox-fg: white;
+    --oss-gallery-lightbox-scrim: color-mix(in srgb, black 50%, transparent);
     position: fixed;
     inset: 0;
-    background: var(--oss-gallery-preview-overlay-bg);
+    background: var(--oss-gallery-lightbox-bg);
+    color: var(--oss-gallery-lightbox-fg);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -328,11 +245,11 @@ If your plugin does not need CSS, delete this file.
     transform: translateZ(0);
     backface-visibility: hidden;
     /* 移除边框 */
-    border: none !important;
-    box-shadow: none !important;
+    border: none;
+    box-shadow: none;
 }
 
-.oss-gallery-image-preview-container.show {
+.oss-gallery-image-preview-container.oss-gallery-show {
     opacity: 1;
     visibility: visible;
 }
@@ -346,13 +263,13 @@ If your plugin does not need CSS, delete this file.
     transform: scale(0.85) translateZ(0);
     transition: transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     border-radius: var(--oss-gallery-border-radius);
-    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+    box-shadow: none;
     backface-visibility: hidden;
     will-change: transform;
-    opacity: 1 !important;
+    opacity: 1;
 }
 
-.oss-gallery-image-preview-container.show .oss-gallery-image-preview {
+.oss-gallery-image-preview-container.oss-gallery-show .oss-gallery-image-preview {
     transform: scale(1) translateZ(0);
     box-shadow: var(--oss-gallery-shadow-lg);
     transition-delay: 0.05s;
@@ -384,13 +301,13 @@ If your plugin does not need CSS, delete this file.
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--oss-gallery-lightbox-scrim);
     border: none;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    color: var(--oss-gallery-lightbox-fg);
     pointer-events: auto;
     transition: all 0.2s ease;
     z-index: 2002;
@@ -398,9 +315,9 @@ If your plugin does not need CSS, delete this file.
 }
 
 .oss-gallery-preview-toggle-bg-btn:hover {
-    background: rgba(100, 100, 100, 0.7);
+    background: color-mix(in srgb, var(--oss-gallery-lightbox-fg) 30%, var(--oss-gallery-lightbox-scrim));
     transform: scale(1.1);
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+    box-shadow: var(--shadow-s);
 }
 
 .oss-gallery-preview-toggle-bg-btn:active {
@@ -412,46 +329,7 @@ If your plugin does not need CSS, delete this file.
     height: 20px;
 }
 
-/* File Name Display */
-.oss-gallery-preview-file-name {
-    color: white;
-    font-size: 16px;
-    font-weight: 500;
-    text-align: center;
-    max-width: 70%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    pointer-events: auto;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-    z-index: 1001;
-}
-
 /* Confirmation Modal */
-.modal-container {
-    background: var(--oss-gallery-overlay-bg);
-    background-size: cover;
-}
-
-.modal-container .oss-gallery-confirm-modal {
-    max-width: 160px;
-    position: fixed !important;
-    top: 50% !important;
-    left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    box-shadow: none !important;
-    background-color: var(--background-primary) !important;
-    border-radius: 8px;
-    padding: 15px !important;
-}
-
-.oss-gallery-confirm-title {
-    margin: 0 0 0.5em;
-    padding: 0;
-    font-size: 1.2em;
-    text-align: center;
-}
-
 .oss-gallery-confirm-message {
     margin: 0 0 1em;
     color: var(--text-muted);
@@ -468,13 +346,6 @@ If your plugin does not need CSS, delete this file.
     gap: var(--oss-gallery-spacing-sm);
 }
 
-/* Infinite Scroll */
-.scroll-sentinel {
-    height: var(--oss-gallery-spacing-md);
-    width: 100%;
-    grid-column: 1 / -1;
-}
-
 .oss-gallery-image-preview-modal-content {
     padding: 0;
     position: fixed;
@@ -483,7 +354,6 @@ If your plugin does not need CSS, delete this file.
     right: 0;
     bottom: 0;
     z-index: 1000;
-    background: none !important;
 }
 
 .oss-gallery-image-preview-modal-shell {
@@ -493,16 +363,8 @@ If your plugin does not need CSS, delete this file.
     padding: 0;
 }
 
-.oss-gallery-item.hidden {
-    display: none;
-}
-
-.oss-gallery-item.visible {
-    display: block;
-}
-
 /* Search Container - Redesigned */
-.search-container {
+.oss-gallery-search-container {
     display: flex;
     align-items: center;
     gap: var(--oss-gallery-spacing-sm);
@@ -511,14 +373,14 @@ If your plugin does not need CSS, delete this file.
     position: relative;
 }
 
-.search-input-wrapper {
+.oss-gallery-search-input-wrapper {
     display: flex;
     align-items: center;
     position: relative;
     flex: 1;
 }
 
-.search-container .oss-gallery-search {
+.oss-gallery-search-container .oss-gallery-search {
     flex: 1;
     padding: 6px 10px;
     padding-right: 36px;
@@ -533,16 +395,16 @@ If your plugin does not need CSS, delete this file.
     height: 32px;
 }
 
-.search-container .oss-gallery-search:focus {
+.oss-gallery-search-container .oss-gallery-search:focus {
     border-color: var(--background-modifier-border-focus);
 }
 
-.search-container .oss-gallery-search::placeholder {
+.oss-gallery-search-container .oss-gallery-search::placeholder {
     color: var(--text-faint);
 }
 
 /* 内联正则按钮 - 在搜索框内，模仿 VSCode 原生样式 */
-.regex-btn-inline {
+.oss-gallery-regex-btn {
     position: absolute;
     right: 4px;
     top: 50%;
@@ -563,7 +425,7 @@ If your plugin does not need CSS, delete this file.
     opacity: 0.8;
 }
 
-.search-input-wrapper .oss-gallery-icon-btn.regex-btn-inline {
+.oss-gallery-search-input-wrapper .oss-gallery-icon-btn.oss-gallery-regex-btn {
     border: none;
     border-color: transparent;
     box-shadow: none;
@@ -571,43 +433,36 @@ If your plugin does not need CSS, delete this file.
     appearance: none;
 }
 
-.regex-btn-inline:hover {
+.oss-gallery-regex-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
     opacity: 1;
 }
 
-.regex-btn-inline.active {
+.oss-gallery-regex-btn.oss-gallery-active {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     opacity: 1;
 }
 
-.regex-btn-inline.active:hover {
+.oss-gallery-regex-btn.oss-gallery-active:hover {
     background: var(--interactive-accent-hover);
     color: var(--text-on-accent);
 }
 
 /* 外部搜索按钮 */
-.search-container .search-btn {
+.oss-gallery-search-container .oss-gallery-search-btn {
     min-width: 28px;
     min-height: 28px;
     cursor: pointer;
     transition: background-color var(--oss-gallery-transition-duration) ease;
 }
 
-.search-container .search-btn:hover {
+.oss-gallery-search-container .oss-gallery-search-btn:hover {
     background: var(--interactive-accent-hover);
 }
 
-/* Action Buttons Container */
-.oss-gallery-action-buttons {
-    display: flex;
-    align-items: center;
-    gap: var(--oss-gallery-spacing-sm);
-}
-
-.refresh-btn {
+.oss-gallery-refresh-btn {
     min-width: 32px;
     min-height: 32px;
     padding: 0;
@@ -623,7 +478,7 @@ If your plugin does not need CSS, delete this file.
     justify-content: center;
 }
 
-.refresh-btn:hover {
+.oss-gallery-refresh-btn:hover {
     background: var(--background-modifier-hover);
     border-color: var(--oss-gallery-primary);
     color: var(--oss-gallery-primary);
@@ -631,7 +486,7 @@ If your plugin does not need CSS, delete this file.
     box-shadow: var(--oss-gallery-shadow-lg);
 }
 
-.refresh-btn.loading {
+.oss-gallery-refresh-btn.oss-gallery-loading {
     opacity: 0.6;
     cursor: wait;
     animation: oss-gallery-pulse 1.5s ease-in-out infinite;
@@ -673,7 +528,7 @@ If your plugin does not need CSS, delete this file.
     pointer-events: none;
 }
 
-.oss-gallery-back-to-top.visible {
+.oss-gallery-back-to-top.oss-gallery-visible {
     opacity: 1;
     visibility: visible;
     pointer-events: all;
@@ -710,51 +565,51 @@ If your plugin does not need CSS, delete this file.
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(220, 53, 69, 0.95);
-    color: white;
+    background: var(--background-modifier-error);
+    color: var(--text-on-accent);
     padding: 20px 30px;
     border-radius: 8px;
     font-size: 14px;
     text-align: center;
     max-width: 80%;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    animation: fadeIn 0.3s ease;
+    box-shadow: var(--shadow-l);
+    animation: oss-gallery-fade-in 0.3s ease;
     z-index: 1005;
 }
 
-.oss-gallery-preview-error .error-icon {
+.oss-gallery-preview-error-icon {
     font-size: 32px;
     margin-bottom: 8px;
 }
 
-.oss-gallery-preview-error .error-message {
+.oss-gallery-preview-error-message {
     font-weight: 600;
     margin-bottom: 8px;
 }
 
-.oss-gallery-preview-error .error-url {
+.oss-gallery-preview-error-url {
     font-size: 12px;
     opacity: 0.9;
     word-break: break-all;
     font-family: monospace;
 }
 
-.imgur-settings-note {
+.oss-gallery-imgur-note {
     margin-top: 20px;
     font-size: 0.9em;
     color: var(--text-muted);
 }
 
-.imgur-settings-note-title {
+.oss-gallery-imgur-note-title {
     margin: 0 0 8px;
 }
 
-.imgur-settings-note ul {
+.oss-gallery-imgur-note ul {
     margin: 0;
     padding-left: 20px;
 }
 
-@keyframes fadeIn {
+@keyframes oss-gallery-fade-in {
     from {
         opacity: 0;
         transform: translate(-50%, -50%) scale(0.9);
@@ -768,7 +623,7 @@ If your plugin does not need CSS, delete this file.
 
 /* Path Display */
 .oss-gallery-preview-path {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--oss-gallery-lightbox-fg);
     font-size: 16px;
     font-family: var(--font-interface);
     text-align: center;
@@ -777,26 +632,16 @@ If your plugin does not need CSS, delete this file.
     overflow: hidden;
     text-overflow: ellipsis;
     pointer-events: auto;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    text-shadow: 0 1px 2px var(--oss-gallery-lightbox-scrim);
     z-index: 1001;
     padding: 0;
     background: none;
 }
 
-.oss-gallery-image-preview-container.light .oss-gallery-preview-path {
-    color: rgba(0, 0, 0, 0.8);
-    text-shadow: 0 0 2px rgba(255, 255, 255, 0.8);
-    /* 增加白色描边以防背景太黑看不清 */
-    background: none;
-    box-shadow: none;
-}
-
-.oss-gallery-image-preview-container.dark {
-    background: var(--oss-gallery-preview-overlay-bg);
-}
-
-.oss-gallery-image-preview-container.light {
-    background: rgba(255, 255, 255, 0.95);
+.oss-gallery-image-preview-container.oss-gallery-light {
+    --oss-gallery-lightbox-bg: color-mix(in srgb, white 95%, transparent);
+    --oss-gallery-lightbox-fg: black;
+    --oss-gallery-lightbox-scrim: color-mix(in srgb, white 85%, transparent);
 }
 
 /* Loading Spinner */
@@ -813,67 +658,35 @@ If your plugin does not need CSS, delete this file.
     z-index: 1004;
 }
 
-.oss-gallery-image-preview.is-hidden,
-.oss-gallery-preview-placeholder.is-hidden,
-.oss-gallery-preview-loading.is-hidden {
+.oss-gallery-image-preview.oss-gallery-is-hidden,
+.oss-gallery-preview-placeholder.oss-gallery-is-hidden,
+.oss-gallery-preview-loading.oss-gallery-is-hidden {
     display: none;
 }
 
-.loading-spinner {
+.oss-gallery-preview-spinner {
     width: 56px;
     height: 56px;
-    border: 5px solid rgba(255, 255, 255, 0.15);
-    border-top: 5px solid white;
+    border: 5px solid color-mix(in srgb, var(--oss-gallery-lightbox-fg) 15%, transparent);
+    border-top-color: var(--oss-gallery-lightbox-fg);
     border-radius: 50%;
-    animation: spin 1.2s linear infinite;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    animation: oss-gallery-spin 1.2s linear infinite;
+    box-shadow: var(--shadow-l);
 }
 
-.loading-text {
-    color: white;
+.oss-gallery-preview-loading-text {
+    color: var(--oss-gallery-lightbox-fg);
     font-size: 18px;
     font-weight: 600;
-    text-shadow:
-        0 2px 4px rgba(0, 0, 0, 0.9),
-        0 0 20px rgba(0, 0, 0, 0.5);
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--oss-gallery-lightbox-scrim);
     padding: 8px 20px;
     border-radius: 20px;
     backdrop-filter: blur(10px);
 }
 
-/* 浅色主题下的加载动画 */
-.oss-gallery-image-preview-container.light .oss-gallery-preview-loading .loading-text {
-    color: #333;
-    text-shadow:
-        0 2px 4px rgba(0, 0, 0, 0.3),
-        0 0 20px rgba(0, 0, 0, 0.2);
-    background: rgba(255, 255, 255, 0.85);
-}
-
-.oss-gallery-image-preview-container.light .oss-gallery-preview-loading .loading-spinner {
-    border-color: rgba(0, 0, 0, 0.2);
-    border-top-color: #333;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-}
-
-@keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
 /* 图片加载时的背景样式 */
 .oss-gallery-image-preview {
     transition: opacity 0.3s ease;
-}
-
-.oss-gallery-image-preview.loading-bg {
-    opacity: 0.3;
 }
 
 /* Placeholder */
@@ -894,12 +707,9 @@ If your plugin does not need CSS, delete this file.
 .oss-gallery-preview-placeholder-icon svg {
     width: 120px;
     height: 120px;
-    color: rgba(255, 255, 255, 0.2);
-    transition: color 0.3s ease;
-}
-
-.oss-gallery-image-preview-container.light .oss-gallery-preview-placeholder-icon svg {
-    color: rgba(0, 0, 0, 0.1);
+    color: var(--oss-gallery-lightbox-fg);
+    opacity: 0.2;
+    transition: opacity 0.3s ease;
 }
 
 /* Upload progress card: drawn over the upload placeholder in the editor and
@@ -978,18 +788,18 @@ If your plugin does not need CSS, delete this file.
     transition: width 0.2s ease-out;
 }
 
-.oss-gallery-upload-widget.is-done .oss-gallery-upload-bar {
+.oss-gallery-upload-widget.oss-gallery-is-done .oss-gallery-upload-bar {
     background-color: var(--text-success);
 }
 
-.oss-gallery-upload-widget.is-failed {
+.oss-gallery-upload-widget.oss-gallery-is-failed {
     border-color: var(--text-error);
 }
 
-.oss-gallery-upload-widget.is-failed .oss-gallery-upload-status {
+.oss-gallery-upload-widget.oss-gallery-is-failed .oss-gallery-upload-status {
     color: var(--text-error);
 }
 
-.oss-gallery-upload-widget.is-failed .oss-gallery-upload-bar {
+.oss-gallery-upload-widget.oss-gallery-is-failed .oss-gallery-upload-bar {
     background-color: var(--text-error);
 }

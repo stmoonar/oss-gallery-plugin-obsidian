@@ -106,7 +106,7 @@ export class R2Provider extends S3CompatibleProvider<R2Settings> {
             .setName(t('Account ID'))
             .setDesc(t('Cloudflare Account ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Cloudflare Account ID')
+                .setPlaceholder(t('Enter your Cloudflare account ID'))
                 .setValue(r2?.accountId || '')
                 .onChange(async (value) => {
                     settings.providers.r2.accountId = value;
@@ -117,7 +117,7 @@ export class R2Provider extends S3CompatibleProvider<R2Settings> {
             .setName(t('Access Key ID'))
             .setDesc(t('R2 API Token Access Key ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Access Key ID')
+                .setPlaceholder(t('Enter your access key ID'))
                 .setValue(r2?.accessKeyId || '')
                 .onChange(async (value) => {
                     settings.providers.r2.accessKeyId = value;
@@ -129,7 +129,7 @@ export class R2Provider extends S3CompatibleProvider<R2Settings> {
             .setDesc(t('R2 API Token Secret Access Key'))
             .addText(text => {
                 text.inputEl.type = 'password';
-                text.setPlaceholder('Enter your Secret Access Key')
+                text.setPlaceholder(t('Enter your secret access key'))
                     .setValue(r2?.secretAccessKey || '')
                     .onChange(async (value) => {
                         settings.providers.r2.secretAccessKey = value;

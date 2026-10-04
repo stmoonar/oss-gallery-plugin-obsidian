@@ -267,7 +267,7 @@ export class UpyunProvider implements IOssProvider {
             .setName(t('Operator'))
             .setDesc(t('Upyun Operator name'))
             .addText(text => text
-                .setPlaceholder('Enter your operator name')
+                .setPlaceholder(t('Enter your operator name'))
                 .setValue(settings.providers.upyun?.operator || '')
                 .onChange(async (value) => {
                     if (!settings.providers.upyun) {
@@ -290,7 +290,7 @@ export class UpyunProvider implements IOssProvider {
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder('Enter your password')
+                .setPlaceholder(t('Enter your password'))
                 .setValue(settings.providers.upyun?.password || '')
                 .onChange(async (value) => {
                     if (!settings.providers.upyun) {

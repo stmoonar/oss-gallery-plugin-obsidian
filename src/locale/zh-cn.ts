@@ -216,4 +216,14 @@ export default {
 	// Gallery / upload gating
 	"Copy failed": "复制失败",
 	"File type not supported by provider": "{provider} 不支持此文件类型，已跳过：{name}",
+	// Provider settings placeholders
+	"Enter your access key ID": "请输入 Access Key ID",
+	"Enter your access key secret": "请输入 Access Key Secret",
+	"Enter your client ID": "请输入 Client ID",
+	"Enter your secret ID": "请输入 Secret ID",
+	"Enter your Cloudflare account ID": "请输入 Cloudflare 账户 ID",
+	"Enter your secret access key": "请输入 Secret Access Key",
+	"Enter your token": "请输入令牌",
+	"Enter your operator name": "请输入操作员名称",
+	"Enter your password": "请输入密码",
 };

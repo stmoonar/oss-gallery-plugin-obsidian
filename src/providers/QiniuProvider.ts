@@ -246,7 +246,7 @@ export class QiniuProvider implements IOssProvider {
             .setName(t('Access Key'))
             .setDesc(t('Qiniu Access Key'))
             .addText(text => text
-                .setPlaceholder('Enter your Access Key')
+                .setPlaceholder(t('Enter your access key'))
                 .setValue(settings.providers.qiniu?.accessKey || '')
                 .onChange(async (value) => {
                     if (!settings.providers.qiniu) {
@@ -269,7 +269,7 @@ export class QiniuProvider implements IOssProvider {
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder('Enter your Secret Key')
+                .setPlaceholder(t('Enter your secret key'))
                 .setValue(settings.providers.qiniu?.secretKey || '')
                 .onChange(async (value) => {
                     if (!settings.providers.qiniu) {

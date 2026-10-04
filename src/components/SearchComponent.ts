@@ -25,14 +25,14 @@ export class SearchComponent {
 	 */
 	private createComponent(options: SearchComponentOptions): void {
 		// 创建搜索容器
-		const searchContainer = this.container.createEl("div", {
-			cls: "search-container",
+		const searchContainer = this.container.createDiv({
+			cls: "oss-gallery-search-container",
 		});
 		this.searchContainer = searchContainer;
 
 		// 创建搜索框包装器
-		const searchInputWrapper = searchContainer.createEl("div", {
-			cls: "search-input-wrapper",
+		const searchInputWrapper = searchContainer.createDiv({
+			cls: "oss-gallery-search-input-wrapper",
 		});
 
 		// 创建搜索输入框
@@ -46,7 +46,7 @@ export class SearchComponent {
 
 		// 创建正则表达式切换按钮
 		this.regexBtn = searchInputWrapper.createEl("button", {
-			cls: "oss-gallery-icon-btn clickable-icon regex-btn-inline",
+			cls: "oss-gallery-icon-btn clickable-icon oss-gallery-regex-btn",
 			attr: {
 				title: t("Toggle regex search"),
 				type: "button",
@@ -56,7 +56,7 @@ export class SearchComponent {
 
 		// 创建搜索按钮
 		this.searchBtn = searchContainer.createEl("button", {
-			cls: "oss-gallery-icon-btn mod-cta search-btn",
+			cls: "oss-gallery-icon-btn mod-cta oss-gallery-search-btn",
 		});
 		setIcon(this.searchBtn, "search");
 
@@ -103,10 +103,10 @@ export class SearchComponent {
 	private toggleRegex(): void {
 		this.useRegex = !this.useRegex;
 		if (this.useRegex) {
-			this.regexBtn?.addClass("active");
+			this.regexBtn?.addClass("oss-gallery-active");
 			this.regexBtn?.addClass("mod-cta");
 		} else {
-			this.regexBtn?.removeClass("active");
+			this.regexBtn?.removeClass("oss-gallery-active");
 			this.regexBtn?.removeClass("mod-cta");
 		}
 	}
@@ -145,10 +145,10 @@ export class SearchComponent {
 	setRegexEnabled(enabled: boolean): void {
 		this.useRegex = enabled;
 		if (enabled) {
-			this.regexBtn?.addClass("active");
+			this.regexBtn?.addClass("oss-gallery-active");
 			this.regexBtn?.addClass("mod-cta");
 		} else {
-			this.regexBtn?.removeClass("active");
+			this.regexBtn?.removeClass("oss-gallery-active");
 			this.regexBtn?.removeClass("mod-cta");
 		}
 	}

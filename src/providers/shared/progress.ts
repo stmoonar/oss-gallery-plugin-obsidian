@@ -32,7 +32,7 @@ export function simulateProgress(
     }
 
     let percentage = 0;
-    let timer: ReturnType<typeof setInterval> | undefined;
+    let timer: number | undefined;
     let settled = false;
 
     const report = (pct: number) => {
@@ -42,13 +42,13 @@ export function simulateProgress(
 
     const stop = () => {
         if (timer !== undefined) {
-            clearInterval(timer);
+            window.clearInterval(timer);
             timer = undefined;
         }
     };
 
     report(0);
-    timer = setInterval(() => {
+    timer = window.setInterval(() => {
         // Ease toward the cap: cover a fraction of the remaining distance each
         // tick, so progress slows down as it approaches CAP_PERCENTAGE.
         const remaining = CAP_PERCENTAGE - percentage;

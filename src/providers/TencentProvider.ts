@@ -202,7 +202,7 @@ export class TencentProvider implements IOssProvider {
             .setName(t('Secret ID'))
             .setDesc(t('Tencent COS Secret ID'))
             .addText(text => text
-                .setPlaceholder('Enter your Secret ID')
+                .setPlaceholder(t('Enter your secret ID'))
                 .setValue(settings.providers.tencent?.secretId || '')
                 .onChange(async (value) => {
                     if (!settings.providers.tencent) {
@@ -225,7 +225,7 @@ export class TencentProvider implements IOssProvider {
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder('Enter your Secret Key')
+                .setPlaceholder(t('Enter your secret key'))
                 .setValue(settings.providers.tencent?.secretKey || '')
                 .onChange(async (value) => {
                     if (!settings.providers.tencent) {

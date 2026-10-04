@@ -42,8 +42,8 @@ export function getUploadProgressCardId(el: HTMLElement): string | null {
 
 /** Update an existing card in place so the bar width can transition. */
 export function updateUploadProgressCard(root: HTMLElement, entry: UploadEntry): void {
-	root.toggleClass("is-done", entry.status === "done");
-	root.toggleClass("is-failed", entry.status === "failed");
+	root.toggleClass("oss-gallery-is-done", entry.status === "done");
+	root.toggleClass("oss-gallery-is-failed", entry.status === "failed");
 	root.setAttribute("aria-label", `${t("Uploading")} ${entry.name}`);
 
 	const percent = entry.status === "done" ? 100 : entry.percent;
