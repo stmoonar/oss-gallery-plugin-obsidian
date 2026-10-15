@@ -4,12 +4,15 @@
  * progress when the settings tab is closed and reopened.
  *
  * P1: WebGPU probe, download/verify/delete, `semantic.enabled` bookkeeping.
- * P2+ hangs the workers, index and search services off this object.
+ * P2: creates embedding backends (workers) and terminates them when the
+ * install changes or the plugin unloads. P3+ hangs the index and search
+ * services off this object.
  */
 import { Notice } from "obsidian";
 import { t } from "../i18n";
 import type { PluginSettings } from "../types/settings";
 import { AssetEntry, getAllAssets } from "./assets";
+import { currentEmbeddingConfig } from "./EmbeddingBackend";
 import { DownloadError } from "./httpsDownload";
 import {
 	DeleteResult,
@@ -18,7 +21,9 @@ import {
 	VerifyResult,
 } from "./ModelDownloadManager";
 import { resolveModelDir, ResolvedModelDir } from "./modelDir";
+import type { EmbeddingConfig, EmbeddingMode } from "./protocol";
 import { probeWebGpu, WebGpuProbeResult } from "./webGpuProbe";
+import { WorkerEmbeddingBackend } from "./WorkerEmbeddingBackend";
 
 export interface SemanticHost {
 	settings: PluginSettings;
@@ -29,6 +34,8 @@ export interface SemanticHost {
 export class SemanticController {
 	readonly manager: ModelDownloadManager;
 	private probeResult: Promise<WebGpuProbeResult> | null = null;
+	/** Live backends; terminated when the files change or the plugin unloads. */
+	private readonly backends = new Set<WorkerEmbeddingBackend>();
 
 	constructor(private readonly host: SemanticHost) {
 		this.manager = new ModelDownloadManager({
@@ -138,6 +145,7 @@ export class SemanticController {
 	}
 
 	async deleteModel(): Promise<DeleteResult> {
+		this.disposeBackends();
 		const result = await this.manager.deleteFiles();
 		await this.setEnabled(false);
 		if (result.failed.length > 0) {
@@ -150,14 +158,53 @@ export class SemanticController {
 
 	/** Re-check after the model directory setting changed. */
 	async onModelDirChanged(): Promise<void> {
+		this.disposeBackends();
 		const state = await this.manager.refresh();
 		if (state.kind !== "installed") {
 			await this.setEnabled(false);
 		}
 	}
 
+	/** Vector configuration for the current settings (index header). */
+	embeddingConfig(): EmbeddingConfig {
+		return currentEmbeddingConfig(this.host.settings.semantic.imageTokenBudget);
+	}
+
+	/**
+	 * A worker backend for `mode`, or null when the model directory is
+	 * invalid. The worker starts on init(); runtime files are re-hashed then.
+	 * Callers dispose it when done; unload disposes the rest.
+	 */
+	createBackend(mode: EmbeddingMode, options: { idleTimeoutMs?: number } = {}): WorkerEmbeddingBackend | null {
+		const dir = this.getModelDir();
+		if (!dir.ok) {
+			return null;
+		}
+		const backend = new WorkerEmbeddingBackend({
+			modelDir: dir.dir,
+			pluginVersion: this.host.manifest.version,
+			idleTimeoutMs: options.idleTimeoutMs,
+			onTerminated: (reason) => {
+				if (reason === "dispose") {
+					this.backends.delete(backend);
+				}
+			},
+		});
+		this.backends.add(backend);
+		return backend;
+	}
+
+	/** Terminate every worker (D13: the next use starts a fresh one). */
+	disposeBackends(): void {
+		for (const backend of this.backends) {
+			void backend.dispose();
+		}
+		this.backends.clear();
+	}
+
 	dispose(): void {
 		this.manager.cancel();
+		this.disposeBackends();
 	}
 }
 

@@ -167,7 +167,7 @@ For MinIO public access, enable anonymous or otherwise publicly accessible objec
 
 ## Semantic image search (optional)
 
-> In development. This version only sets up the model; indexing and searching images by description arrive in a later release.
+> In development. This version sets up the model and can test it (command **Semantic search: run self-test**); indexing and searching images by description arrive in a later release.
 
 Semantic search finds images by describing them in English or Chinese. It is **off by default** and nothing is downloaded until you ask.
 
@@ -190,6 +190,7 @@ Semantic search finds images by describing them in English or Chinese. It is **o
   - If no mirror works for you, use the offline install below.
 - **Offline install:** copy the files into the model directory with the same layout (`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` and `runtime/<plugin version>/...`), then press **Verify** or **Download**: files that pass the hash check are kept and not downloaded again.
 - **Settings:** image detail (70/140/280 image tokens, default 70; changing it later rebuilds the index) and automatic indexing.
+- **Self-test:** after the model is installed, run **Semantic search: run self-test** from the command palette. It loads the model on your GPU, embeds a few test queries, a generated test image and up to two images from your vault (the active image first), and shows load time, latency and a similarity table. Nothing leaves your computer; the model runs offline from the model directory.
 
 ## Network use and privacy
 

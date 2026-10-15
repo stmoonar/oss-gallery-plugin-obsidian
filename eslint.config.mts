@@ -12,6 +12,7 @@ export default defineConfig(
 		".claude",
 		"dist",
 		"esbuild.config.mjs",
+		"vitest.config.mts",
 		"version-bump.mjs",
 		"scripts",
 		"versions.json",

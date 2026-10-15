@@ -31,3 +31,4 @@ jobs:
                       echo "::warning::src/semantic/assets.generated.ts is stale. Run pnpm run build and commit it."
                   fi
             - run: pnpm run lint
+            - run: pnpm test

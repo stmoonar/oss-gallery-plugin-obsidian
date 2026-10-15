@@ -1,6 +1,6 @@
 # 语义搜索（Semantic Search）设计文档
 
-状态：设计已定，P0 spike 完成，P1 已实施（分支 `feat/semantic-search`），P2–P4 待实施。
+状态：设计已定，P0 spike 完成，P1、P2 已实施（分支 `feat/semantic-search`），P3–P4 待实施。
 读者：维护者与后续实施者（人或 AI）。本文是实施依据，标注"已定"的内容不要自行更改。
 P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 `spike/semantic-p0/RESULTS.md`（下文引用为 [P0]）。
 
@@ -120,71 +120,108 @@ export function fingerprint(o: OssImage): string {
 }
 ```
 
-### 4.3 EmbeddingBackend（P2）
+### 4.3 EmbeddingBackend（P2，已实现）
+
+文件：`src/semantic/protocol.ts`（主线程与 worker 共享的类型、常量与纯函数，不 import transformers.js / Obsidian / Node）、`EmbeddingBackend.ts`（接口 + `FakeEmbeddingBackend`）、`WorkerEmbeddingBackend.ts`（主线程宿主）、`runtimeFiles.ts`（启动前校验）、`worker/{entry,handler,engine,fsModelCache}.ts`。
 
 ```ts
+// protocol.ts
 export interface EmbeddingConfig {
-    modelId: string;            // 'onnx-community/embeddinggemma-2-ONNX'
-    revision: string;           // 固定 commit hash，= src/semantic/assets.ts 的 MODEL_REVISION（见 §8.1）
+    modelId: string;            // MODEL_ID
+    revision: string;           // MODEL_REVISION（§8.1）
     dtype: 'q4';
-    dims: 256;                  // 截断后维度
+    dims: number;               // EMBEDDING_DIMS = 256
     imageTokenBudget: 70 | 140 | 280;
-    preprocessVersion: number;  // 自增；改变缩放/裁剪逻辑时 +1
+    preprocessVersion: number;  // PREPROCESS_VERSION = 1；改变解码/缩放逻辑时 +1
 }
+export interface ImageInput { id: string; bytes: ArrayBuffer; mime: string }   // bytes 会被 transfer（调用方的 buffer 变为 detached）
+export type ImageEmbedding =
+    | { id: string; ok: true; vector: Float32Array }
+    | { id: string; ok: false; code: 'decode' | 'inference'; message: string };
 
+// EmbeddingBackend.ts
 export interface EmbeddingBackend {
-    /** mode 'query' 只加载 text；'index' 加载 text+vision。 */
-    init(mode: 'query' | 'index', cfg: EmbeddingConfig): Promise<void>;
+    init(mode: 'query' | 'index', cfg: EmbeddingConfig): Promise<BackendInitInfo>; // {mode, sessions, loadMs, verifyMs}
     embedText(queries: string[]): Promise<Float32Array[]>;          // 内部加前缀、截断、归一化
-    embedImages(images: Blob[]): Promise<Float32Array[]>;           // 批量；返回已截断+归一化向量
+    embedImages(images: ImageInput[]): Promise<ImageEmbedding[]>;   // 逐张成败；顺序与输入一致
     dispose(): Promise<void>;                                       // = terminate worker，不是复用
 }
+export function currentEmbeddingConfig(budget): EmbeddingConfig;    // 当前构建的 header 来源
 ```
 
-实现 `TransformersWorkerBackend`：主线程只做 `postMessage`；worker 内：
+与草图的差异：`embedImages` 输入改为 `{id, bytes, mime}`（P3 从 fs / fetch / File 拿到的本来就是字节），输出为逐张结果：一张坏图（无法解码、推理失败）只让它自己失败，不拖垮整批。`WorkerEmbeddingBackend` 另有 `embedTextDetailed / embedImagesDetailed`（附 worker 耗时与批数）、`ping()`、`recycle()`、`isRunning()`。
+
+**协议**（`protocol.ts`，`PROTOCOL_VERSION = 2`）：`{id, type: 'ping'|'init'|'embedText'|'embedImages', payload}` → `{id, ok: true, result}` 或 `{id, ok: false, error: {code, message}}`。错误码：`bad-request`（含协议版本不符）、`not-initialized`、`already-initialized`、`unsupported`（query worker 收到 embedImages）、`model-load`、`inference`；宿主侧另有 `terminated`、`runtime-verify`、`worker-crashed`。没有 `dispose` 消息（D13：只 terminate）。`init` payload = `{protocol, mode, config, modelDir, files: {name,size}[], wasmBinary: ArrayBuffer(transfer), wasmFactory: string}`。输出向量的 buffer 全部 transfer 回主线程。
+
+**宿主（`WorkerEmbeddingBackend`）**，一个实例 = 一种 mode = 至多一个活 worker：
+
+- 每次启动 worker 前 `loadVerifiedRuntime()`：读取 `runtime/<版本>/` 下 3 个文件，按 `assets.generated.ts` 校验大小 + SHA-256（约 27 MB，实测 50–200 ms），并**直接使用校验过的那份字节**：worker 脚本 → Blob URL（首条消息后 revoke），ORT wasm → `init` 里 transfer，ORT mjs → 字符串。没有"校验后再按路径读取"的窗口。模型文件只做存在 + 大小检查（安装/校验时已算过哈希；worker 读取时再查一次大小）。query 模式不检查也不提供 `onnx/vision_encoder*`。
+- ORT 走 **binary 模式**（P0 §8 方案 b）：`env.useWasmCache = false`、`wasm.wasmBinary = <bytes>`、`wasmPaths = { mjs: <Blob URL> }`，mjs 先做 `globalThis.process?.versions?.node → false` 替换。选它而不是 URL 模式，是因为运行时文件在 vault 之外，没有可靠的 `app://` URL，且这样可保证用的正是校验过的字节。
+- 请求串行（一个 worker 同时只有一个在途请求）；`terminate` 时在途与排队中的请求都以 `terminated` reject（按 epoch 取消）。
+- 空闲超时后 terminate，下次请求透明重启（重新校验 + 重新加载）：`QUERY_IDLE_TIMEOUT_MS = 5 min`、`INDEX_IDLE_TIMEOUT_MS = 30 s`，构造参数 `idleTimeoutMs` 可覆盖（0 = 不超时）。
+- worker `error` 事件 → 在途请求以 `worker-crashed` reject 并回收；`init` 失败 → 回收（`onTerminated('init-failed')`），下次请求重试。
+- `SemanticController.createBackend(mode)` 创建并登记；删除模型、修改 `modelDir`、插件卸载时 `disposeBackends()`。
+
+**worker 内**（`engine.ts`，WebGPU、q4，**纯离线**）：
 
 ```ts
-const config = await AutoConfig.from_pretrained(id);
-config.audio_config = null;                    // 索引与查询都不要 audio
-if (mode === 'query') config.vision_config = null;
-const model = await AutoModel.from_pretrained(id, { config, device: 'webgpu',
-    dtype: { model: 'q4', vision_encoder: 'q4' }, revision });
-processor.image_processor.max_soft_tokens = cfg.imageTokenBudget;
-// 批量：processor(null, imgs.map(i => [i]))   // 平铺列表会被当成一个样本 [P0 §3]
+env.useBrowserCache = false; env.useFSCache = false;
+env.useCustomCache = true; env.customCache = fsModelCache;   // 只读，见下
+env.allowRemoteModels = false;            // 缓存未命中 → 加载失败，不会联网
+env.allowLocalModels = true;              // 两者都 false 时 transformers.js 直接报配置错误
+env.localModelPath = '/__oss-gallery-no-local-models__/';
+env.fetch = () => Promise.reject(...);    // transformers.js 的 fetch
+self.fetch = 仅放行 blob:/data:;           // ORT 等直接用全局 fetch 的代码
+const opts = { revision, local_files_only: true };
+const config = await AutoConfig.from_pretrained(id, opts);
+config.audio_config = null; if (mode === 'query') config.vision_config = null;
+processor = await AutoProcessor.from_pretrained(id, opts);
+model = await AutoModel.from_pretrained(id, { ...opts, config, device: 'webgpu', dtype: { model: 'q4', vision_encoder: 'q4' } });
 ```
 
-环境配置（worker 内，见 [P0 §7、§8]）：
+- `fsModelCache`：只服务宿主列出的文件（`files`），把 `https://huggingface.co/<model>/resolve/<revision>/<file>` 映射到 P1 写入的 `<modelDir>/huggingface.co/...`；不在列表内 → miss；列表内但缺失/大小不符 → 抛错；`put` 不写盘。**`/resolve/main/` 别名**：transformers.js 4.3.1 的 `get_tokenizer_files` / `get_processor_files` 探测 `tokenizer_config.json` / `preprocessor_config.json` 是否存在时**不传 revision**（固定问 `main`），不做别名则 tokenizer 配置被判为不存在，加载报 `reading 'tokenizer_class'`。因本地只有固定 revision 的文件，`main` 键直接映射到它。
+- Node `fs` 通过 `self.require`（Obsidian worker 有 `nodeIntegrationInWorker`，Blob URL worker 也有）取得；按属性读取，esbuild 不会解析或替换它，lint 也无需 `eval`。仍用 `define: { process: 'undefined' }` 打包（D14）。
+- 文本：`processor(queries.map(q => QUERY_PREFIX + q))`，批量一次调用。
+- 图片（`PREPROCESS_VERSION = 1`）：`createImageBitmap(new Blob([bytes], {type: mime}))`；若像素数 > `max(1 MP, budget × 9 × 256 × 4)`（处理器目标像素的 4 倍）则用 `createImageBitmap(..., {resizeWidth, resizeHeight, resizeQuality: 'high'})` 等比缩小；画到白底 `OffscreenCanvas`（透明像素不变黑）→ `new RawImage(rgba, w, h, 4)`。解码失败（如 SVG、损坏文件）→ 该张 `code: 'decode'`。
+- 批量：`processor(null, imgs.map(i => [i]))`；每批张数按 budget 查表 `MAX_BATCH_BY_BUDGET = {70: 8, 140: 4, 280: 1}`（P0：70 token 批 8 有收益；280 token 批量无收益且每批 4 张多占约 900 MB 共享显存；140 未测，取与 8×70 相同的 patch 数）。整批推理失败时逐张重试，只让坏图失败。
+- 输出：`sentence_embedding` 取前 256 维 → L2 归一化 → `Float32Array`（`truncateAndNormalize`）。
+
+**FakeEmbeddingBackend**：确定性向量（文本 FNV-1a → mulberry32 → 归一化），无需 GPU；字节为 UTF-8 `fake-image:<caption>` 的"图片"得到与文本 `<caption>` 完全相同的向量（`fakeImageBytes(caption)`），便于 P3 写"能搜到"的测试；支持 `failImageIds`、`latencyMs`；与真实后端一样校验 mode / init / dispose。
+
+若未来 Obsidian 去掉 `nodeIntegrationInWorker`，退回"主线程代理 fs"方案 [P0 §7]，接口不变（`fsModelCache` 的 `CacheFs` 换成 postMessage 代理）。
+
+### 4.4 VectorStore（P2，已实现）
+
+文件：`src/semantic/VectorStore.ts`。
 
 ```ts
-env.useBrowserCache = false;
-env.useCustomCache = true;
-env.customCache = fsCache;       // match: 读 fs → new Response(buf)；put: 写 .tmp 再 rename
-env.backends.onnx.wasm.wasmPaths = { mjs: <local url>, wasm: <local url> };
-```
+export interface IndexHeader { modelId; revision; dtype; dims; imageTokenBudget; preprocessVersion }
+export function headerFromConfig(cfg: EmbeddingConfig): IndexHeader;
+export function scopeIndexDir(vaultBasePath, manifestDir, scopeId): string;   // <vault>/<manifest.dir>/semantic-index/<scopeId>
 
-- `fsCache` 目录结构镜像 URL（`<modelDir>/huggingface.co/onnx-community/.../onnx/model_q4.onnx_data`），与 P0 一致。
-- 主线程到 worker 的协议：`{id, type:'init'|'embedText'|'embedImages'|'dispose', payload}` → `{id, ok, result|error}`；图片以 `ArrayBuffer` transfer 传入。
-- 若未来 Obsidian 去掉 `nodeIntegrationInWorker`，退回"主线程代理 fs"方案 [P0 §7]，接口不变。
-
-### 4.4 VectorStore（P2）
-
-```ts
-export interface VectorStore {
-    open(scopeId: string, expectedHeader: IndexHeader): Promise<void>; // header 不符 → 清空重建
-    get(key: string): { fp: string; vec: Float32Array; missingSince?: number } | undefined;
-    upsert(key: string, fp: string, vec: Float32Array): void;
-    markMissing(key: string, now: number): void;        // 软删除（tombstone）
-    restore(key: string): void;
-    remove(key: string): void;                          // 立即清除
-    visibleKeys(): Set<string>;                         // 不含 tombstone
-    search(q: Float32Array, k: number, allow: Set<string>): { key: string; score: number }[];
-    flush(): Promise<void>;                             // 原子写 meta
-    compactIfNeeded(): Promise<void>;
+export class VectorStore {
+    static open(dir: string, header: IndexHeader, opts?: { fs?, timers?, flushDelayMs?, onFlushError? }): VectorStore;
+    openResult: { status: 'created' | 'loaded' | 'reset' | 'repaired'; reason?: 'header-mismatch' | 'corrupt-meta'; dropped: number; recoveredTmp: boolean };
+    get(key): { fp; vec; missingSince?; missCount? } | undefined;
+    has(key); keys(); size; stats(); holeRatio();
+    upsert(key, fp, vec): void;               // 新增或重新 embed；清除 tombstone
+    markMissing(key, now): void;              // 首次 missingSince=now, missCount=1；之后 missCount++
+    restore(key): void;
+    remove(key): void;                        // 立即清除
+    clear(): void;
+    visibleKeys(): Set<string>;               // 不含 tombstone
+    search(q, k, allow?: Set<string> | ((key) => boolean)): { key; score }[];  // 降序；不含 tombstone
+    flush(): Promise<void>; flushSync(): void;
+    compactIfNeeded(threshold = 0.3): Promise<boolean>; compactSync(): void;
+    close(): void;                            // flushSync + 停止定时器
 }
 ```
 
-- `search` 为暴力点积（向量已归一化）。1 万张 × 256 维 ≈ 10 MB，主线程可接受；若超 5 万张再移入 worker（见 §10）。
+- `open` 时 header 任一字段不符或 meta 无法解析 → 删除两个文件、返回空库（`reset`），调用方全量重建。
+- 修改后按 `flushDelayMs`（默认 2 s）防抖自动 flush；插件卸载时调用 `close()`（同步写，退出 Obsidian 时也能落盘）。
+- `search` 为暴力点积（向量已归一化）。1 万张 × 256 维 ≈ 10 MB，主线程可接受；若超 5 万张再移入 worker（§11）。
 - `allow` = 当前内存中的远程对象 key 集合（§7.6）。
+- **I/O 选择**：插件为 `isDesktopOnly`，直接用 Node 同步 `fs` 操作 `adapter.getBasePath()` 解析出的绝对路径，而不是 `DataAdapter`：需要定位写（只追加新槽位）、`fsync`、覆盖式 `rename` 与 `ftruncate`，这些 `DataAdapter` 都没有；同步调用保证卸载时 flush 可靠；写入量小（新增槽位 + meta；整文件重写只在 compaction 时发生，1 万张约 10 MB）。也便于在纯 Node 单元测试中注入故障（`StoreFs` 接口）。
 
 ### 4.5 SemanticIndexService（P3）
 
@@ -229,7 +266,7 @@ export class SemanticSearchService {
 
 ## 5. 数据格式
 
-目录：`<vault>/.obsidian/plugins/oss-gallery/semantic-index/<scopeId>/`
+目录：`<vault>/<manifest.dir>/semantic-index/<scopeId>/`（`manifest.dir` 通常为 `.obsidian/plugins/oss-gallery`；`scopeIndexDir()` 只接受 `[A-Za-z0-9_-]{1,64}` 的 scopeId）。
 
 ### meta.json
 
@@ -246,25 +283,36 @@ export class SemanticSearchService {
   },
   "slotCount": 1234,                 // vectors.bin 中已提交的槽位数
   "entries": {
-    "2025/10/a.png": { "fp": "e:\"abc\"", "slot": 17 },
-    "2025/10/b.png": { "fp": "s:48213:1760000000000", "slot": 18,
+    "2025/10/a.png": { "fp": "e:\"abc\"", "slot": 17, "h": 2166136261 },
+    "2025/10/b.png": { "fp": "s:48213:1760000000000", "slot": 18, "h": 84696351,
                         "missingSince": 1760100000000, "missCount": 1 }
   },
-  "freeSlots": [3, 9]                // 空洞（已 remove 的槽位）
+  "freeSlots": [3, 9]                // 空洞（已 remove / 被更新替换的槽位）
 }
 ```
 
+`h` = 该槽位字节的 FNV-1a 32 位校验和（P2 新增）。
+
 ### vectors.bin
 
-- 无头部；第 `i` 个槽位位于字节偏移 `i * 1024`，内容为 256 个 little-endian float32。
-- **只追加**：新向量写在文件末尾（或复用 `freeSlots`）；已存在的槽位不原地改写，更新 = 追加新槽位 + 旧槽位入 `freeSlots`。
-- `meta.json` 是提交点：先 append vectors.bin 并 fsync，再原子写 meta。启动时若文件长度 > `slotCount*1024`，截断多余尾部。
+- 无头部；第 `i` 个槽位位于字节偏移 `i * dims * 4`（256 维即 1024），内容为 little-endian float32（大端平台直接拒绝打开）。
+- **只追加，不复用空洞**：新向量与更新都写到文件末尾，旧槽位入 `freeSlots`，由 compaction 回收。（不复用的原因：在 meta 提交前复用一个"内存中刚释放"的槽位，崩溃后旧 meta 仍指向它，会把新向量错配给旧 key。）
+- `meta.json` 是提交点：flush = 先把未提交槽位写到 `slotCount*B` 处（先 `ftruncate` 掉上次失败留下的尾巴）并 `fsync`，再原子写 meta（`meta.json.tmp` → `fsync` → `rename`）。
+
+### 打开时的恢复（按顺序）
+
+1. **临时文件**：存在 `vectors.bin.tmp` → compaction 在替换 vectors 之前中断，删除两个 tmp（旧状态完好）；仅存在 `meta.json.tmp` → 若它完整可解析、header 一致且 `vectors.bin` 长度恰为 `tmp.slotCount*B`，说明中断发生在"vectors 已替换 / 已追加、meta 未 rename"之间，**前滚**（rename 为 meta.json）；否则删除。
+2. 无 meta → 新库（顺带删除孤立的 vectors.bin）；meta 不可解析或 `format` 不符 → `reset`；header 不符 → `reset`。
+3. 文件长于 `slotCount*B`（未提交的追加）→ 截断；短于（被截断、同步冲突）→ `slotCount` 取文件能容纳的整槽数。
+4. **逐条校验**：槽位越界、重复引用或校验和 `h` 不符的条目被丢弃（`dropped` 计数，P3 将其视为"待重新 embed"），其余照常可用；未被引用的槽位重算为空洞。有任何修复则状态为 `repaired` 并立即写回修复后的 meta。
+
+逐条校验和使"文件较短 / 混入另一设备的版本 / compaction 半途"都只损失受影响的条目，而不是要么静默错配、要么整库重建。
 
 ### 约束
 
-- header 任一字段与当前配置不同 → 整个 scope 作废并重建（含修改 token budget）。
-- **原子写**：写 `meta.json.tmp` 再 `rename`；compaction 写 `vectors.bin.tmp` + `meta.json.tmp`，先 rename vectors 再 rename meta（崩溃后靠 header 校验与长度检查兜底，最坏重建）。
-- **Compaction**：`freeSlots.length / slotCount > 0.3` 时触发，在空闲时执行。
+- header 任一字段与当前配置不同 → 整个 scope 作废并重建（含修改 token budget、`PREPROCESS_VERSION`）。
+- **原子写**：写 `.tmp` → `fsync` → `rename`；compaction 写 `vectors.bin.tmp` + `meta.json.tmp`（均 `fsync`），先 rename vectors 再 rename meta，中断由上面第 1 步回滚或前滚。
+- **Compaction**：`freeSlots.length / slotCount > 0.3` 时 `compactIfNeeded()` 执行（P3 在空闲时调用）；按槽位顺序重排，搜索结果不变。
 - 容量：1 万张 ≈ 10 MB vectors + 约 1–2 MB meta。
 
 ## 6. 向量与查询约定
@@ -397,11 +445,12 @@ limits 下限 = 最大单个权重张量：`model_embed_tokens_weight_quant` [26
 
 - `esbuild.config.mjs` 新增第二个入口：`src/semantic/worker/entry.ts` → `dist/semantic-worker.js`，`bundle: true`、`format: "iife"`、`platform: "browser"`、`define: { process: 'undefined' }`、minify。**不要**把它并入 `main.js`。
 - worker 与 ORT wasm/mjs 作为 GitHub Release 的独立资产上传（并生成 sha256 清单写入源码）；`releaseAssets`（`manifest.json`、`styles.css`、`LICENSE`）不变，`main.js` 不含 transformers.js / onnxruntime（生产构建对此做断言）。
-- P1 实现：worker 还需 `target: es2022`、`legalComments: none`，以及把 `node:*` 导入替换为空模块的插件（同 P0 `build.js`）。onnxruntime-web 是 transformers.js 的传递依赖，构建脚本通过 transformers.js 的 `require.resolve('onnxruntime-web/webgpu')` 定位其 `dist/` 并复制 `ort-wasm-simd-threaded.asyncify.{wasm,mjs}`。`release.yml` 上传并 attest 这三个文件。P1 的 worker 是 stub（只答 `ping`），但已 import 将用到的类，体积（546 KB）与最终版相当。
+- P1 实现：worker 还需 `target: es2022`、`legalComments: none`，以及把 `node:*` 导入替换为空模块的插件（同 P0 `build.js`）。onnxruntime-web 是 transformers.js 的传递依赖，构建脚本通过 transformers.js 的 `require.resolve('onnxruntime-web/webgpu')` 定位其 `dist/` 并复制 `ort-wasm-simd-threaded.asyncify.{wasm,mjs}`。`release.yml` 上传并 attest 这三个文件。P2 起 worker 为完整实现（§4.3），541 KB（minified）。
+- 测试：`vitest`（devDependency，`pnpm test`，用例在 `tests/`，Node 环境），不进入任何 bundle；CI（`lint.yml`）在 lint 后运行。
 - 依赖：`@huggingface/transformers` 精确锁定 `4.3.1`（其依赖 `onnxruntime-web 1.31.0-dev.20260914-8d85527a0`）；`pnpm-workspace.yaml` 将 `onnxruntime-node`、`protobufjs` 列为 `ignoredBuiltDependencies`（Node 端原生包，插件用不到）。
-- 实测 main.js：196,413 → 238,723 字节（+42 KB，全部是 P1 自身代码与三份 locale 字符串，无 transformers.js）。
-- 注意：现有配置 `external` 含 `...builtinModules`，所以主线程使用 `fs`/`path`/`crypto` 无需额外处理；worker 端是 browser 平台，`require('fs')` 通过 `(0, eval)('require')` 取得 [P0 §7]。
-- ORT 的 mjs 需应用与 transformers.js 相同的补丁 `code.replaceAll('globalThis.process?.versions?.node','false')`，仅在走"binary 模式"时需要；默认走 `wasmPaths` URL 模式（由 transformers.js 处理）[P0 §8]。
+- 实测 main.js：196,413 → 238,723 字节（P1，+42 KB）→ 267,523 字节（P2，+29 KB：宿主、VectorStore、自检与 locale），均无 transformers.js。
+- 注意：现有配置 `external` 含 `...builtinModules`，所以主线程使用 `fs`/`path`/`crypto` 无需额外处理；worker 端是 browser 平台，Node 的 `require` 通过 `self.require` 取得（P2 实测在 Blob URL worker 中可用；P0 用的 `(0, eval)('require')` 同样可行，但会触发 lint 的 `no-eval`）[P0 §7]。
+- ORT 的 mjs 需应用与 transformers.js 相同的补丁 `code.replaceAll('globalThis.process?.versions?.node','false')`，仅在走"binary 模式"时需要 [P0 §8]。P2 采用 binary 模式（§4.3），由 worker 在 `engine.ts` 中打补丁。
 
 ### 8.6 下载镜像（P1 已实现）
 
@@ -463,11 +512,11 @@ P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex:
 |---|---|---|
 | P0 | 已完成。Spike：模型、延迟、内存、缓存、Blob worker [P0] | RESULTS.md |
 | P1 | 下载管理器 + 设置页：WebGPU 检测、opt-in 对话框、SHA-256 校验、fs 存储、进度、删除模型；esbuild 第二入口；Release 资产与清单生成 | 断网/中断/篡改文件均能正确失败与恢复；`pnpm run lint` 通过 |
-| P2 | worker 与 `EmbeddingBackend` 接口、`fsCache`、`VectorStore`（格式、原子写、compaction） | 单元测试：崩溃恢复、header 不符重建；本地能嵌入并检索 |
+| P2 | 已完成。worker 与 `EmbeddingBackend` 接口、`fsCache`、`VectorStore`（格式、原子写、compaction）、自检命令、vitest | 单元测试：崩溃恢复、header 不符重建；本地能嵌入并检索（见附录 P2 实测） |
 | P3 | `SemanticIndexService`、对账协议、`listImages` → `ListResult`、`etag`、挂接 `OssGalleryView`/上传/删除 | 模拟截断列表不删向量；删除后立即不可见；过期 token 被丢弃 |
 | P4 | UI：语义开关、"找相似图片"、流量对话框、进度、i18n（en/zh-cn/zh-tw）、README | 手工在 Local 与一个 S3 兼容 provider 上端到端验证 |
 
-本机无 GPU（项目约定）：涉及 WebGPU 的代码先本地做可跑通的部分（下载、存储、VectorStore、协议，可用假 `EmbeddingBackend`），真实推理到有 GPU 的机器上验证。
+涉及 WebGPU 的代码先在本地做可跑通的部分（下载、存储、VectorStore、协议，可用 `FakeEmbeddingBackend`）；真实推理用 Electron 39.6.0 测试工具（Obsidian 同款设置）或在 Obsidian 中运行"语义搜索：运行自检"命令验证（P2 已在 Intel Arc iGPU 上实测）。
 
 ## 11. 风险与未决问题
 
@@ -476,7 +525,7 @@ P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex:
 3. **iGPU 内存压力**：iGPU 共享系统内存；GPU 进程批量时达 2.4 GB（无批量 1.08 GB），渲染进程约 1.1 GB [P0 §5]。低内存机器可能卡顿。缓解：索引结束即回收 worker；可选降低批大小；设置页给出内存提示。
 4. **模型文件布局变化**：`onnx-community` 仓库可能调整文件结构。缓解：URL 固定 revision（commit hash），清单中记录。
 5. **`minAppVersion` 与 WebGPU**：manifest 为 `1.7.2`，P0 只在 Obsidian 1.14.4（Electron 39.6.0）验证。旧版 Electron 的 WebGPU 支持不一致，由 `WebGpuProbe` 兜底；是否提高 `minAppVersion` 待定（默认不提高，探测失败即不可用）。
-6. **插件目录同步冲突**：多设备通过 Obsidian Sync/iCloud 同步 `semantic-index/` 时，`meta.json` 与 `vectors.bin` 可能出现不一致版本。header + 长度校验可兜底为"重建"，但是否需要 per-device 子目录待定。
+6. **插件目录同步冲突**：多设备通过 Obsidian Sync/iCloud 同步 `semantic-index/` 时，`meta.json` 与 `vectors.bin` 可能出现不一致版本。P2 的逐条校验和（§5）保证不一致只会丢弃受影响条目（重新 embed），不会错配；是否需要 per-device 子目录仍待定。
 7. **暴力检索规模**：当前设计在主线程暴力点积，约 5 万张以内可接受；更大规模需移入 worker 或分块。
 8. **跨 vault 共享模型目录**：P1 已加下载锁（§8.2 第 7 条）；删除只删清单与记录中的文件（§8.2 第 5 条），但仍会影响共享该目录的其他 vault（对话框已提示）。删除与另一 vault 的下载之间未加锁。
 9. **`listImages` 返回类型变更**是破坏性内部变更，需一次改完 10 个 provider 并更新相关测试。
@@ -484,6 +533,35 @@ P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex:
 11. **代理 / 镜像**（P1 新发现）：Node `https` 不走系统代理，Hugging Face / GitHub 在部分地区不可直连或很慢。
     - [x] 可配置镜像：`hfEndpoint`（如 hf-mirror.com）与 `githubMirror`（代理前缀），已在 P1 实现（§8.6）。
     - [ ] **未决**：系统代理 / 自定义代理 agent 仍不支持（`https.get` 不读取系统或 Electron 代理设置）。可考虑读取 `session.resolveProxy` 或允许配置 `https://` / SOCKS 代理。
+12. **transformers.js 内部假设**（P2 新发现）：4.3.1 的 `get_tokenizer_files` / `get_processor_files` 忽略 `revision`，固定探测 `resolve/main/`；离线 fs 缓存靠 `main → 固定 revision` 别名绕过（§4.3）。升级 transformers.js 时需重新验证：离线加载、`local_files_only`、`allowLocalModels=true + allowRemoteModels=false` 组合、binary 模式的 `wasmBinary` / Blob mjs。
+13. **`self.require` 依赖 `nodeIntegrationInWorker`**（P2）：worker 读模型文件需要 Node `fs`。若 Obsidian 关闭该选项，`init` 以 `model-load`（"Node integration is not available"）失败，需改为主线程代理 fs（§4.3 末）。
+14. **主线程同步 I/O**（P2）：`VectorStore` 用同步 fs；flush 只写新槽位与 meta（1 万张时 meta 约 1–2 MB，`JSON.stringify` + 写盘约十几 ms），compaction 重写约 10 MB。若 P3 发现卡顿，可把 compaction 挪到 `requestIdleCallback` 或改异步。
+15. **图片解码差异**（P2）：`PREPROCESS_VERSION 1` 用浏览器解码（`createImageBitmap`），不同 Chromium 版本的缩放/色彩管理可能有细微差异，向量不完全可复现但不影响排序；SVG、HEIC 等无法在 worker 中解码的格式返回 `decode` 错误，P3 需决定是否跳过并记录。
+
+## 附录：P2 实测数据
+
+环境同 P0（Intel Core Ultra 5 125H / Intel Arc iGPU，Windows 11）。测试工具：Electron 39.6.0，Obsidian 同款 `webPreferences` 与 `--enable-features=SharedArrayBuffer`，页面在 `app://` 下；直接调用插件源码中的 `WorkerEmbeddingBackend` / `loadVerifiedRuntime`，运行构建产物 `dist/semantic-worker.js`（经 `dev:install` 放入默认 modelDir 的 `runtime/2.1.0/`），模型为默认 modelDir 中经 SHA-256 全量校验的 10 个文件。会话级 `webRequest` 拦截所有 http(s)/ws 请求：整次运行**拦截到 0 个请求**（worker 根本没有尝试联网）。token budget 70，256 维。
+
+| 指标 | 结果 |
+|---|---|
+| 运行时校验（3 文件 SHA-256，27 MB） | 50–205 ms |
+| index worker 冷加载（worker 内 / 宿主总计） | 3.3–4.6 s / 3.8–4.8 s；会话 `[model, vision_encoder]` |
+| query worker 冷加载 | 4.3 s / 4.6 s；会话 `[model]` |
+| 首张图片（含着色器编译） | 5.8 s |
+| 单图 @70 token（含解码，10 张） | 中位 353–376 ms，p90 475–535 ms |
+| 批量 8 @70 token | 282–302 ms/张（1 批）；10 张 → 2 批（8+2） |
+| 批量 vs 单张 | 余弦 1.0000（8/8） |
+| 文本查询（index worker / query worker） | 中位 45 / 63 ms，p90 49–60 / 83 ms；12 条批量 109 ms；批量 vs 单条余弦 1.0 |
+| 输出向量 | `Float32Array`，256 维，范数 0.99999999–1.00000001 |
+| 检索 top-1（P0 的 6 对图文） | 英文 6/6，中文 6/6；正确对相似度 0.75–0.81，最小间隔 英 0.092 / 中 0.075 |
+| 坏图 | 该张 `decode` 错误，同批其他图正常 |
+| 离线失败路径 | 宿主不提供 config.json → `init` 以 `model-load` 失败（"file was not found locally"），无网络请求 |
+| 运行时缺失 | `runtime-verify`，worker 不启动 |
+| recycle 后重启（含重新校验、加载、着色器） | 5.4 s |
+| 峰值私有内存 | 渲染进程 1.18 GB，GPU 进程 1.52 GB（批量 8） |
+| 自检逻辑（`runSelfTest`，合成红圆 + cats + invoice × 3 条查询） | 3/3 对角线最高（0.803 / 0.669 / 0.688） |
+
+与 P0 的差异：单图与批量略慢于 P0（309 / 235 ms），因为计时包含主线程到 worker 的传输、`createImageBitmap` 解码与白底合成；检索结果一致。
 
 ## 附录：P0 实测数据
 

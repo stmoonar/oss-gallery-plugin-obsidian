@@ -25,6 +25,7 @@ import { createUploadId, placeholderPattern } from "./services/uploadPlaceholder
 import { uploadProgressExtension } from "./editor/uploadProgressExtension";
 import { createUploadProgressPostProcessor } from "./editor/uploadProgressPostProcessor";
 import { SemanticController } from "./semantic/SemanticController";
+import { runSemanticSelfTestCommand } from "./semantic/selfTestCommand";
 
 /**
  * Where an upload was started from. The Editor (and MarkdownView) of a leaf is
@@ -174,6 +175,23 @@ export default class OssGalleryPlugin extends Plugin {
 					return;
 				}
 				void this.openGalleryView();
+			},
+		});
+
+		// Real inference check for the semantic search install (P2). Shown
+		// once the feature is enabled or the files are known to be installed.
+		this.addCommand({
+			id: "semantic-self-test",
+			name: t("Semantic search: run self-test"),
+			checkCallback: (checking: boolean) => {
+				const kind = this.semantic.getState().kind;
+				if (kind === "unsupported" || !(this.settings.semantic.enabled || kind === "installed")) {
+					return false;
+				}
+				if (!checking) {
+					void runSemanticSelfTestCommand(this.app, this.semantic);
+				}
+				return true;
 			},
 		});
 	}

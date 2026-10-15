@@ -1,73 +1,39 @@
 /**
- * Semantic search worker (P1 stub).
+ * Semantic search worker (docs/semantic-search.md §4.3).
  *
  * Bundled separately by esbuild.config.mjs into dist/semantic-worker.js
  * (IIFE, browser platform, `process` defined as undefined) and shipped as a
- * GitHub release asset; it is never part of main.js. The plugin downloads it
- * on request, verifies its SHA-256 and starts it from a Blob URL.
+ * GitHub release asset; it is never part of main.js. The host verifies its
+ * SHA-256 and starts it from a Blob URL (WorkerEmbeddingBackend).
  *
- * P1 only answers `ping`. P2 adds init/embedText/embedImages/dispose (see
- * docs/semantic-search.md §4.3). The model classes are imported now so the
- * bundle (and its release hash/size) is already the real one.
+ * Message protocol: src/semantic/protocol.ts. Dispatch: ./handler.ts.
+ * Model runtime: ./engine.ts (WebGPU, q4, offline).
  */
-import {
-	AutoConfig,
-	AutoModel,
-	AutoProcessor,
-	RawImage,
-	env,
-} from "@huggingface/transformers";
-
-/** Bumped whenever the main-thread <-> worker message protocol changes. */
-const PROTOCOL_VERSION = 1;
-
-interface WorkerRequest {
-	id: number;
-	type: string;
-	payload?: unknown;
-}
+import { env } from "@huggingface/transformers";
+import type { WorkerResponse } from "../protocol";
+import { blockNetwork, TransformersEngine } from "./engine";
+import { createWorkerHandler } from "./handler";
 
 interface WorkerScope {
-	postMessage(message: unknown): void;
-	addEventListener(
-		type: "message",
-		listener: (event: MessageEvent<WorkerRequest>) => void
-	): void;
+	fetch: typeof fetch;
+	postMessage(message: WorkerResponse, transfer: Transferable[]): void;
+	addEventListener(type: "message", listener: (event: MessageEvent<unknown>) => void): void;
 }
 
 const scope = self as unknown as WorkerScope;
 
-// Never touch the Chromium Cache API: model files live in the user-chosen
-// model directory and are served through a custom fs cache (P2).
-env.useBrowserCache = false;
-env.useWasmCache = false;
-env.allowLocalModels = false;
+blockNetwork(scope);
 
-function describe(): Record<string, unknown> {
-	const onnx = env.backends.onnx;
-	return {
-		protocol: PROTOCOL_VERSION,
-		transformers: env.version,
-		onnxruntime: onnx.versions?.web ?? null,
+const handler = createWorkerHandler(
+	new TransformersEngine(),
+	{
+		transformersVersion: env.version,
 		webgpu: typeof navigator !== "undefined" && "gpu" in navigator,
-		classes: [AutoConfig, AutoModel, AutoProcessor, RawImage].every(
-			(c) => typeof c === "function"
-		),
-	};
-}
+		now: () => performance.now(),
+	},
+	(message, transfer) => scope.postMessage(message, transfer)
+);
 
 scope.addEventListener("message", (event) => {
-	const request = event.data;
-	if (!request || typeof request.id !== "number") {
-		return;
-	}
-	if (request.type === "ping") {
-		scope.postMessage({ id: request.id, ok: true, result: describe() });
-		return;
-	}
-	scope.postMessage({
-		id: request.id,
-		ok: false,
-		error: `Unsupported request: ${String(request.type)}`,
-	});
+	void handler.handle(event.data);
 });
