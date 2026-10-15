@@ -37,6 +37,7 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 - Delete from the gallery for providers that support deletion
 - Full-screen image preview
 - Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
+- Optional semantic image search (WebGPU, model downloaded on request; see [below](#semantic-image-search-optional))
 
 ![upload](./docs/assets/upload.gif)
 
@@ -65,6 +66,7 @@ Choose an active provider in the plugin settings, then configure:
   - video preview on or off
   - audio preview on or off
   - document preview provider: disabled, Google Docs, or Office Online
+- **Semantic image search**: model download/verify/delete, model directory, image detail, automatic indexing (see [Semantic image search](#semantic-image-search-optional))
 
 ### Provider settings
 
@@ -163,9 +165,35 @@ For MinIO public access, enable anonymous or otherwise publicly accessible objec
 
 ![Settings](./docs/assets/minio-bucket-setting.png)
 
+## Semantic image search (optional)
+
+> In development. This version only sets up the model; indexing and searching images by description arrive in a later release.
+
+Semantic search finds images by describing them in English or Chinese. It is **off by default** and nothing is downloaded until you ask.
+
+- **Requirements:** desktop Obsidian with **WebGPU** and a hardware GPU (integrated graphics are fine). The settings page checks this first and explains why it is unavailable (outdated Obsidian or graphics driver, remote desktop / virtual machine, software-only renderer). There is no CPU fallback.
+- **Download:** about **343 MB**, only after you confirm the file list in **Settings → Semantic image search → Download**:
+  - runtime (about 27 MB): `semantic-worker.js` and the ONNX Runtime WebAssembly files, from this plugin's GitHub release
+  - model (about 316 MB): [EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX) text and vision encoders (q4), from Hugging Face at a pinned revision
+  - every file is checked against a SHA-256 hash built into the plugin before it is used; interrupted downloads resume file by file
+- **Stored outside your vault**, shared by every vault on this computer and never synced:
+  - Windows: `%LOCALAPPDATA%\obsidian-oss-gallery\models`
+  - macOS: `~/Library/Application Support/obsidian-oss-gallery/models`
+  - Linux: `$XDG_CACHE_HOME/obsidian-oss-gallery/models` (default `~/.cache/...`)
+  - change it with **Model directory** (absolute path)
+- **Delete:** **Delete model** removes only the files the plugin downloaded (and directories left empty), not other files in the directory. It affects every vault that uses the same directory.
+- **Download sources (optional):** downloads go through Node's HTTPS client, which does **not** use the system proxy. If Hugging Face or GitHub is blocked or slow where you are (for example in mainland China), set them under **Settings → Semantic image search → Download sources**:
+  - **Hugging Face endpoint** replaces `https://huggingface.co` for the model files. The mirror must serve the same `/<repo>/resolve/<revision>/<file>` paths, for example `https://hf-mirror.com`.
+  - **GitHub mirror** is a proxy prefix for the runtime files; the full GitHub URL is appended after it: `https://gh-proxy.com` requests `https://gh-proxy.com/https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases/download/<version>/<file>`.
+  - Only `https://` addresses are accepted (trailing slashes are removed). Leave empty for the official sites.
+  - Mirrors cannot change what gets installed: every file must still match the SHA-256 hash built into the plugin, and the download dialog shows the hosts actually contacted. Changing a mirror does not affect files already installed.
+  - If no mirror works for you, use the offline install below.
+- **Offline install:** copy the files into the model directory with the same layout (`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` and `runtime/<plugin version>/...`), then press **Verify** or **Download**: files that pass the hash check are kept and not downloaded again.
+- **Settings:** image detail (70/140/280 image tokens, default 70; changing it later rebuilds the index) and automatic indexing.
+
 ## Network use and privacy
 
-This plugin makes network requests only to the storage service you configure. It has no telemetry, analytics, or ads, and sends nothing to the plugin author.
+This plugin makes network requests only to the storage service you configure, plus GitHub and Hugging Face (or the mirrors you set) if you choose to download the semantic search model. It has no telemetry, analytics, or ads, and sends nothing to the plugin author.
 
 - **Files are sent to the service you choose.** Uploading, listing, and deleting contact the active provider's endpoint:
   - S3 (Generic) / MinIO: the endpoint you enter (for MinIO, `http://` or `https://` as configured)
@@ -181,5 +209,6 @@ This plugin makes network requests only to the storage service you configure. It
 - **Document preview.** If you set the document preview option to Google Docs or Office Online, the public URL of the document is sent to `docs.google.com/viewer` or `view.officeapps.live.com` so they can render it. Keep it Disabled to avoid this.
 - **Accounts and cost.** Every provider except Local needs an account (or self-hosted server) of your own. Some services are paid; check each provider's pricing.
 - **Local files outside the vault.** The Local provider can use an absolute storage path. In that mode it reads, writes, and (optionally) moves to the system trash files outside your vault, because the gallery needs to list and manage the directory you chose. It only touches that directory.
+- **Semantic search model (opt-in).** Only after you confirm the download dialog, the plugin downloads files from `github.com` (this plugin's releases, served from `release-assets.githubusercontent.com`) and `huggingface.co` (served from its CDN), or from the mirrors you set under **Download sources**, and writes them to the model directory outside your vault. No images or queries are sent anywhere; the model runs locally on your GPU.
 - **Credentials are stored in plain text.** Access keys, tokens, and secrets are saved in the plugin's `data.json` under your vault's `.obsidian/plugins/` folder. If you sync or commit your vault (Git, cloud drives), exclude that file or use least-privilege keys.
 - **No telemetry.** The plugin does not collect usage data or crash reports.

@@ -24,6 +24,10 @@ jobs:
                   node-version: 24.x
                   cache: "pnpm"
             - run: pnpm install --frozen-lockfile
+            # Also builds the semantic search runtime (dist/semantic-worker.js +
+            # ONNX Runtime wasm/mjs) and regenerates their SHA-256 manifest
+            # (src/semantic/assets.generated.ts) before main.js is bundled, so
+            # the hashes in main.js always match the assets attached below.
             - run: pnpm run build
             - name: Verify tag matches manifest version
               run: |
@@ -32,6 +36,11 @@ jobs:
                       echo "Tag $GITHUB_REF_NAME does not match manifest.json version $MANIFEST_VERSION"
                       exit 1
                   fi
+            - name: Check committed runtime manifest
+              run: |
+                  if ! git diff --exit-code -- src/semantic/assets.generated.ts; then
+                      echo "::warning::src/semantic/assets.generated.ts differs from this build. The release is consistent (main.js uses the regenerated hashes), but commit the regenerated file so the source matches the release."
+                  fi
             - name: Attest build provenance
               uses: actions/attest-build-provenance@v4
               with:
@@ -39,9 +48,16 @@ jobs:
                       dist/main.js
                       dist/styles.css
                       dist/manifest.json
+                      dist/semantic-worker.js
+                      dist/ort-wasm-simd-threaded.asyncify.wasm
+                      dist/ort-wasm-simd-threaded.asyncify.mjs
             - name: Create GitHub release
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TAG: ${{ github.ref_name }}
               run: |
-                  gh release create "$TAG" dist/main.js dist/manifest.json dist/styles.css --title "$TAG" --generate-notes
+                  gh release create "$TAG" dist/main.js dist/manifest.json dist/styles.css \
+                      dist/semantic-worker.js \
+                      dist/ort-wasm-simd-threaded.asyncify.wasm \
+                      dist/ort-wasm-simd-threaded.asyncify.mjs \
+                      --title "$TAG" --generate-notes

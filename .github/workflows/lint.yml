@@ -25,4 +25,9 @@ jobs:
                   cache: "pnpm"
             - run: pnpm install --frozen-lockfile
             - run: pnpm run build
+            - name: Check committed runtime manifest
+              run: |
+                  if ! git diff --exit-code -- src/semantic/assets.generated.ts; then
+                      echo "::warning::src/semantic/assets.generated.ts is stale. Run pnpm run build and commit it."
+                  fi
             - run: pnpm run lint

@@ -740,3 +740,39 @@ If your plugin does not need CSS, delete this file.
 .oss-gallery-upload-widget.oss-gallery-is-failed .oss-gallery-upload-bar {
     background-color: var(--text-error);
 }
+
+/* Semantic search download / delete dialogs */
+.oss-gallery-semantic-files {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1em;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-files th,
+.oss-gallery-semantic-files td {
+    padding: var(--oss-gallery-spacing-xs) var(--oss-gallery-spacing-sm);
+    border-bottom: 1px solid var(--background-modifier-border);
+    text-align: left;
+}
+
+.oss-gallery-semantic-files td:nth-child(2) {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-modal code {
+    word-break: break-all;
+}
+
+.oss-gallery-semantic-warning {
+    padding: var(--oss-gallery-spacing-sm) var(--oss-gallery-spacing-md);
+    border-left: 3px solid var(--text-warning);
+    background-color: var(--background-secondary);
+    border-radius: var(--oss-gallery-border-radius);
+}
+
+.oss-gallery-setting-error {
+    margin-top: var(--oss-gallery-spacing-xs);
+    color: var(--text-error);
+}

@@ -1,2 +1,7 @@
 onlyBuiltDependencies:
   - esbuild
+# Transitive deps of @huggingface/transformers that only matter on Node;
+# the plugin bundles the browser build, so skip their install scripts.
+ignoredBuiltDependencies:
+  - onnxruntime-node
+  - protobufjs

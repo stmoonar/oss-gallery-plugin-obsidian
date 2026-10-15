@@ -24,6 +24,7 @@ import { UploadProgressStore } from "./services/UploadProgressStore";
 import { createUploadId, placeholderPattern } from "./services/uploadPlaceholder";
 import { uploadProgressExtension } from "./editor/uploadProgressExtension";
 import { createUploadProgressPostProcessor } from "./editor/uploadProgressPostProcessor";
+import { SemanticController } from "./semantic/SemanticController";
 
 /**
  * Where an upload was started from. The Editor (and MarkdownView) of a leaf is
@@ -46,6 +47,8 @@ interface PendingUpload {
 export default class OssGalleryPlugin extends Plugin {
 	settings: PluginSettings;
 	providerManager: OssProviderManager;
+	/** Semantic image search install state (downloads outlive the settings tab). */
+	semantic: SemanticController;
 	private uploadCounter = 0;
 	/** Upload progress shown in editors/reading view; never written to notes. */
 	private readonly uploadProgress = new UploadProgressStore();
@@ -83,14 +86,23 @@ export default class OssGalleryPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.providerManager = new OssProviderManager(this.settings, this.app);
+		this.semantic = new SemanticController(this);
 
-		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager));
+		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager, this.semantic));
 		this.addCommands();
 
 		this.initializeServices();
 		this.registerEvents();
 		this.registerUploadProgressRendering();
 		this.setupView();
+
+		// Startup check for users who opted in: presence + size only, no
+		// rehash and no automatic re-download (needs-repair shows in settings).
+		if (this.settings.semantic.enabled) {
+			this.app.workspace.onLayoutReady(() => {
+				void this.semantic.refresh();
+			});
+		}
 	}
 
 	/**
@@ -585,6 +597,8 @@ export default class OssGalleryPlugin extends Plugin {
 		// pending gallery refresh.
 		this.requestSaveData.run();
 		this.requestGalleryRefresh.cancel();
+		// Stop a running model download; finished files are kept.
+		this.semantic?.dispose();
 		// Drop progress entries and revoke thumbnail object URLs.
 		this.uploadProgress.clear();
 	}

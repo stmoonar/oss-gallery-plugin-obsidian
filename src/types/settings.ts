@@ -103,6 +103,29 @@ export interface ProviderSettingsMap {
 export type ProviderName = keyof ProviderSettingsMap;
 export type NameRule = 'local' | 'time' | 'timeAndLocal';
 export type PathRule = 'root' | 'type' | 'date' | 'typeAndDate';
+export type ImageTokenBudget = 70 | 140 | 280;
+export const IMAGE_TOKEN_BUDGETS: readonly ImageTokenBudget[] = [70, 140, 280];
+
+/** Semantic image search (docs/semantic-search.md §9.3). Global, not per provider. */
+export interface SemanticSettings {
+    /** True only after the runtime and model were downloaded and verified. */
+    enabled: boolean;
+    /** Directory for runtime + model files; '' = platform default (outside the vault). */
+    modelDir: string;
+    /** Image tokens per picture; changing it rebuilds every index. */
+    imageTokenBudget: ImageTokenBudget;
+    autoIndex: boolean;
+    /**
+     * Base URL replacing `https://huggingface.co` for model downloads
+     * (e.g. `https://hf-mirror.com`); '' = official. Normalized https URL.
+     */
+    hfEndpoint: string;
+    /**
+     * Prefix put before the full GitHub release URL
+     * (`<prefix>/https://github.com/...`); '' = official. Normalized https URL.
+     */
+    githubMirror: string;
+}
 
 export interface PluginSettings {
     activeProvider: ProviderName;
@@ -116,6 +139,7 @@ export interface PluginSettings {
     nameRule: NameRule;
     pathRule: PathRule;
     embedFormat: string;
+    semantic: SemanticSettings;
 }
 
 export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
@@ -206,6 +230,15 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     deleteToTrash: true,
 };
 
+export const DEFAULT_SEMANTIC_SETTINGS: SemanticSettings = {
+    enabled: false,
+    modelDir: '',
+    imageTokenBudget: 70,
+    autoIndex: false,
+    hfEndpoint: '',
+    githubMirror: '',
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
     activeProvider: 'smms',
     providers: {
@@ -231,4 +264,5 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     nameRule: 'timeAndLocal',
     pathRule: 'root',
     embedFormat: '![]($URL)',
+    semantic: DEFAULT_SEMANTIC_SETTINGS,
 };

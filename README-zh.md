@@ -37,6 +37,7 @@
 - 对支持删除的 provider 可直接在图库中删除
 - 支持图片全屏预览
 - 图库包含懒加载、分批渲染、回到顶部和后台刷新
+- 可选的语义图片搜索（需要 WebGPU，模型按需下载，见[下文](#语义图片搜索可选)）
 
 ![upload](./docs/assets/upload.gif)
 
@@ -65,6 +66,7 @@
   - 视频预览开关
   - 音频预览开关
   - 文档预览服务：禁用、Google Docs、Office Online
+- **语义图片搜索**：模型下载 / 校验 / 删除、模型目录、图片精度、自动建立索引（见[语义图片搜索](#语义图片搜索可选)）
 
 ### Provider 设置
 
@@ -163,9 +165,35 @@
 
 ![Settings](./docs/assets/minio-bucket-setting.png)
 
+## 语义图片搜索（可选）
+
+> 开发中。当前版本只负责安装模型；建立索引与按描述搜图将在后续版本提供。
+
+语义搜索可以用中文或英文描述来查找图片。**默认关闭**，在你确认之前不会下载任何文件。
+
+- **要求：** 桌面版 Obsidian，支持 **WebGPU** 且有硬件 GPU（核显即可）。设置页会先检测，并说明不可用的原因（Obsidian 或显卡驱动过旧、远程桌面 / 虚拟机、只有软件渲染器）。没有 CPU 回退。
+- **下载：** 约 **343 MB**，只有在 **设置 → 语义图片搜索 → 下载** 中确认文件清单后才开始：
+  - 运行时（约 27 MB）：`semantic-worker.js` 与 ONNX Runtime WebAssembly 文件，来自本插件的 GitHub Release
+  - 模型（约 316 MB）：[EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX) 文本与视觉编码器（q4），来自 Hugging Face 的固定版本
+  - 每个文件使用前都会用插件内置的 SHA-256 校验；下载中断后按文件续传
+- **存放在仓库之外**，本机所有仓库共用，不会被同步：
+  - Windows：`%LOCALAPPDATA%\obsidian-oss-gallery\models`
+  - macOS：`~/Library/Application Support/obsidian-oss-gallery/models`
+  - Linux：`$XDG_CACHE_HOME/obsidian-oss-gallery/models`（默认 `~/.cache/...`）
+  - 可在 **模型目录** 中修改（绝对路径）
+- **删除：** **删除模型** 只删除插件下载的文件（以及因此变空的目录），不会动目录中的其他文件。使用同一目录的所有仓库都会受影响。
+- **下载源（可选）：** 下载使用 Node 的 HTTPS 客户端，**不会**走系统代理。如果你所在地区无法访问或访问 Hugging Face / GitHub 较慢（例如中国大陆），可在 **设置 → 语义图片搜索 → 下载源** 中设置：
+  - **Hugging Face 端点**：替换模型文件的 `https://huggingface.co`。镜像需提供相同的 `/<repo>/resolve/<revision>/<file>` 路径，例如 `https://hf-mirror.com`。
+  - **GitHub 镜像**：运行时文件的代理前缀，完整的 GitHub 地址会拼接在其后：填写 `https://gh-proxy.com` 时实际请求 `https://gh-proxy.com/https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases/download/<版本>/<文件>`。
+  - 只接受 `https://` 地址（末尾的 `/` 会被去掉）。留空使用官方站点。
+  - 镜像无法改变安装的内容：每个文件仍必须与插件内置的 SHA-256 一致，下载对话框会显示实际连接的主机。修改镜像不影响已安装的文件。
+  - 如果没有可用的镜像，可以使用下面的离线安装。
+- **离线安装：** 按相同结构把文件复制到模型目录（`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` 与 `runtime/<插件版本>/...`），然后点 **校验** 或 **下载**：通过哈希校验的文件会被保留，不会重新下载。
+- **设置项：** 图片精度（70/140/280 个图像 token，默认 70；之后修改会重建索引）与自动建立索引。
+
 ## 网络使用与隐私
 
-本插件只会向你配置的存储服务发起网络请求，不含遥测、统计或广告，也不会向插件作者发送任何数据。
+本插件只会向你配置的存储服务发起网络请求（若你选择下载语义搜索模型，另会访问 GitHub 与 Hugging Face，或你设置的镜像），不含遥测、统计或广告，也不会向插件作者发送任何数据。
 
 - **文件会发送到你选择的服务。** 上传、列表、删除会访问当前 Provider 的端点：
   - S3（通用） / MinIO：你填写的 Endpoint（MinIO 按配置使用 `http://` 或 `https://`）
@@ -181,5 +209,6 @@
 - **文档预览。** 若将文档预览服务设为 Google Docs 或 Office Online，文档的公网 URL 会被发送到 `docs.google.com/viewer` 或 `view.officeapps.live.com` 以便渲染。保持“禁用”即可避免。
 - **账号与费用。** 除本地存储外，每个 Provider 都需要你自己的账号（或自建服务）。部分服务是收费的，请查看各服务的定价。
 - **仓库之外的本地文件。** 本地存储支持绝对路径。该模式下插件会读取、写入并（可选）把文件移入系统回收站，这些文件位于仓库之外，因为画廊需要列出并管理你指定的目录。插件只操作该目录。
+- **语义搜索模型（需主动开启）。** 只有在你确认下载对话框后，插件才会从 `github.com`（本插件的 Release，由 `release-assets.githubusercontent.com` 提供）和 `huggingface.co`（由其 CDN 提供）下载文件（若在 **下载源** 中设置了镜像，则从镜像下载），并写入仓库之外的模型目录。图片和搜索词不会被发送到任何地方；模型在你的 GPU 上本地运行。
 - **凭据以明文保存。** Access Key、Token、Secret 会明文保存在仓库 `.obsidian/plugins/` 下插件的 `data.json` 中。如果你同步或提交仓库（Git、网盘），请排除该文件，或使用最小权限的密钥。
 - **无遥测。** 插件不收集使用数据或崩溃报告。

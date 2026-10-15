@@ -3,6 +3,8 @@ import { PluginSettings, ProviderName, NameRule, PathRule } from '../types/setti
 import { t } from '../i18n';
 import { OssProviderManager } from '../providers/OssProviderManager';
 import { providerRegistry } from '../providers/registry';
+import { SemanticController } from '../semantic/SemanticController';
+import { SemanticSettingsSection } from './SemanticSettingsSection';
 
 /**
  * The host plugin as seen by the settings tab. Declared as an interface that
@@ -17,15 +19,23 @@ interface SettingsHost extends Plugin {
 export class SettingsManager extends PluginSettingTab {
     plugin: SettingsHost;
     private providerManager: OssProviderManager;
+    private semanticSection: SemanticSettingsSection;
 
     constructor(
         app: App,
         plugin: SettingsHost,
-        providerManager: OssProviderManager
+        providerManager: OssProviderManager,
+        semantic: SemanticController
     ) {
         super(app, plugin);
         this.plugin = plugin;
         this.providerManager = providerManager;
+        this.semanticSection = new SemanticSettingsSection(app, plugin, semantic);
+    }
+
+    hide(): void {
+        // Stop repainting download progress; the download itself continues.
+        this.semanticSection.dispose();
     }
 
     display(): void {
@@ -70,6 +80,9 @@ export class SettingsManager extends PluginSettingTab {
 
         // Preview Settings
         this.createPreviewSettings(containerEl);
+
+        // Semantic search (optional, downloads on request)
+        this.semanticSection.render(containerEl);
     }
 
     /**
