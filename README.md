@@ -37,6 +37,7 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 - Delete from the gallery for providers that support deletion
 - Full-screen image preview
 - Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
+- Local gallery thumbnails: each image is downloaded once, then shown from a small thumbnail kept on this device (size-capped, works without semantic search)
 - Optional on-device semantic image search: find images by description or by similarity (WebGPU, model downloaded on request; see [below](#semantic-image-search-optional))
 
 ![upload](./docs/assets/upload.gif)
@@ -66,6 +67,11 @@ Choose an active provider in the plugin settings, then configure:
   - video preview on or off
   - audio preview on or off
   - document preview provider: disabled, Google Docs, or Office Online
+- **Gallery thumbnails** (on by default, independent of semantic search)
+  - The first time a gallery tile is shown, the original is downloaded once (Obsidian's request API; Local reads the file from disk), shown, and a small copy (longest side 320 px, WebP) is saved on this device, outside the vault: Windows `%LOCALAPPDATA%\obsidian-oss-gallery\thumbs`, macOS `~/Library/Application Support/obsidian-oss-gallery/thumbs`, Linux `~/.cache/obsidian-oss-gallery/thumbs`. Later views show the thumbnail without downloading. Semantic indexing saves thumbnails too.
+  - Preview, **Copy URL** and embeds always use the original. Animated GIFs and SVGs load the original as before; TIFF tiles show a thumbnail only if indexing made one.
+  - **Thumbnail cache size** (default 500 MB per vault on this device): above it, the least recently viewed thumbnails are deleted.
+  - **Clear thumbnails** deletes only thumbnail files; the semantic index and the model are not touched (and their actions never touch thumbnails). Turn thumbnails off to load originals exactly as before.
 - **Semantic image search**: model download/verify/delete, model directory, index directory, image detail, automatic indexing, index status and clearing (see [Semantic image search](#semantic-image-search-optional))
 
 ### Provider settings
@@ -196,6 +202,7 @@ Semantic search finds images by describing them in English or Chinese, and finds
   - Images are downloaded with Obsidian's own request API (no bucket CORS rules needed, uses the system proxy) from the same URL the gallery shows. For **private** S3 / R2 / MinIO buckets a signed request is used when the public URL is refused. Images that still can't be read (for example a private Aliyun/Tencent/Qiniu bucket) are listed as *failed* with "access denied: check the bucket permissions".
   - Images uploaded through the plugin are indexed from the file in hand (no download); images deleted in the gallery leave the index right away; images deleted elsewhere are hidden from results at the next full listing and removed after the second.
   - **Index files** are stored per device, outside your vault, and never synced (each device builds its own index): Windows `%LOCALAPPDATA%\obsidian-oss-gallery\indexes`, macOS `~/Library/Application Support/obsidian-oss-gallery/indexes`, Linux `~/.cache/obsidian-oss-gallery/indexes`. Change it with **Index directory**; **Clear index for this vault** deletes only this vault's index files. Deleting the model does not touch indexes, and the reverse.
+  - **Thumbnails:** while an image is indexed, its [gallery thumbnail](#global-settings) is saved as a by-product (no extra download; TIFF tiles get a real thumbnail this way). **Clear index for this vault** keeps thumbnails, **Clear thumbnails** keeps the index.
 - **Image formats:** JPEG, PNG, WebP, GIF (first frame), BMP, ICO and AVIF are read directly (the gallery lists `.avif` files too). **SVG** is rasterized (scripts and external references are never loaded) and **TIFF** is decoded with the bundled [UTIF.js](https://github.com/photopea/UTIF.js) (MIT); both are listed as *converted*. HEIC/HEIF, PSD, camera RAW and unreadable files are *unsupported* and skipped.
 - **Search:** the ✨ toggle next to the search box switches it to semantic mode (it is disabled, with the reason in its tooltip, until the model is installed and the provider has an index; the regex toggle is off in this mode). Type a description and press **Enter**: all images are sorted by similarity, best first, with a small score on each tile. The first search loads the search model (about 1.5 s). **Esc**, the clear button or **×** returns to all images. There is no cut-off: scores only rank results.
 - **Find similar images:** right-click an image (or use the hover button) → **Find similar images**. The gallery shows the images closest to it under "Similar to *name* ×".
@@ -221,6 +228,7 @@ This plugin makes network requests only to the storage service you configure, pl
 - **Document preview.** If you set the document preview option to Google Docs or Office Online, the public URL of the document is sent to `docs.google.com/viewer` or `view.officeapps.live.com` so they can render it. Keep it Disabled to avoid this.
 - **Accounts and cost.** Every provider except Local needs an account (or self-hosted server) of your own. Some services are paid; check each provider's pricing.
 - **Local files outside the vault.** The Local provider can use an absolute storage path. In that mode it reads, writes, and (optionally) moves to the system trash files outside your vault, because the gallery needs to list and manage the directory you chose. It only touches that directory.
+- **Gallery thumbnails.** Gallery tiles download each image from your storage service once (as before, but through Obsidian's request API) and keep a small thumbnail per device outside the vault, so later views need no download. Turn it off under **Gallery thumbnails** to load images directly again.
 - **Semantic image index (opt-in).** Indexing a remote provider downloads its images from that same storage service, only after you confirm the size estimate. Images are analyzed locally; nothing is uploaded.
 - **Semantic search model (opt-in).** Only after you confirm the download dialog, the plugin downloads files from `github.com` (this plugin's releases, served from `release-assets.githubusercontent.com`) and `huggingface.co` (served from its CDN), or from the mirrors you set under **Download sources**, and writes them to the model directory outside your vault. No images or queries are sent anywhere; the model runs locally on your GPU.
 - **Credentials are stored in plain text.** Access keys, tokens, and secrets are saved in the plugin's `data.json` under your vault's `.obsidian/plugins/` folder. If you sync or commit your vault (Git, cloud drives), exclude that file or use least-privilege keys.

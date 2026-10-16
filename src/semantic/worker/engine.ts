@@ -5,7 +5,8 @@
  * fetch is blocked for anything but blob:/data: URLs.
  */
 import { AutoConfig, AutoModel, AutoProcessor, RawImage, env } from "@huggingface/transformers";
-import { decodePixelCap, decodeSize, InitPayload } from "../protocol";
+import { decodePixelCap, decodeSize, EncodedThumbnail, InitPayload, ThumbnailRequest } from "../protocol";
+import { encodeThumbnail } from "../../thumbnails/encode";
 import { createFsModelCache, FsModelCache } from "./fsModelCache";
 import { detectImageFormat, isNativeFormat, nativeImageProblem } from "../imageFormat";
 import { decodeTiff } from "./tiff";
@@ -88,6 +89,24 @@ export function blockNetwork(scope: { fetch: typeof fetch }): void {
 function toRaw(tensor: TensorLike): RawEmbeddings {
 	const [rows, dims] = tensor.dims;
 	return { data: tensor.data, rows, dims };
+}
+
+/** Embedding input: the bitmap on white (PREPROCESS_VERSION 1). */
+function toRawImage(bitmap: ImageBitmap): RawImage {
+	const { width, height } = bitmap;
+	const canvas = new OffscreenCanvas(width, height);
+	const ctx = canvas.getContext("2d");
+	if (!ctx) {
+		throw new Error("2D canvas is not available");
+	}
+	ctx.fillStyle = "#ffffff";
+	ctx.fillRect(0, 0, width, height);
+	ctx.drawImage(bitmap, 0, 0);
+	const pixels = ctx.getImageData(0, 0, width, height).data;
+	// getImageData copied the pixels: free the backing store now.
+	canvas.width = 0;
+	canvas.height = 0;
+	return new RawImage(pixels, width, height, 4);
 }
 
 export class TransformersEngine implements Engine<RawImage> {
@@ -188,6 +207,42 @@ export class TransformersEngine implements Engine<RawImage> {
 	 * also done by prepareImage on the main thread) before decoding.
 	 */
 	async decodeImage(bytes: ArrayBuffer, mime: string, budget: number): Promise<RawImage> {
+		const bitmap = await this.decodeBitmap(bytes, mime, budget);
+		try {
+			return toRawImage(bitmap);
+		} finally {
+			bitmap.close();
+		}
+	}
+
+	/**
+	 * decodeImage plus a gallery thumbnail encoded from the same bitmap,
+	 * after the embedding pixels were read (the RawImage is identical to
+	 * decodeImage's). A thumbnail failure only yields null.
+	 */
+	async decodeImageWithThumbnail(
+		bytes: ArrayBuffer,
+		mime: string,
+		budget: number,
+		request: ThumbnailRequest
+	): Promise<{ image: RawImage; thumbnail: EncodedThumbnail | null }> {
+		const bitmap = await this.decodeBitmap(bytes, mime, budget);
+		try {
+			const image = toRawImage(bitmap);
+			let thumbnail: EncodedThumbnail | null = null;
+			try {
+				thumbnail = await encodeThumbnail(bitmap, request);
+			} catch {
+				thumbnail = null;
+			}
+			return { image, thumbnail };
+		} finally {
+			bitmap.close();
+		}
+	}
+
+	/** The decoded (and, above decodePixelCap, downscaled) bitmap. The caller closes it. */
+	private async decodeBitmap(bytes: ArrayBuffer, mime: string, budget: number): Promise<ImageBitmap> {
 		let bitmap: ImageBitmap;
 		if (mime === "image/tiff") {
 			// No TIFF decoder in Chromium: UTIF.js -> RGBA -> bitmap, then the
@@ -216,19 +271,10 @@ export class TransformersEngine implements Engine<RawImage> {
 				bitmap.close();
 				bitmap = resized;
 			}
-			const { width, height } = bitmap;
-			const canvas = new OffscreenCanvas(width, height);
-			const ctx = canvas.getContext("2d");
-			if (!ctx) {
-				throw new Error("2D canvas is not available");
-			}
-			ctx.fillStyle = "#ffffff";
-			ctx.fillRect(0, 0, width, height);
-			ctx.drawImage(bitmap, 0, 0);
-			const pixels = ctx.getImageData(0, 0, width, height).data;
-			return new RawImage(pixels, width, height, 4);
-		} finally {
+			return bitmap;
+		} catch (error) {
 			bitmap.close();
+			throw error;
 		}
 	}
 

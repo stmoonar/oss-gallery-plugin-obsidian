@@ -6,16 +6,20 @@
  */
 import {
 	EmbeddingMode,
+	EncodedThumbnail,
 	EmbedImagesResult,
 	EmbedTextResult,
 	ImageEmbedding,
 	InitPayload,
 	InitResult,
+	isEncodedThumbnail,
+	isThumbnailRequest,
 	maxBatchFor,
 	PingResult,
 	planBatches,
 	PROTOCOL_VERSION,
 	QUERY_PREFIX,
+	ThumbnailRequest,
 	truncateAndNormalize,
 	WorkerErrorCode,
 	WorkerRequest,
@@ -39,6 +43,18 @@ export interface Engine<Image = unknown> {
 	load(payload: InitPayload): Promise<EngineLoadResult>;
 	embedText(texts: string[]): Promise<RawEmbeddings>;
 	decodeImage(bytes: ArrayBuffer, mime: string, budget: number): Promise<Image>;
+	/**
+	 * Optional: decodeImage plus a gallery thumbnail made from the same
+	 * decoded pixels. The image must be exactly what decodeImage returns
+	 * (thumbnails never change embeddings); `thumbnail` is null when it
+	 * could not be made. Engines without it simply return no thumbnails.
+	 */
+	decodeImageWithThumbnail?(
+		bytes: ArrayBuffer,
+		mime: string,
+		budget: number,
+		thumbnail: ThumbnailRequest
+	): Promise<{ image: Image; thumbnail: EncodedThumbnail | null }>;
 	/** One sample per image (`processor(null, imgs.map(i => [i]))`). */
 	embedImages(images: Image[], budget: number): Promise<RawEmbeddings>;
 }
@@ -77,6 +93,11 @@ function rowsOf(raw: RawEmbeddings, expectedRows: number, dims: number): Float32
 		out.push(truncateAndNormalize(row, dims));
 	}
 	return out;
+}
+
+/** A successful result; the thumbnail rides along only with a vector. */
+function okResult(id: string, vector: Float32Array, thumbnail: EncodedThumbnail | null): ImageEmbedding {
+	return thumbnail ? { id, ok: true, vector, thumbnail } : { id, ok: true, vector };
 }
 
 export function createWorkerHandler<Image>(engine: Engine<Image>, info: HandlerInfo, post: Post) {
@@ -165,16 +186,22 @@ export function createWorkerHandler<Image>(engine: Engine<Image>, info: HandlerI
 			code: "decode",
 			message: "Not processed",
 		}));
-		const decoded: Array<{ index: number; image: Image }> = [];
+		const decoded: Array<{ index: number; image: Image; thumbnail: EncodedThumbnail | null }> = [];
 		for (let i = 0; i < images.length; i++) {
-			const item = images[i] as { bytes?: unknown; mime?: unknown };
+			const item = images[i] as { bytes?: unknown; mime?: unknown; thumbnail?: unknown };
 			if (!(item?.bytes instanceof ArrayBuffer)) {
 				results[i] = { id: results[i].id, ok: false, code: "decode", message: "bytes must be an ArrayBuffer" };
 				continue;
 			}
+			const mime = typeof item.mime === "string" ? item.mime : "";
 			try {
-				const image = await engine.decodeImage(item.bytes, typeof item.mime === "string" ? item.mime : "", budget);
-				decoded.push({ index: i, image });
+				if (isThumbnailRequest(item.thumbnail) && engine.decodeImageWithThumbnail) {
+					const out = await engine.decodeImageWithThumbnail(item.bytes, mime, budget, item.thumbnail);
+					// Malformed / oversized encodings are dropped, never an error.
+					decoded.push({ index: i, image: out.image, thumbnail: isEncodedThumbnail(out.thumbnail) ? out.thumbnail : null });
+				} else {
+					decoded.push({ index: i, image: await engine.decodeImage(item.bytes, mime, budget), thumbnail: null });
+				}
 			} catch (error) {
 				results[i] = { id: results[i].id, ok: false, code: "decode", message: errorMessage(error) };
 			}
@@ -187,7 +214,7 @@ export function createWorkerHandler<Image>(engine: Engine<Image>, info: HandlerI
 			try {
 				const vectors = await embedBatch(group.map((g) => g.image));
 				group.forEach((g, j) => {
-					results[g.index] = { id: results[g.index].id, ok: true, vector: vectors[j] };
+					results[g.index] = okResult(results[g.index].id, vectors[j], g.thumbnail);
 				});
 				continue;
 			} catch (error) {
@@ -202,7 +229,7 @@ export function createWorkerHandler<Image>(engine: Engine<Image>, info: HandlerI
 				batches++;
 				try {
 					const [vector] = await embedBatch([g.image]);
-					results[g.index] = { id: results[g.index].id, ok: true, vector };
+					results[g.index] = okResult(results[g.index].id, vector, g.thumbnail);
 				} catch (error) {
 					results[g.index] = { id: results[g.index].id, ok: false, code: "inference", message: errorMessage(error) };
 				}
@@ -236,6 +263,9 @@ export function createWorkerHandler<Image>(engine: Engine<Image>, info: HandlerI
 				for (const item of result.items) {
 					if (item.ok) {
 						transfer.push(item.vector.buffer);
+						if (item.thumbnail) {
+							transfer.push(item.thumbnail.bytes);
+						}
 					}
 				}
 				return { result, transfer };

@@ -11,6 +11,7 @@
  * - D13: a worker is never asked to dispose and reload; recycling = terminate.
  *   Terminating rejects the in-flight and queued requests ("terminated").
  */
+import type { Timers } from "../utils/timers";
 import type { BackendInitInfo, EmbeddingBackend } from "./EmbeddingBackend";
 import {
 	EmbeddingConfig,
@@ -63,10 +64,7 @@ export interface WorkerLike {
 	onerror: ((event: { message?: string }) => void) | null;
 }
 
-export interface Timers {
-	setTimeout(fn: () => void, ms: number): number;
-	clearTimeout(id: number): void;
-}
+export type { Timers };
 
 export interface WorkerEmbeddingBackendOptions {
 	modelDir: string;

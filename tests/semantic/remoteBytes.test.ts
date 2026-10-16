@@ -8,7 +8,7 @@ import {
 	MAX_INDEX_IMAGE_BYTES,
 	RemoteFetchError,
 	SignedGet,
-} from "../../src/semantic/remoteBytes";
+} from "../../src/services/remoteBytes";
 
 /** A mocked Obsidian requestUrl: answers by URL, records every request. */
 function mockRequest(answers: Record<string, number | Error>) {

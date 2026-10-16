@@ -13,6 +13,7 @@ import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 import { providerRegistry } from '../providers/registry';
 import type { GallerySemanticHooks } from '../semantic/SemanticIndexing';
+import type { GalleryThumbnailHooks } from '../thumbnails/GalleryThumbnails';
 import { fileNameOf } from '../semantic/statusText';
 
 /** Tooltip of the semantic toggle: what it does, or why it is unavailable. */
@@ -96,7 +97,8 @@ export class OssGalleryView extends ItemView {
         leaf: WorkspaceLeaf,
         provider: IOssProvider,
         listPrefix = '',
-        private readonly semanticHooks: GallerySemanticHooks | null = null
+        private readonly semanticHooks: GallerySemanticHooks | null = null,
+        private readonly thumbnailHooks: GalleryThumbnailHooks | null = null
     ) {
         super(leaf);
         this.provider = provider;
@@ -333,12 +335,14 @@ export class OssGalleryView extends ItemView {
             }
 
             const ticket = this.semanticHook((h) => h.beginListing(this.provider.name, this.listPrefix), null);
+            const listStartedAt = Date.now();
             const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
             if (!this.isCurrentLoad(generation)) return;
 
             this.state.remoteObjects = objects;
             this.listingLoaded = true;
             if (ticket) this.semanticHook((h) => h.reconcile(ticket, listing), undefined);
+            this.thumbnailHooks?.onListing(this.provider.name, this.listPrefix, listing, listStartedAt);
             loading?.remove();
             if (!showCachedFirst || changes.hasChanges) {
                 await this.renderCurrentObjects();
@@ -631,6 +635,7 @@ export class OssGalleryView extends ItemView {
             onFindSimilar: (objectName) => {
                 void this.findSimilar(objectName);
             },
+            tileSources: this.thumbnailHooks?.tileSources(this.provider.name, this.listPrefix) ?? null,
         });
         return this.imageGrid;
     }
@@ -756,6 +761,7 @@ export class OssGalleryView extends ItemView {
 
         // The vector goes right away (no tombstone for our own deletes).
         this.semanticHook((h) => h.onDeleted(this.provider.name, this.listPrefix, objectName), undefined);
+        this.thumbnailHooks?.onDeleted(this.provider.name, this.listPrefix, objectName);
 
         // Update in-memory state instead of re-listing the whole bucket.
         element.remove();
@@ -798,11 +804,13 @@ export class OssGalleryView extends ItemView {
         const generation = this.beginLoad();
         try {
             const ticket = this.semanticHook((h) => h.beginListing(this.provider.name, this.listPrefix), null);
+            const listStartedAt = Date.now();
             const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
             if (!this.isCurrentLoad(generation)) return;
             // Reconcile even when the gallery itself has nothing to redraw:
             // the index may still be missing objects or hold deleted ones.
             if (ticket) this.semanticHook((h) => h.reconcile(ticket, listing), undefined);
+            this.thumbnailHooks?.onListing(this.provider.name, this.listPrefix, listing, listStartedAt);
             this.listingLoaded = true;
             if (!changes.hasChanges) return;
 

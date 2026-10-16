@@ -1,7 +1,8 @@
 /**
  * Main thread <-> semantic worker message protocol (docs/semantic-search.md
  * §4.3). Shared by src/semantic/worker/ and the main-thread host, so it must
- * not import transformers.js, Obsidian or Node modules.
+ * not import transformers.js, Obsidian or Node modules (src/thumbnails/encode.ts
+ * is DOM only).
  *
  * Request:  { id, type, payload }
  * Response: { id, ok: true, result } | { id, ok: false, error: { code, message } }
@@ -9,9 +10,14 @@
  * ArrayBuffers (image bytes, the ORT wasm, output vectors) are transferred,
  * never copied.
  */
+import { MAX_THUMBNAIL_BYTES } from "../thumbnails/encode";
+import type { EncodedThumbnail, ThumbnailRequest } from "../thumbnails/encode";
 
-/** Bumped whenever a message shape changes. The worker rejects other versions. */
-export const PROTOCOL_VERSION = 2;
+/**
+ * Bumped whenever a message shape changes. The worker rejects other versions.
+ * 3: optional per-image thumbnail request / result (gallery thumbnails).
+ */
+export const PROTOCOL_VERSION = 3;
 
 /** `task: search result | query: {q}` (D11). Images get no prefix. */
 export const QUERY_PREFIX = "task: search result | query: ";
@@ -87,6 +93,48 @@ export interface ImageInput {
 	id: string;
 	bytes: ArrayBuffer;
 	mime: string;
+	/**
+	 * Also return a small gallery thumbnail encoded from the decoded image.
+	 * Never changes the embedding; a thumbnail failure only omits it.
+	 */
+	thumbnail?: ThumbnailRequest;
+}
+
+/**
+ * Gallery thumbnails made in the worker from the already decoded image:
+ * the request/result types and the encoder live in src/thumbnails/encode.ts
+ * (DOM only, safe in the worker bundle).
+ */
+
+export {
+	DEFAULT_THUMBNAIL_REQUEST,
+	MAX_THUMBNAIL_BYTES,
+	THUMBNAIL_MAX_SIDE,
+	THUMBNAIL_QUALITY,
+	thumbnailSize,
+} from "../thumbnails/encode";
+export type { EncodedThumbnail, ThumbnailMime, ThumbnailRequest } from "../thumbnails/encode";
+
+/** Is `value` a well-formed thumbnail request? */
+export function isThumbnailRequest(value: unknown): value is ThumbnailRequest {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const r = value as { maxSide?: unknown; quality?: unknown };
+	return typeof r.maxSide === "number" && r.maxSide >= 16 && r.maxSide <= 2048
+		&& typeof r.quality === "number" && r.quality > 0 && r.quality <= 1;
+}
+
+/** Is `value` a usable thumbnail result (mime + non-empty bytes within the cap)? */
+export function isEncodedThumbnail(value: unknown): value is EncodedThumbnail {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const r = value as { bytes?: unknown; mime?: unknown };
+	return r.bytes instanceof ArrayBuffer
+		&& r.bytes.byteLength > 0
+		&& r.bytes.byteLength <= MAX_THUMBNAIL_BYTES
+		&& (r.mime === "image/webp" || r.mime === "image/jpeg");
 }
 
 export interface EmbedTextPayload {
@@ -100,7 +148,7 @@ export interface EmbedImagesPayload {
 export type ImageErrorCode = "decode" | "inference";
 
 export type ImageEmbedding =
-	| { id: string; ok: true; vector: Float32Array }
+	| { id: string; ok: true; vector: Float32Array; thumbnail?: EncodedThumbnail }
 	| { id: string; ok: false; code: ImageErrorCode; message: string };
 
 export interface EmbedTextResult {

@@ -31,6 +31,35 @@ export interface GalleryState {
 	isLoading: boolean;
 }
 
+/** Bytes of a local gallery thumbnail (src/thumbnails). */
+export interface LocalThumbnail {
+	bytes: Uint8Array<ArrayBuffer>;
+	mime: string;
+}
+
+/**
+ * Where a gallery tile gets its image from (src/thumbnails/ThumbnailService).
+ * Without a source the tile loads its URL through <img> as it always did.
+ */
+export interface TileSource {
+	/** The cached thumbnail (null = none or stale). Tried first. Never rejects. */
+	readThumbnail?: () => Promise<LocalThumbnail | null>;
+	/**
+	 * Load the original once as bytes (requestUrl / local disk) instead of
+	 * <img src>: shown from a Blob URL and handed to `thumbnailFrom`. A
+	 * rejection makes the tile fall back to its URL through <img> once.
+	 */
+	loadOriginal?: (signal: AbortSignal) => Promise<ArrayBuffer>;
+	/**
+	 * Make and store a thumbnail from the original's bytes; the tile then
+	 * shows it instead (null = keep the original). Never rejects.
+	 */
+	thumbnailFrom?: (bytes: ArrayBuffer) => Promise<LocalThumbnail | null>;
+}
+
+/** Tile source per listed object, for one gallery listing scope. */
+export type TileSourceFactory = (obj: OssImage) => TileSource;
+
 export interface LazyImageOptions {
 	/** Prefetch margin around the scroll container (default 300px). */
 	rootMargin?: string;
@@ -45,6 +74,8 @@ export interface LazyImageOptions {
 	timeout?: number;
 	/** Concurrent loads (default 6). */
 	maxConcurrent?: number;
+	/** Concurrent cached thumbnail reads (disk, separate from the network limit; default 4). */
+	maxConcurrentLocal?: number;
 	onImageLoaded?: (img: HTMLImageElement, url: string) => void;
 }
 

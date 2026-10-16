@@ -193,8 +193,13 @@ If your plugin does not need CSS, delete this file.
     outline: none;
 }
 
+/* Fixed colors: themes whose accent is near-white made the hover invisible. */
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-copy-btn {
+    color: var(--color-blue);
+}
+
 .oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-copy-btn:hover {
-    background: var(--oss-gallery-primary);
+    background: var(--color-blue);
     color: var(--text-on-accent);
 }
 
@@ -976,8 +981,12 @@ If your plugin does not need CSS, delete this file.
     pointer-events: none;
 }
 
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-similar-btn {
+    color: var(--color-purple);
+}
+
 .oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-similar-btn:hover {
-    background: var(--oss-gallery-primary);
+    background: var(--color-purple);
     color: var(--text-on-accent);
 }
 

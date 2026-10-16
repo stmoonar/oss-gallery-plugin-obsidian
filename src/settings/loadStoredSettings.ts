@@ -3,6 +3,7 @@ import { normalizeMirrorUrl } from "../semantic/mirrors";
 import {
 	DEFAULT_SEMANTIC_SETTINGS,
 	DEFAULT_SETTINGS,
+	DEFAULT_THUMBNAIL_SETTINGS,
 	IMAGE_TOKEN_BUDGETS,
 	ImageTokenBudget,
 	NameRule,
@@ -11,10 +12,14 @@ import {
 	ProviderName,
 	ProviderSettingsMap,
 	SemanticSettings,
+	THUMBNAIL_CACHE_MAX_MB,
+	THUMBNAIL_CACHE_MIN_MB,
+	ThumbnailSettings,
 } from "../types/settings";
 import {
 	getBoolean,
 	getNumber,
+	getNumberLike,
 	getRecord,
 	getString,
 	mergeWithDefaults,
@@ -107,11 +112,35 @@ function loadSemanticSettings(storedValue: unknown): SemanticSettings {
 	};
 }
 
+/** A whole number of MB within the allowed range, or undefined. */
+export function parseThumbnailCacheMB(value: unknown): number | undefined {
+	const n = getNumberLike(value);
+	if (n === undefined) {
+		return undefined;
+	}
+	const mb = Math.round(n);
+	return mb >= THUMBNAIL_CACHE_MIN_MB && mb <= THUMBNAIL_CACHE_MAX_MB ? mb : undefined;
+}
+
+/** Normalize stored thumbnail settings (missing or malformed fields: defaults). */
+function loadThumbnailSettings(storedValue: unknown): ThumbnailSettings {
+	const stored = getRecord(storedValue);
+	const defaults = DEFAULT_THUMBNAIL_SETTINGS;
+	if (!stored) {
+		return { ...defaults };
+	}
+	return {
+		enabled: getBoolean(stored.enabled) ?? defaults.enabled,
+		maxSizeMB: parseThumbnailCacheMB(stored.maxSizeMB) ?? defaults.maxSizeMB,
+	};
+}
+
 function createDefaultSettings(): PluginSettings {
 	return {
 		...DEFAULT_SETTINGS,
 		providers: providerRegistry.buildDefaultProviderSettings(),
 		semantic: { ...DEFAULT_SEMANTIC_SETTINGS },
+		thumbnails: { ...DEFAULT_THUMBNAIL_SETTINGS },
 	};
 }
 
@@ -236,5 +265,6 @@ export function loadStoredSettings(storedValue: unknown): PluginSettings {
 			: defaults.pathRule,
 		providers: mergeStoredProviders(stored.providers),
 		semantic: loadSemanticSettings(stored.semantic),
+		thumbnails: loadThumbnailSettings(stored.thumbnails),
 	};
 }

@@ -15,7 +15,7 @@ import {
 import { IndexScope, makeIndexScope } from "../../src/semantic/fingerprint";
 import { STATUS_FILE } from "../../src/semantic/IndexStatusStore";
 import { EmbeddingError } from "../../src/semantic/protocol";
-import { RemoteFetchError } from "../../src/semantic/remoteBytes";
+import { RemoteFetchError } from "../../src/services/remoteBytes";
 import {
 	AUTO_CONFIRM_LIMIT_BYTES,
 	FATAL_BACKOFF_MS,

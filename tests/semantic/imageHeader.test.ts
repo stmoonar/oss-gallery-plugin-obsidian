@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jpegFrames, MAX_IMAGE_PIXELS, NativeImageFormat, readImageSize } from "../../src/semantic/imageHeader";
+import { jpegFrames, MAX_IMAGE_PIXELS, NativeImageFormat, readImageSize } from "../../src/utils/imageHeader";
 import { prepareImage } from "../../src/semantic/imageFormat";
 import { be16, be32, bytes, jpeg, le16, le24, le32, Part, png } from "./imageBuilders";
 

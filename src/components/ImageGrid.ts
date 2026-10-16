@@ -2,6 +2,7 @@ import { Notice, setIcon } from "obsidian";
 import { t } from "../i18n";
 import { isTiffKey } from "../providers/shared/image";
 import { LazyImageService } from "../services/LazyImageService";
+import { TileSourceFactory } from "../types/gallery";
 import { OssImage } from "../types/oss";
 
 export class ImageGrid {
@@ -29,6 +30,12 @@ export class ImageGrid {
 			/** Show the "find similar" hover action for this image. */
 			canFindSimilar?: (objectName: string) => boolean;
 			onFindSimilar?: (objectName: string) => void;
+			/**
+			 * Local thumbnails (src/thumbnails): tiles show a cached one, else
+			 * load the original once and make one from it. Preview, copy URL
+			 * and embeds always use the original. null = load URLs as before.
+			 */
+			tileSources?: TileSourceFactory | null;
 		}
 	) {
 		this.lazyImageService = new LazyImageService({
@@ -58,7 +65,7 @@ export class ImageGrid {
 
 				const batch = objects.slice(i, i + batchSize);
 				await Promise.all(
-					batch.map((obj) => this.renderImageItem(obj.key, scores?.get(obj.key)))
+					batch.map((obj) => this.renderImageItem(obj, scores?.get(obj.key)))
 				);
 				await new Promise((resolve) => window.setTimeout(resolve, 10));
 			}
@@ -91,7 +98,8 @@ export class ImageGrid {
 		return true;
 	}
 
-	private async renderImageItem(objectName: string, score?: number): Promise<void> {
+	private async renderImageItem(obj: OssImage, score?: number): Promise<void> {
+		const objectName = obj.key;
 		const objectUrl = await this.options.getObjectUrl(objectName);
 
 		const imgDiv = this.container.createDiv({
@@ -116,7 +124,8 @@ export class ImageGrid {
 		}
 
 		// Chromium's <img> can't render TIFF: show a neutral tile instead of
-		// downloading it only to end up with "Load failed".
+		// downloading it only to end up with "Load failed" (a local thumbnail,
+		// e.g. made by semantic indexing, still replaces the placeholder).
 		const unsupported = isTiffKey(objectName);
 		const imgAttrs: Record<string, string> = {
 			src: unsupported ? this.getPlaceholderUrl("TIFF") : this.getPlaceholderUrl(),
@@ -130,10 +139,12 @@ export class ImageGrid {
 		img.dataset.originalUrl = objectUrl;
 
 		this.imageElements.add(img);
+		const source = this.options.tileSources?.(obj);
 		if (unsupported) {
 			img.addClass("oss-gallery-img-placeholder");
-		} else {
-			this.lazyImageService.observe(img);
+		}
+		if (!unsupported || source?.readThumbnail) {
+			this.lazyImageService.observe(img, source);
 		}
 
 		img.onclick = () => {

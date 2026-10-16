@@ -4,7 +4,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import type { Timers } from "../../src/semantic/WorkerEmbeddingBackend";
+import type { Timers } from "../../src/utils/timers";
 
 /** Manually driven `Timers`: nothing fires until the test says so. */
 export class FakeTimers implements Timers {

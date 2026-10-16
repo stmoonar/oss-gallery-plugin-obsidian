@@ -19,23 +19,14 @@
  * Detection trusts the bytes (magic numbers) over the file extension. Pure
  * module apart from the injected SVG rasterizer.
  */
-import { MAX_IMAGE_PIXELS, NativeImageFormat, readImageSize } from "./imageHeader";
+import { MAX_IMAGE_PIXELS, NativeImageFormat, readImageSize } from "../utils/imageHeader";
+import { detectImageFormat, ImageFormat, isNativeFormat, mimeForFormat } from "../utils/imageType";
 import { tiffProblem } from "./tiffStructure";
 
-export type ImageFormat =
-	| "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" | "avif"
-	| "svg" | "tiff"
-	| "heic" | "psd" | "raw" | "unknown";
+export { detectImageFormat, isNativeFormat, mimeForFormat, NATIVE_FORMATS } from "../utils/imageType";
+export type { ImageFormat } from "../utils/imageType";
 
 export type ConvertedFormat = "svg" | "tiff";
-
-export const NATIVE_FORMATS: ReadonlySet<ImageFormat> = new Set<ImageFormat>([
-	"jpeg", "png", "gif", "webp", "bmp", "ico", "avif",
-]);
-
-export function isNativeFormat(format: ImageFormat): format is NativeImageFormat {
-	return NATIVE_FORMATS.has(format);
-}
 
 /**
  * Why the worker must not decode these native-format bytes, or null. Also
@@ -60,113 +51,8 @@ export function nativeImageProblem(
 	return null;
 }
 
-const MIME: Partial<Record<ImageFormat, string>> = {
-	jpeg: "image/jpeg",
-	png: "image/png",
-	gif: "image/gif",
-	webp: "image/webp",
-	bmp: "image/bmp",
-	ico: "image/x-icon",
-	avif: "image/avif",
-	tiff: "image/tiff",
-	svg: "image/svg+xml",
-};
-
-/** Camera RAW extensions; most are TIFF containers, so check before TIFF. */
-const RAW_EXTENSIONS = new Set(["cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "dng", "raf", "orf", "rw2", "pef", "srw", "x3f", "3fr", "erf", "kdc", "mrw"]);
-
 /** Largest SVG source accepted for rasterizing. */
 export const MAX_SVG_BYTES = 10 * 1024 * 1024;
-
-function ascii(bytes: Uint8Array, start: number, length: number): string {
-	let out = "";
-	for (let i = start; i < start + length && i < bytes.length; i++) {
-		out += String.fromCharCode(bytes[i]);
-	}
-	return out;
-}
-
-function extensionOf(key: string): string {
-	const name = key.split("/").pop() ?? key;
-	const dot = name.lastIndexOf(".");
-	return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
-}
-
-/** ISO-BMFF brands: AVIF vs HEIF family. */
-function ftypFormat(bytes: Uint8Array): ImageFormat | null {
-	if (bytes.length < 12 || ascii(bytes, 4, 4) !== "ftyp") {
-		return null;
-	}
-	const boxSize = (bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]) >>> 0;
-	const end = Math.min(bytes.length, Math.max(16, boxSize));
-	const brands: string[] = [ascii(bytes, 8, 4)];
-	for (let i = 16; i + 4 <= end; i += 4) {
-		brands.push(ascii(bytes, i, 4));
-	}
-	if (brands.some((b) => b === "avif" || b === "avis")) {
-		return "avif";
-	}
-	if (brands.some((b) => ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "mif1", "msf1"].includes(b))) {
-		return "heic";
-	}
-	return "unknown";
-}
-
-function looksLikeSvg(bytes: Uint8Array): boolean {
-	let head = ascii(bytes, 0, 2048);
-	if (head.startsWith("ï»¿")) {
-		head = head.slice(3);
-	}
-	head = head.trimStart().toLowerCase();
-	if (!head.startsWith("<")) {
-		return false;
-	}
-	return head.includes("<svg");
-}
-
-/** Detect the format from the bytes; the key's extension only breaks ties (RAW). */
-export function detectImageFormat(data: ArrayBuffer | Uint8Array, key = ""): ImageFormat {
-	const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-	const ext = extensionOf(key);
-	if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-		return "jpeg";
-	}
-	if (bytes.length >= 8 && bytes[0] === 0x89 && ascii(bytes, 1, 3) === "PNG") {
-		return "png";
-	}
-	if (ascii(bytes, 0, 4) === "GIF8") {
-		return "gif";
-	}
-	if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP") {
-		return "webp";
-	}
-	if (ascii(bytes, 0, 2) === "BM" && bytes.length >= 26) {
-		return "bmp";
-	}
-	if (bytes.length >= 6 && bytes[0] === 0 && bytes[1] === 0 && (bytes[2] === 1 || bytes[2] === 2) && bytes[3] === 0) {
-		return "ico";
-	}
-	const ftyp = ftypFormat(bytes);
-	if (ftyp) {
-		return ftyp;
-	}
-	if (ascii(bytes, 0, 4) === "8BPS") {
-		return "psd";
-	}
-	const tiffMagic = (bytes[0] === 0x49 && bytes[1] === 0x49 && (bytes[2] === 0x2a || bytes[2] === 0x2b) && bytes[3] === 0)
-		|| (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0 && (bytes[3] === 0x2a || bytes[3] === 0x2b));
-	if (tiffMagic || ascii(bytes, 0, 4) === "FUJI" || ascii(bytes, 0, 4) === "IIRO" || ascii(bytes, 0, 4) === "IIU\u0000") {
-		return RAW_EXTENSIONS.has(ext) || !tiffMagic ? "raw" : "tiff";
-	}
-	if (looksLikeSvg(bytes)) {
-		return "svg";
-	}
-	return "unknown";
-}
-
-export function mimeForFormat(format: ImageFormat): string {
-	return MIME[format] ?? "application/octet-stream";
-}
 
 /** Bytes ready for the worker, or why they can't be indexed. */
 export type PreparedImage =

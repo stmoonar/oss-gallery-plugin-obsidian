@@ -133,6 +133,20 @@ export interface SemanticSettings {
     githubMirror: string;
 }
 
+/**
+ * Local gallery thumbnails (src/thumbnails). Global, per device on disk,
+ * independent of semantic search.
+ */
+export interface ThumbnailSettings {
+    /** Make, keep and show small local thumbnails of gallery images (default on). */
+    enabled: boolean;
+    /** Cache size cap for this vault on this device; least recently viewed go first. */
+    maxSizeMB: number;
+}
+
+export const THUMBNAIL_CACHE_MIN_MB = 10;
+export const THUMBNAIL_CACHE_MAX_MB = 100_000;
+
 export interface PluginSettings {
     activeProvider: ProviderName;
     providers: ProviderSettingsMap;
@@ -146,6 +160,7 @@ export interface PluginSettings {
     pathRule: PathRule;
     embedFormat: string;
     semantic: SemanticSettings;
+    thumbnails: ThumbnailSettings;
 }
 
 export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
@@ -246,6 +261,11 @@ export const DEFAULT_SEMANTIC_SETTINGS: SemanticSettings = {
     githubMirror: '',
 };
 
+export const DEFAULT_THUMBNAIL_SETTINGS: ThumbnailSettings = {
+    enabled: true,
+    maxSizeMB: 500,
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
     activeProvider: 'smms',
     providers: {
@@ -272,4 +292,5 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     pathRule: 'root',
     embedFormat: '![]($URL)',
     semantic: DEFAULT_SEMANTIC_SETTINGS,
+    thumbnails: DEFAULT_THUMBNAIL_SETTINGS,
 };

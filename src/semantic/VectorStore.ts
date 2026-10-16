@@ -25,7 +25,8 @@ import * as nodeFs from "fs";
 import * as path from "path";
 import { fnv1a } from "./EmbeddingBackend";
 import type { EmbeddingConfig } from "./protocol";
-import type { Timers } from "./WorkerEmbeddingBackend";
+import type { Timers } from "../utils/timers";
+import { SAFE_ID } from "../utils/vaultId";
 
 export const META_FILE = "meta.json";
 export const VECTORS_FILE = "vectors.bin";
@@ -74,8 +75,7 @@ export function sameHeader(a: unknown, b: IndexHeader): boolean {
 	return HEADER_FIELDS.every((f) => rec[f] === b[f]);
 }
 
-/** Scope and vault ids are used as directory names. */
-export const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export { SAFE_ID };
 
 /**
  * Absolute index directory of a scope: <indexRoot>/<vaultId>/<scopeId>

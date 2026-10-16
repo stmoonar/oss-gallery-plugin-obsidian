@@ -5,6 +5,8 @@ import { OssProviderManager } from '../providers/OssProviderManager';
 import { providerRegistry } from '../providers/registry';
 import { SemanticController } from '../semantic/SemanticController';
 import { SemanticSettingsSection } from './SemanticSettingsSection';
+import { ThumbnailSettingsSection } from './ThumbnailSettingsSection';
+import type { GalleryThumbnails } from '../thumbnails/GalleryThumbnails';
 
 /**
  * The host plugin as seen by the settings tab. Declared as an interface that
@@ -20,22 +22,26 @@ export class SettingsManager extends PluginSettingTab {
     plugin: SettingsHost;
     private providerManager: OssProviderManager;
     private semanticSection: SemanticSettingsSection;
+    private thumbnailSection: ThumbnailSettingsSection;
 
     constructor(
         app: App,
         plugin: SettingsHost,
         providerManager: OssProviderManager,
-        semantic: SemanticController
+        semantic: SemanticController,
+        thumbnails: GalleryThumbnails
     ) {
         super(app, plugin);
         this.plugin = plugin;
         this.providerManager = providerManager;
         this.semanticSection = new SemanticSettingsSection(app, plugin, semantic);
+        this.thumbnailSection = new ThumbnailSettingsSection(plugin, thumbnails);
     }
 
     hide(): void {
         // Stop repainting download progress; the download itself continues.
         this.semanticSection.dispose();
+        this.thumbnailSection.dispose();
     }
 
     display(): void {
@@ -80,6 +86,9 @@ export class SettingsManager extends PluginSettingTab {
 
         // Preview Settings
         this.createPreviewSettings(containerEl);
+
+        // Local gallery thumbnails (independent of semantic search)
+        this.thumbnailSection.render(containerEl);
 
         // Semantic search (optional, downloads on request)
         this.semanticSection.render(containerEl);

@@ -5,12 +5,14 @@
  *
  * indexDir is per device and outside the vault (default
  * <appDir>/indexes, next to the models), so indexes are never synced: each
- * device builds its own. Pure apart from Node fs/path/crypto.
+ * device builds its own. Local gallery thumbnails live elsewhere
+ * (<appDir>/thumbs, src/thumbnails). Pure apart from Node fs/path.
  */
-import { createHash } from "crypto";
 import * as nodeFs from "fs";
 import * as path from "path";
-import { SAFE_ID } from "./VectorStore";
+import { SAFE_ID } from "../utils/vaultId";
+
+export { vaultIdFor } from "../utils/vaultId";
 
 /** Files this plugin writes into a scope directory. Nothing else is ever deleted. */
 export const INDEX_FILE_NAMES: ReadonlySet<string> = new Set([
@@ -25,22 +27,6 @@ const ASYNC_TMP = /^meta\.json\.a\d+\.tmp$/;
 
 export function isIndexFileName(name: string): boolean {
 	return INDEX_FILE_NAMES.has(name) || ASYNC_TMP.test(name);
-}
-
-/**
- * Directory name for this vault. Obsidian's per-vault `app.appId` (not part
- * of the public API, so type-guarded) is stable across renames/moves; without
- * it, a hash of the vault's base path. Restricted to [A-Za-z0-9_-]{1,64}.
- */
-export function vaultIdFor(appId: unknown, vaultBasePath: string): string {
-	if (typeof appId === "string") {
-		const cleaned = appId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
-		if (cleaned !== "" && /[A-Za-z0-9]/.test(cleaned) && SAFE_ID.test(cleaned)) {
-			return cleaned;
-		}
-	}
-	const normalized = path.resolve(vaultBasePath).replace(/\\/g, "/").toLowerCase();
-	return `v${createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
 }
 
 /** The fs calls used by clearVaultIndex (Node's fs satisfies it). */

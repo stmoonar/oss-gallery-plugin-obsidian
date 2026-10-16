@@ -27,6 +27,8 @@ import { createUploadProgressPostProcessor } from "./editor/uploadProgressPostPr
 import { SemanticController } from "./semantic/SemanticController";
 import { runSemanticSelfTestCommand } from "./semantic/selfTestCommand";
 import { SemanticIndexing } from "./semantic/SemanticIndexing";
+import { GalleryThumbnails } from "./thumbnails/GalleryThumbnails";
+import type { ThumbnailWriter } from "./thumbnails/ThumbnailCache";
 
 /**
  * Where an upload was started from. The Editor (and MarkdownView) of a leaf is
@@ -53,6 +55,8 @@ export default class OssGalleryPlugin extends Plugin {
 	semantic: SemanticController;
 	/** Semantic index/search services (per-scope indexes, upload/delete hooks). */
 	semanticIndexing: SemanticIndexing;
+	/** Local gallery thumbnails (independent of semantic search). */
+	galleryThumbnails: GalleryThumbnails;
 	private uploadCounter = 0;
 	/** Upload progress shown in editors/reading view; never written to notes. */
 	private readonly uploadProgress = new UploadProgressStore();
@@ -90,18 +94,24 @@ export default class OssGalleryPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.providerManager = new OssProviderManager(this.settings, this.app);
+		this.galleryThumbnails = new GalleryThumbnails(this);
 		this.semantic = new SemanticController(this);
 		this.semanticIndexing = new SemanticIndexing(this);
 		this.semantic.indexing = this.semanticIndexing;
 		this.semanticIndexing.attachStatusBar(this.addStatusBarItem());
 
-		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager, this.semantic));
+		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager, this.semantic, this.galleryThumbnails));
 		this.addCommands();
 
 		this.initializeServices();
 		this.registerEvents();
 		this.registerUploadProgressRendering();
 		this.setupView();
+
+		// Trim the thumbnail cache to its cap once the vault has settled.
+		this.app.workspace.onLayoutReady(() => {
+			this.galleryThumbnails.start();
+		});
 
 		// Startup check for users who opted in: presence + size only, no
 		// rehash and no automatic re-download (needs-repair shows in settings).
@@ -259,7 +269,8 @@ export default class OssGalleryPlugin extends Plugin {
 					leaf,
 					provider,
 					this.getGalleryListPrefix(),
-					this.semanticIndexing.galleryHooks()
+					this.semanticIndexing.galleryHooks(),
+					this.galleryThumbnails.galleryHooks()
 				);
 			}
 		);
@@ -307,6 +318,11 @@ export default class OssGalleryPlugin extends Plugin {
 		if (options.semantic && leaf.view instanceof OssGalleryView) {
 			leaf.view.enterSemanticMode();
 		}
+	}
+
+	/** Where semantic indexing hands its thumbnails (SemanticIndexingHost). */
+	thumbnailWriter(): ThumbnailWriter | null {
+		return this.galleryThumbnails?.service ?? null;
 	}
 
 	/**
@@ -673,6 +689,8 @@ export default class OssGalleryPlugin extends Plugin {
 		this.requestGalleryRefresh.cancel();
 		// Stop indexing and write every open index (synchronously).
 		this.semanticIndexing?.dispose();
+		// Write pending thumbnail manifests (synchronously).
+		this.galleryThumbnails?.dispose();
 		// Stop a running model download; finished files are kept.
 		this.semantic?.dispose();
 		// Drop progress entries and revoke thumbnail object URLs.
@@ -703,6 +721,7 @@ export default class OssGalleryPlugin extends Plugin {
 		this.embedRenderer?.updateSettings(this.settings);
 		this.providerManager?.updateSettings(this.settings);
 		this.semanticIndexing?.onSettingsChanged();
+		this.galleryThumbnails?.onSettingsChanged();
 
 		const activeProvider = this.providerManager?.getActiveProvider();
 		if (activeProvider) {

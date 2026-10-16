@@ -27,7 +27,7 @@ import {
 } from "./fingerprint";
 import { ConvertedFormat, prepareImage, PreparedImage } from "./imageFormat";
 import { IndexEntryStatus, IndexStatusStore, StatusEntry } from "./IndexStatusStore";
-import { EmbeddingConfig, EmbeddingError, ImageInput, maxBatchFor } from "./protocol";
+import { DEFAULT_THUMBNAIL_REQUEST, EmbeddingConfig, EmbeddingError, ImageInput, maxBatchFor } from "./protocol";
 import {
 	AbortSignalLike,
 	describeTooLargeEn,
@@ -36,7 +36,8 @@ import {
 	raceWithTimeout,
 	RemoteFetchError,
 	TooLargeDescriber,
-} from "./remoteBytes";
+} from "../services/remoteBytes";
+import type { ThumbnailWriter } from "../thumbnails/ThumbnailCache";
 import { headerFromConfig, META_FILE, sameHeader, scopeIndexDir, VectorStore, VectorStoreOptions } from "./VectorStore";
 import type { Timers } from "./WorkerEmbeddingBackend";
 
@@ -59,6 +60,11 @@ export const MAX_CONSECUTIVE_CRASHES = 2;
 /** Backstops per object (the remote fetcher has its own, shorter timeout). */
 export const READ_TIMEOUT_MS = 4 * 60_000;
 export const PREPARE_TIMEOUT_MS = 2 * 60_000;
+/**
+ * Formats that get no gallery thumbnail: a static 320 px frame would replace
+ * an animated GIF in the gallery, so GIF tiles keep loading the original.
+ */
+export const NO_THUMBNAIL_FORMATS: ReadonlySet<string> = new Set(["gif"]);
 /** Reason recorded for keys that were in flight when the app closed or crashed. */
 export const INTERRUPTED_REASON = "Indexing was interrupted while processing this image (Obsidian closed or crashed)";
 
@@ -189,6 +195,15 @@ export interface IndexServiceDeps {
 	/** Extra VectorStore options (tests: flushDelayMs 0). */
 	storeOptions?: Partial<VectorStoreOptions>;
 	statusFlushDelayMs?: number;
+	/**
+	 * Local gallery thumbnails (§13, src/thumbnails): the worker makes one
+	 * from the bitmap it decodes for the embedding (a free by-product of the
+	 * download) and it is handed over here. Their lifecycle (deletes,
+	 * listings, size cap) belongs to the thumbnail module. Optional.
+	 */
+	thumbnails?: ThumbnailWriter | null;
+	/** Ask the worker for thumbnails (setting; default true when `thumbnails` is set). */
+	thumbnailsEnabled?(): boolean;
 }
 
 interface ScopeState {
@@ -461,6 +476,21 @@ export class SemanticIndexService {
 		this.emit();
 		this.maybeAutoStart(st);
 		return true;
+	}
+
+	/** Call the thumbnail writer; its failures never affect indexing. */
+	private thumbs(call: (writer: ThumbnailWriter) => Promise<void>): void {
+		const sink = this.deps.thumbnails;
+		if (!sink) {
+			return;
+		}
+		try {
+			call(sink).catch((error) => {
+				console.error("OSS Gallery: local thumbnail update failed", error);
+			});
+		} catch (error) {
+			console.error("OSS Gallery: local thumbnail update failed", error);
+		}
 	}
 
 	/** Forget a store that threw (closed after a failed compaction); the next use reopens it. */
@@ -1250,6 +1280,7 @@ export class SemanticIndexService {
 			? this.deps.prepare(bytes, key)
 			: prepareImage(bytes, key, { rasterizeSvg: (b) => this.deps.rasterizeSvg(b) });
 		const describeTooLarge = this.deps.describeTooLarge ?? describeTooLargeEn;
+		const thumbnails = this.deps.thumbnails ? this.deps.thumbnailsEnabled?.() ?? true : false;
 
 		for (const item of items) {
 			if (this.cancelRequested) {
@@ -1313,7 +1344,11 @@ export class SemanticIndexService {
 				this.done++;
 				continue;
 			}
-			inputs.push({ id: key, bytes: prepared.bytes, mime: prepared.mime });
+			const input: ImageInput = { id: key, bytes: prepared.bytes, mime: prepared.mime };
+			if (thumbnails && !NO_THUMBNAIL_FORMATS.has(prepared.format)) {
+				input.thumbnail = { ...DEFAULT_THUMBNAIL_REQUEST };
+			}
+			inputs.push(input);
 			meta.set(key, { item, fp, format: prepared.format, convertedFrom: prepared.convertedFrom });
 		}
 		if (inputs.length === 0) {
@@ -1352,6 +1387,8 @@ export class SemanticIndexService {
 			}
 			if (result.ok) {
 				store.upsert(key, m.fp, result.vector);
+				// null drops a thumbnail of an older fingerprint.
+				this.thumbs((t) => t.put(st.scope.id, key, m.fp, result.thumbnail ?? null));
 				summary.indexed++;
 				if (m.convertedFrom) {
 					st.status?.set(key, { fp: m.fp, status: "converted", format: m.convertedFrom, at: this.now() });

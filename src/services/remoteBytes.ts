@@ -1,5 +1,7 @@
 /**
- * Bytes of a remote image for indexing (docs/semantic-search.md §4.5, §11.16).
+ * Bytes of a remote image, for semantic indexing (docs/semantic-search.md
+ * §4.5, §11.16) and for gallery tiles that make a local thumbnail
+ * (src/thumbnails). Neutral module: imports neither of them.
  *
  * Always through Obsidian's `requestUrl` (injected here so it can be tested
  * without Obsidian): unlike `fetch()` from the `app://obsidian.md` origin it
@@ -15,7 +17,7 @@
  * objects above MAX_INDEX_IMAGE_BYTES (listed size, then response size) are
  * refused ("too-large").
  */
-import type { Timers } from "./WorkerEmbeddingBackend";
+import type { Timers } from "../utils/timers";
 
 export interface ByteRequest {
 	url: string;

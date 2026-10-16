@@ -12,6 +12,7 @@
 import {
 	EmbeddingConfig,
 	EmbeddingError,
+	EncodedThumbnail,
 	EmbeddingMode,
 	ImageEmbedding,
 	ImageInput,
@@ -36,7 +37,11 @@ export interface EmbeddingBackend {
 	init(mode: EmbeddingMode, cfg: EmbeddingConfig): Promise<BackendInitInfo>;
 	/** Adds the query prefix, truncates and normalizes. One vector per query. */
 	embedText(queries: string[]): Promise<Float32Array[]>;
-	/** Batched internally; one result per input, in order. Failures are per image. */
+	/**
+	 * Batched internally; one result per input, in order. Failures are per
+	 * image. Inputs with `thumbnail` set may come back with a thumbnail
+	 * (only together with a vector; never required).
+	 */
 	embedImages(images: ImageInput[]): Promise<ImageEmbedding[]>;
 	/** Terminates the worker (D13: never reuse it). Pending requests reject. */
 	dispose(): Promise<void>;
@@ -86,6 +91,8 @@ export interface FakeEmbeddingBackendOptions {
 	latencyMs?: number;
 	/** Image ids that fail with a `decode` error. */
 	failImageIds?: Iterable<string>;
+	/** Image ids that get no thumbnail even when one is requested. */
+	failThumbnailIds?: Iterable<string>;
 	sleep?: (ms: number) => Promise<void>;
 }
 
@@ -103,10 +110,12 @@ export class FakeEmbeddingBackend implements EmbeddingBackend {
 	private cfg: EmbeddingConfig | null = null;
 	private disposed = false;
 	private readonly failIds: Set<string>;
+	private readonly failThumbnailIds: Set<string>;
 	readonly calls: Array<{ type: "init" | "embedText" | "embedImages"; count: number }> = [];
 
 	constructor(private readonly options: FakeEmbeddingBackendOptions = {}) {
 		this.failIds = new Set(options.failImageIds ?? []);
+		this.failThumbnailIds = new Set(options.failThumbnailIds ?? []);
 	}
 
 	private async delay(): Promise<void> {
@@ -173,11 +182,14 @@ export class FakeEmbeddingBackend implements EmbeddingBackend {
 			}
 			const bytes = new Uint8Array(img.bytes);
 			const head = decoder.decode(bytes.subarray(0, 256));
+			const thumbnail = img.thumbnail && !this.failThumbnailIds.has(img.id) ? fakeThumbnail(img.id) : undefined;
+			const result = (vector: Float32Array): ImageEmbedding =>
+				thumbnail ? { id: img.id, ok: true, vector, thumbnail } : { id: img.id, ok: true, vector };
 			if (head.startsWith(FAKE_IMAGE_CAPTION_PREFIX)) {
 				const caption = decoder.decode(bytes).slice(FAKE_IMAGE_CAPTION_PREFIX.length);
-				return { id: img.id, ok: true, vector: this.vectorFor(caption) };
+				return result(this.vectorFor(caption));
 			}
-			return { id: img.id, ok: true, vector: seededVector(fnv1a(bytes, cfg.imageTokenBudget), cfg.dims) };
+			return result(seededVector(fnv1a(bytes, cfg.imageTokenBudget), cfg.dims));
 		});
 	}
 
@@ -185,6 +197,12 @@ export class FakeEmbeddingBackend implements EmbeddingBackend {
 		this.disposed = true;
 		return Promise.resolve();
 	}
+}
+
+/** The thumbnail FakeEmbeddingBackend returns for image `id`: WebP-labelled UTF-8 `fake-thumb:<id>`. */
+export function fakeThumbnail(id: string): EncodedThumbnail {
+	const bytes = encoder.encode(`fake-thumb:${id}`);
+	return { bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), mime: "image/webp" };
 }
 
 /** Bytes of a fake image whose FakeEmbeddingBackend vector equals `caption`'s. */

@@ -19,11 +19,12 @@ import type { OssProviderManager } from "../providers/OssProviderManager";
 import { providerRegistry } from "../providers/registry";
 import type { IOssProvider, ListResult, OssImage } from "../types/oss";
 import type { PluginSettings } from "../types/settings";
+import type { ThumbnailWriter } from "../thumbnails/ThumbnailCache";
 import { IndexScope, makeIndexScope } from "./fingerprint";
 import { clearVaultIndex, ClearResult, vaultIdFor } from "./indexFiles";
 import { resolveIndexDir, ResolvedModelDir } from "./modelDir";
 import { formatBytes } from "./format";
-import { AbortSignalLike, fetchRemoteImageBytes, FailureDescriber, TooLargeDescriber } from "./remoteBytes";
+import { AbortSignalLike, fetchRemoteImageBytes, FailureDescriber, TooLargeDescriber } from "../services/remoteBytes";
 import type { SemanticController } from "./SemanticController";
 import { IndexProgress, IndexStats, RunSummary, SemanticIndexService } from "./SemanticIndexService";
 import { SemanticHit, SemanticSearchService } from "./SemanticSearchService";
@@ -82,6 +83,11 @@ export interface SemanticIndexingHost {
 	getGalleryListPrefix(): string;
 	/** Open (or focus) the gallery, optionally switching it to semantic mode. */
 	openGalleryView(options?: { semantic?: boolean }): Promise<void>;
+	/**
+	 * Local gallery thumbnails (src/thumbnails): indexing hands it the
+	 * thumbnails the worker makes from the decoded images, nothing else.
+	 */
+	thumbnailWriter(): ThumbnailWriter | null;
 }
 
 const FORMAT_LABELS: Record<string, string> = {
@@ -173,6 +179,8 @@ export class SemanticIndexing {
 			confirmTraffic: (scope, estimate, reason) =>
 				SemanticTrafficModal.ask(host.app, providerRegistry.getLabel(scope.providerId, host.app), estimate, reason),
 			onRunFinished: (summary) => this.reportRun(summary),
+			thumbnails: host.thumbnailWriter(),
+			thumbnailsEnabled: () => host.settings.thumbnails.enabled,
 		});
 		this.search = new SemanticSearchService({
 			getStore: (scope) => this.index.getSearchStore(scope),

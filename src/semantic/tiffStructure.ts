@@ -11,7 +11,7 @@
  * Pure (no UTIF): the main thread runs the same checks in prepareImage so
  * unsupported or oversized TIFFs never reach the worker.
  */
-import { has, jpegFrames, u16be, u16le, u32be, u32le } from "./imageHeader";
+import { has, jpegFrames, u16be, u16le, u32be, u32le } from "../utils/imageHeader";
 
 export class TiffError extends Error {
 	constructor(message: string) {

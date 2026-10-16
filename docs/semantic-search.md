@@ -1,6 +1,6 @@
 # 语义搜索（Semantic Search）设计文档
 
-状态：设计已定，P0 spike 完成，P1–P4 已实施（分支 `feat/semantic-search`）；P4 的端到端验收（Local + 一个 S3 兼容 provider，真实 GPU）待维护者按 §10 手工完成。
+状态：设计已定，P0 spike 完成，P1–P4 已实施（分支 `feat/semantic-search`），P5 本地图库缩略图已实施（§13，待手工验收）；P4 的端到端验收（Local + 一个 S3 兼容 provider，真实 GPU）待维护者按 §10 手工完成。
 读者：维护者与后续实施者（人或 AI）。本文是实施依据，标注"已定"的内容不要自行更改。
 P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 `spike/semantic-p0/RESULTS.md`（下文引用为 [P0]）。
 
@@ -22,7 +22,7 @@ P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 
 - 不做 OCR、图片内文字检索、视频/音频/文档的语义搜索（只处理图片）。
 - 不做绝对分数阈值过滤（见 D9）。
 - 不随插件 release 分发任何模型或 runtime（main.js 保持精简）。
-- 暂不做 provider 端缩略图（Aliyun `x-oss-process=image/resize`、Tencent COS `imageMogr2`、Qiniu `imageView2`）以省流量；列为后续可选项。
+- 暂不做 provider 端缩略图（Aliyun `x-oss-process=image/resize`、Tencent COS `imageMogr2`、Qiniu `imageView2`）以省流量；列为后续可选项。（图库瓦片改用**本地**缩略图：首次显示时由原图生成，或建索引时顺带生成，见 §13。）
 - 不改变现有 URL / key 搜索（`SearchService` 的文本与正则搜索保持不变）。
 
 ## 2. 已定决策表
@@ -173,7 +173,7 @@ export function currentEmbeddingConfig(budget): EmbeddingConfig;    // 当前构
 
 与草图的差异：`embedImages` 输入改为 `{id, bytes, mime}`（P3 从 fs / fetch / File 拿到的本来就是字节），输出为逐张结果：一张坏图（无法解码、推理失败）只让它自己失败，不拖垮整批。`WorkerEmbeddingBackend` 另有 `embedTextDetailed / embedImagesDetailed`（附 worker 耗时与批数）、`ping()`、`recycle()`、`isRunning()`。
 
-**协议**（`protocol.ts`，`PROTOCOL_VERSION = 2`）：`{id, type: 'ping'|'init'|'embedText'|'embedImages', payload}` → `{id, ok: true, result}` 或 `{id, ok: false, error: {code, message}}`。错误码：`bad-request`（含协议版本不符）、`not-initialized`、`already-initialized`、`unsupported`（query worker 收到 embedImages）、`model-load`、`inference`；宿主侧另有 `terminated`、`runtime-verify`、`worker-crashed`。没有 `dispose` 消息（D13：只 terminate）。`init` payload = `{protocol, mode, config, modelDir, files: {name,size}[], wasmBinary: ArrayBuffer(transfer), wasmFactory: string}`。输出向量的 buffer 全部 transfer 回主线程。
+**协议**（`protocol.ts`，`PROTOCOL_VERSION = 3`；3 = 每张图可选的缩略图请求/结果，§13）：`{id, type: 'ping'|'init'|'embedText'|'embedImages', payload}` → `{id, ok: true, result}` 或 `{id, ok: false, error: {code, message}}`。错误码：`bad-request`（含协议版本不符）、`not-initialized`、`already-initialized`、`unsupported`（query worker 收到 embedImages）、`model-load`、`inference`；宿主侧另有 `terminated`、`runtime-verify`、`worker-crashed`。没有 `dispose` 消息（D13：只 terminate）。`init` payload = `{protocol, mode, config, modelDir, files: {name,size}[], wasmBinary: ArrayBuffer(transfer), wasmFactory: string}`。输出向量的 buffer 全部 transfer 回主线程。
 
 **宿主（`WorkerEmbeddingBackend`）**，一个实例 = 一种 mode = 至多一个活 worker：
 
@@ -353,7 +353,7 @@ export class SemanticSearchService {
 - `scopeIndexDir()` 对 `vaultId` 与 `scopeId` 都只接受 `[A-Za-z0-9_-]{1,64}`。
 - 文件：`meta.json`、`vectors.bin`（下文）、`status.json`（索引状态旁注，§12），以及各自的 `.tmp` / `meta.json.a<N>.tmp`。
 - 修改 `indexDir` 即指向新位置：旧索引原地保留，服务关闭并在新位置重新打开 store；远程 provider 需要重新确认流量（确认记录 `confirmedAt` 存在 `status.json` 中）。
-- **清除本 vault 的索引**（设置页，`clearVaultIndex`）：只删除 `<indexDir>/<vaultId>/<scopeId>/` 下本插件写入的文件名（上面列出的那些），跳过符号链接、未知文件和名字不是 scope id 的目录，然后删除变空的目录（含 `<vaultId>` 本身）；`indexDir` 根目录与其他 vault 的目录永不触碰。"删除模型"不触碰索引，清除索引也不触碰模型。
+- **清除本 vault 的索引**（设置页，`clearVaultIndex`）：只删除 `<indexDir>/<vaultId>/<scopeId>/` 下本插件写入的文件名（上面列出的那些），跳过符号链接、未知文件和名字不是 scope id 的目录，然后删除变空的目录（含 `<vaultId>` 本身）；`indexDir` 根目录与其他 vault 的目录永不触碰。本地缩略图在 `<appDir>/thumbs/` 下（§13），有单独的"清除缩略图"，清除索引从不触碰。"删除模型"不触碰索引，清除索引也不触碰模型。
 - 旧位置 `<vault>/<manifest.dir>/semantic-index/` 不再使用，也不迁移（P3 之前没有发布过索引）。
 
 ### meta.json
@@ -606,7 +606,7 @@ semantic: {
 }
 ```
 
-默认值：`{ enabled: false, modelDir: '', indexDir: '', imageTokenBudget: 70, autoIndex: false, hfEndpoint: '', githubMirror: '' }`（`indexDir` 为 P3 新增，旧 data.json 缺失时回退 `''`）；`loadStoredSettings` 对缺失/非法字段逐项回退默认值（镜像 URL 经 `normalizeMirrorUrl` 规范化，非法则回退 `''`）。`enabled` 只由"下载并全部校验通过"或"开关打开时完整校验通过"置为 true；校验失败、删除模型、`modelDir` 改到未安装的目录都会置回 false。
+默认值：`{ enabled: false, modelDir: '', indexDir: '', imageTokenBudget: 70, autoIndex: false, hfEndpoint: '', githubMirror: '' }`（`indexDir` 为 P3 新增，旧 data.json 缺失时回退 `''`）；`loadStoredSettings` 对缺失/非法字段逐项回退默认值（镜像 URL 经 `normalizeMirrorUrl` 规范化，非法则回退 `''`）。本地缩略图的设置是独立的顶层 `thumbnails: { enabled, maxSizeMB }`（§13）。`enabled` 只由"下载并全部校验通过"或"开关打开时完整校验通过"置为 true；校验失败、删除模型、`modelDir` 改到未安装的目录都会置回 false。
 
 ### 9.4 流量提示对话框（P3 最小版本，P4 已打磨）
 
@@ -662,6 +662,7 @@ P3 的调试入口（P4 图库 UI 之前）：命令"语义搜索：立即为当
 17. ~~**main.js 体积**~~（P3 提出，P4 已解决）：main.js 与 worker 都设 `charset: "utf8"`，main.js 360,359 → 339,454 字节（−20,905，−5.8%；§8.5）。
 18. **P4 UI 未在真实 Obsidian 中自动化测试**：图库 UI 依赖 DOM / Obsidian API，单元测试只覆盖纯逻辑（模式切换、状态文本、流量规则、远程取字节）。按 §10 的手工脚本验收；尤其注意：首次查询的"正在加载搜索模型"、键盘菜单键在图块上的菜单位置、深色主题下的分数徽标与选中描边。
 19. **语义文本结果不随自动同步重排**：缓存的命中只做交集（删除的图片会消失），新增并完成索引的图片要重新按 Enter 才会出现在文本结果中；"找相似"每次重排。
+20. **本地缩略图**（§13）：已与语义搜索解耦，图库首次显示某图时由下载的原图生成，建索引时也顺带生成；瓦片因此改走 requestUrl 取字节（失败回退一次 `<img src>`）。异步写 `thumbs.json` 与卸载时的同步写之间理论上有极小的竞争窗口，最坏结果是丢掉几条缩略图记录（文件下次打开时作为孤儿删除），不会显示错图。
 
 ## 12. 图片格式与索引状态（P3）
 
@@ -692,6 +693,50 @@ P3 的调试入口（P4 图库 UI 之前）：命令"语义搜索：立即为当
 **用户可见部分**（P3；P4 加入图库状态标签与详情对话框，§9.2）：
 - 每次 run 结束的 Notice（`RunSummary`）："已索引 120 张，其中 3 张经转换（SVG/TIFF）、2 张不支持（HEIC）、1 张失败 — 详情见图库中的索引状态或设置"；只有上传钩子且无问题时不提示；backend 错误时提示"语义索引已停止：原因"。
 - 设置页"本 vault 的索引"：当前 provider 的计数，可展开的"不支持或失败的文件"表（文件 / 状态（失败次数）/ 原因）与"经转换的文件"列表，以及"清除本 vault 的索引"按钮。
+
+## 13. 本地图库缩略图（P5，已与语义搜索解耦）
+
+动机：图库瓦片原先通过 `<img src>` 加载多 MB 的原图（远程逐张下载，TIFF 只能显示占位图）。缩略图现在是**独立模块 `src/thumbnails/`**，对所有可列举且有 `getIndexIdentity` 的 provider 生效，与语义搜索是否安装 / 开启无关。依赖方向：`src/semantic` 可以使用 `src/thumbnails`（`ThumbnailWriter.put`，以及 worker 里的纯 DOM 编码器 `encode.ts`），反之绝不（单测沿相对 import 递归检查）。两者共用的代码放在中立模块：`src/utils/objectScope.ts`（fingerprint、scope id）、`vaultId.ts`、`appDir.ts`、`imageHeader.ts`、`imageType.ts`、`timers.ts`，以及 `src/services/remoteBytes.ts`。
+
+**设置**：顶层 `thumbnails: { enabled: true, maxSizeMB: 500 }`（不再是 `semantic.thumbnails`）；设置页"图库缩略图"一节：开关、缓存上限（MB，10–100000）、本 vault 的数量 / 占用、**清除缩略图**（确认对话框 `ClearThumbnailsModal`）。关闭时图库与以前完全相同（`<img src>`，不读缓存、不生成）。
+
+**存储（`ThumbnailCache` + `thumbnailFiles.ts`）**：
+
+```
+<appDir>/thumbs/<vaultId>/<scopeId>/thumbs.json
+<appDir>/thumbs/<vaultId>/<scopeId>/<sha256(key)[:32]>-<sha256(fp)[:12]>.webp|.jpg
+```
+
+- 按设备、在仓库之外，与 `semantic.indexDir` 无关（`<appDir>` 即模型 / 索引默认目录的父目录）。scope id 与语义索引相同（`computeScopeId(providerId, identity, listPrefix)`），因此索引顺带生成的缩略图与图库懒生成的落在同一目录。
+- `thumbs.json` = `{ format: 1, entries: { <key>: { fp, ext, bytes, atime } } }`；`atime` = 最后写入或显示的时间（缺失视为 0，最先淘汰）。图片文件先写 `<name>.tmp` 再 rename；manifest 2 s 防抖后异步 tmp + rename，卸载时同步写。
+- 首次使用某 scope 时整理目录：删除 manifest 未引用的缩略图与残留 tmp，丢弃文件已不存在的条目。只删除 `isThumbnailFileName` 认可的文件名；即使 `semantic.indexDir` 被设成 `<appDir>/thumbs`（目录重合），两边的清除也只删各自的文件名。
+- 每个 scope 的写操作串行；读不排队；所有方法从不 reject。
+
+**懒生成（图库，`ThumbnailService` + `ThumbnailGenerator` + `LazyImageService`）**：
+
+1. 瓦片进入预取区，先经小队列（并发 4，不占网络槽位）读缓存：fp 等于列表对象的 `fingerprint()`（或上传临时 fp 尺寸相符）才命中 → Blob URL 显示，并更新 `atime`（同一缩略图 60 s 内只记一次）。
+2. 未命中：在原有 6 槽网络队列里**只下载一次原图**（远程：Obsidian `requestUrl`，经 `fetchRemoteImageBytes`，被拒（4xx 非 404）且 provider 能签名时改用签名 GET，50 MB 上限、超时、abort；Local：`readObjectBytes` 读磁盘），用 Blob URL 显示；同一份字节交给生成器（不在关键路径上）：先按字节嗅探格式并用文件头检查尺寸（≤ `MAX_IMAGE_PIXELS`），再 `createImageBitmap` 解码 + `encodeThumbnail`（最长边 320 px、quality 0.8、WebP，失败则白底 JPEG，> 512 KB 丢弃）；并发 2，排队超过 12 个直接放弃（下次显示再生成）。生成后写入缓存，瓦片切换到缩略图并 revoke 原图的 Blob（释放内存）。
+3. 下载失败或字节无法显示 → 该瓦片**回退一次**到 `<img src=url>`（requestUrl 访问不到的地址、HTTP 缓存），之后按原有重试逻辑。缩略图失败从不影响瓦片。
+4. GIF（保留动画）和 SVG 照旧 `<img src>`，不懒生成；TIFF 只读缓存，没有则保持占位图；超过 50 MB 的对象直接 `<img src>`。
+
+**取舍**：瓦片从 `<img src>`（浏览器 HTTP 缓存）改为 requestUrl 取字节：重复查看靠本地缩略图缓存而不是 HTTP 缓存；首次显示时原图字节在内存中多停留到缩略图生成为止（生成后切换并释放）。私有 S3 / R2 / MinIO 存储桶的瓦片因签名 GET 而可以显示。关闭缩略图可完全恢复旧行为。
+
+**语义索引的副产品（worker，`engine.ts`，协议 v3 不变）**：`ImageInput.thumbnail = DEFAULT_THUMBNAIL_REQUEST` 时，handler 调用 `engine.decodeImageWithThumbnail`：先按 PREPROCESS_VERSION 1 的原路径得到 `RawImage`（像素与 `decodeImage` 完全相同），之后用同一位图调用 `encodeThumbnail`（来自 `src/thumbnails/encode.ts`，与主线程同一实现）。缩略图失败只是不返回；不改 `PREPROCESS_VERSION`，向量逐字节不变。GIF 不请求（`NO_THUMBNAIL_FORMATS`）。只在 `thumbnails.enabled` 时请求，结果经 `ThumbnailWriter.put(scopeId, key, fp, thumb | null)` 交给缩略图模块（`null` 删除其他 fingerprint 的旧缩略图）；关闭时 `put` 也被忽略。上传（`onUploaded`）同样得到缩略图（临时 fp `u:<size>`）。
+
+**生命周期（图库 glue `GalleryThumbnails`，语义关闭时同样生效）**：
+
+| 事件 | 缩略图 |
+|---|---|
+| 懒生成 / 索引成功并带缩略图 | `put`：写新文件，删除旧 fingerprint 的文件 |
+| 图库内删除 | `remove` |
+| 每次列表（含不完整） | 上传临时 fp 与列表对象尺寸相符 → 改名为真实 fp（adopt），不重新生成 |
+| 完整列表（`complete`） | 前缀内不在列表中的 key 删除；列表开始后写入或显示过的保留（上传可能尚未出现在列表中） |
+| fingerprint 变化 | 读取不命中 → 重新下载 / 索引 → `put` 替换 |
+| 超出上限 | 按 `atime` 从旧到新淘汰（本 vault 全部 scope），降到上限的 90%；写入后防抖 5 s、启动 30 s 后、上限修改后运行，从不阻塞渲染 |
+
+"清除缩略图"只删缩略图文件；"清除索引"和"删除模型"从不碰缩略图，反之亦然。预览、复制链接、embed 始终用原图。
+
+**测试**：`tests/thumbnails/ThumbnailCache.test.ts`（命名、fp 匹配、替换、`put(null)`、remove、adopt、prune 与 since、孤儿清理、损坏 manifest、统计、防抖、`atime` 持久化、LRU 顺序与 90% 目标、跨 scope、缺失 `atime`、两种清除互不影响含目录重合）、`ThumbnailService.test.ts`（一次下载同时用于显示与缩略图且再次显示不下载、语义关闭也生成、GIF/SVG/TIFF/未知/超像素不生成、编码失败、关闭时无 tile source 且忽略 put、生成器并发与丢弃、删除 / 列表 / 上传 adopt、上限淘汰、模块边界）、`tests/semantic/thumbnailLifecycle.test.ts`（索引请求与存储、向量不变、GIF/关闭时不请求、失败不影响 embedding、fp 变化替换、上传 adopt、两种清除互不影响、writer 抛错不影响索引）、`thumbnailProtocol.test.ts`（handler 协议）。真实的 `createImageBitmap` / `convertToBlob` 路径与瓦片切换需在 Obsidian 中手工验证。
 
 ## 附录：P4 构建与测试
 
