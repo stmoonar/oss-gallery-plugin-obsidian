@@ -76,6 +76,8 @@ export class OssGalleryView extends ItemView {
     private semanticRankedKeys: ReadonlySet<string> = new Set();
     /** `remoteObjects` holds a listing of the current provider (not just the initial []). */
     private listingLoaded = false;
+    /** URL lookup for the current listing (see `objectUrlsFor`). */
+    private objectUrlCache: { source: OssImage[]; urls: Map<string, string> } | null = null;
 
     // State
     private state: GalleryState = {
@@ -764,13 +766,23 @@ export class OssGalleryView extends ItemView {
     }
 
     private async getObjectUrl(objectName: string): Promise<string> {
-        // Try to find object in remoteObjects to get URL directly if available
-        const obj = this.state.remoteObjects.find(o => o.key === objectName);
-        if (obj && obj.url) {
-            return obj.url;
-        }
+        return this.objectUrlsFor(this.state.remoteObjects).get(objectName) ?? '';
+    }
 
-        return '';
+    /**
+     * key -> URL for a listing, built once per listing array (every tile of a
+     * render looks its URL up here; `remoteObjects` is replaced, never
+     * mutated, when the listing changes).
+     */
+    private objectUrlsFor(objects: OssImage[]): Map<string, string> {
+        if (this.objectUrlCache?.source !== objects) {
+            const urls = new Map<string, string>();
+            for (const obj of objects) {
+                if (obj.url) urls.set(obj.key, obj.url);
+            }
+            this.objectUrlCache = { source: objects, urls };
+        }
+        return this.objectUrlCache.urls;
     }
 
     private startAutoSync(): void {

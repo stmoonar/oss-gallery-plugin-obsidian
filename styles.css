@@ -1050,3 +1050,8 @@ If your plugin does not need CSS, delete this file.
     outline: 2px solid var(--interactive-accent);
     outline-offset: 1px;
 }
+
+/* Tiles that are never requested (e.g. TIFF) show their placeholder as is. */
+.oss-gallery-item img.oss-gallery-img-placeholder {
+    opacity: 1;
+}

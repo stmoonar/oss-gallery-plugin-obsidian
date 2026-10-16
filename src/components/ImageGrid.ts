@@ -1,5 +1,6 @@
 import { Notice, setIcon } from "obsidian";
 import { t } from "../i18n";
+import { isTiffKey } from "../providers/shared/image";
 import { LazyImageService } from "../services/LazyImageService";
 import { OssImage } from "../types/oss";
 
@@ -114,18 +115,26 @@ export class ImageGrid {
 			});
 		}
 
+		// Chromium's <img> can't render TIFF: show a neutral tile instead of
+		// downloading it only to end up with "Load failed".
+		const unsupported = isTiffKey(objectName);
 		const imgAttrs: Record<string, string> = {
-			"data-src": objectUrl,
-			src: this.getPlaceholderUrl(),
-			loading: "lazy",
+			src: unsupported ? this.getPlaceholderUrl("TIFF") : this.getPlaceholderUrl(),
 			alt: objectName,
 			decoding: "async",
 		};
+		if (!unsupported) {
+			imgAttrs["data-src"] = objectUrl;
+		}
 		const img = imgDiv.createEl("img", { attr: imgAttrs });
 		img.dataset.originalUrl = objectUrl;
 
 		this.imageElements.add(img);
-		this.lazyImageService.observe(img);
+		if (unsupported) {
+			img.addClass("oss-gallery-img-placeholder");
+		} else {
+			this.lazyImageService.observe(img);
+		}
 
 		img.onclick = () => {
 			this.options.onPreview?.(objectName);
@@ -262,13 +271,14 @@ export class ImageGrid {
 		};
 	}
 
-	private getPlaceholderUrl(): string {
+	/** `label` is ASCII only (btoa). */
+	private getPlaceholderUrl(label = "Loading..."): string {
 		return (
 			"data:image/svg+xml;base64," +
 			btoa(`
 	            <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
 	                <rect width="100" height="100" fill="#ccc"/>
-	                <text x="50" y="50" text-anchor="middle" dy=".3em" fill="#666" font-size="12">Loading...</text>
+	                <text x="50" y="50" text-anchor="middle" dy=".3em" fill="#666" font-size="12">${label}</text>
 	            </svg>
 	        `)
 		);
@@ -279,6 +289,8 @@ export class ImageGrid {
 		this.rendering = false;
 		this.items.clear();
 		this.container.empty();
+		// unobserve cancels queued/running loads and retries and clears the
+		// element's src, so a discarded grid stops downloading right away.
 		this.imageElements.forEach((img) => {
 			this.lazyImageService.unobserve(img);
 		});

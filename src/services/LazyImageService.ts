@@ -1,52 +1,98 @@
 import { LazyImageOptions } from "../types/gallery";
+import {
+	DEFAULT_MAX_CONCURRENT,
+	DEFAULT_STALL_TIMEOUT_MS,
+	ImageLoadQueue,
+} from "./imageLoadQueue";
 
+/** Prefetch distance around the scroll viewport. */
+const PREFETCH_ROOT_MARGIN = "300px";
+
+/**
+ * Lazy loading for gallery tiles (`<img data-src>`). Scheduling (bounded
+ * concurrency, visible-first FIFO, retries, stall handling) lives in
+ * `ImageLoadQueue`; this class only wires it to IntersectionObservers and
+ * the `<img>` elements.
+ */
 export class LazyImageService {
-	private observer: IntersectionObserver;
-	private imageElements: Set<HTMLImageElement> = new Set();
+	private readonly queue: ImageLoadQueue<HTMLImageElement>;
+	/** Tracked images and their URLs. */
+	private readonly urls = new Map<HTMLImageElement, string>();
+	/** Images currently inside the (un-expanded) viewport. */
+	private readonly visible = new Set<HTMLImageElement>();
+	private nearObserver: IntersectionObserver | null = null;
+	private visibleObserver: IntersectionObserver | null = null;
 	private destroyed = false;
-	private options: Required<
-		Pick<
-			LazyImageOptions,
-			"rootMargin" | "threshold" | "retryCount" | "timeout"
-		>
-	> &
-		LazyImageOptions;
+	private readonly rootMargin: string;
+	private readonly threshold: number;
+	private readonly onImageLoaded?: (img: HTMLImageElement, url: string) => void;
 
 	constructor(options: LazyImageOptions = {}) {
-		this.options = {
-			rootMargin: options.rootMargin ?? "50px",
-			threshold: options.threshold ?? 0.1,
-			retryCount: options.retryCount ?? 3,
-			timeout: options.timeout ?? 8000,
-			onImageLoaded: options.onImageLoaded,
-		};
-
-		const { rootMargin, threshold } = this.options;
-
-		this.observer = new IntersectionObserver(
-			(entries) => {
-				entries.forEach((entry) => {
-					if (entry.isIntersecting) {
-						const img = entry.target as HTMLImageElement;
-						const src = img.dataset.src;
-
-						if (src && img.src !== src) {
-							void this.loadImageWithRetry(
-								src,
-								img,
-								this.options.retryCount,
-								this.options.timeout
-							);
-							img.removeAttribute("data-src");
-							this.observer.unobserve(img);
-						}
-					}
-				});
+		this.rootMargin = options.rootMargin ?? PREFETCH_ROOT_MARGIN;
+		this.threshold = options.threshold ?? 0;
+		this.onImageLoaded = options.onImageLoaded;
+		this.queue = new ImageLoadQueue<HTMLImageElement>(
+			{
+				start: (img, attempt) => this.startLoad(img, attempt),
+				onFailed: (img) => this.showFailed(img),
+				shouldStart: (img) => {
+					if (img.isConnected && this.urls.has(img)) return true;
+					this.release(img);
+					return false;
+				},
 			},
 			{
-				rootMargin,
-				threshold,
+				maxConcurrent: options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+				maxAttempts: options.retryCount ?? 3,
+				stallTimeoutMs: options.timeout ?? DEFAULT_STALL_TIMEOUT_MS,
+				timers: {
+					setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+					clearTimeout: (handle) => window.clearTimeout(handle as number),
+				},
 			}
+		);
+	}
+
+	/**
+	 * Observers are created on first use: their root must be the scroll
+	 * container (with the implicit viewport root, a scrolling ancestor clips
+	 * the targets and the prefetch margin has no effect).
+	 */
+	private ensureObservers(img: HTMLImageElement): void {
+		if (this.nearObserver) return;
+		const root = findScrollParent(img);
+		this.nearObserver = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const target = entry.target as HTMLImageElement;
+					if (!this.urls.has(target)) continue;
+					if (entry.isIntersecting) {
+						this.queue.request(target, this.visible.has(target));
+					} else if (!target.isConnected) {
+						this.release(target);
+					} else {
+						this.visible.delete(target);
+						this.queue.leave(target);
+					}
+				}
+			},
+			{ root, rootMargin: this.rootMargin, threshold: 0 }
+		);
+		this.visibleObserver = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const target = entry.target as HTMLImageElement;
+					if (!this.urls.has(target)) continue;
+					if (entry.isIntersecting) {
+						this.visible.add(target);
+						this.queue.request(target, true);
+					} else {
+						this.visible.delete(target);
+						this.queue.setVisible(target, false);
+					}
+				}
+			},
+			{ root, rootMargin: "0px", threshold: this.threshold }
 		);
 	}
 
@@ -54,17 +100,20 @@ export class LazyImageService {
 	 * 观察图片元素
 	 */
 	observe(img: HTMLImageElement): void {
-		if (!img.dataset.src) return;
+		const url = img.dataset.src;
+		if (!url || this.destroyed) return;
 
-		this.imageElements.add(img);
+		this.urls.set(img, url);
 
 		// 延迟 observe 避免阻塞 UI。回调触发时必须重新检查状态：
 		// destroy/unobserve 之后再 observe 会重新激活已 disconnect 的 observer。
 		const deferredObserve = () => {
-			if (this.destroyed || !this.imageElements.has(img) || !img.dataset.src) {
+			if (this.destroyed || this.urls.get(img) !== url || !img.isConnected) {
 				return;
 			}
-			this.observer.observe(img);
+			this.ensureObservers(img);
+			this.nearObserver?.observe(img);
+			this.visibleObserver?.observe(img);
 		};
 
 		if (typeof window.requestIdleCallback === "function") {
@@ -75,11 +124,11 @@ export class LazyImageService {
 	}
 
 	/**
-	 * 停止观察图片元素
+	 * Stop tracking an image: a pending or running load is cancelled and
+	 * the element's source is cleared (it is being discarded).
 	 */
 	unobserve(img: HTMLImageElement): void {
-		this.observer.unobserve(img);
-		this.imageElements.delete(img);
+		this.release(img);
 	}
 
 	/**
@@ -91,71 +140,65 @@ export class LazyImageService {
 		images.forEach((img) => this.observe(img));
 	}
 
-	/**
-	 * 带重试机制的图片加载
-	 */
-	private async loadImageWithRetry(
-		url: string,
-		img: HTMLImageElement,
-		maxRetries: number,
-		timeout: number
-	): Promise<void> {
-		for (let attempt = 1; attempt <= maxRetries; attempt++) {
-			try {
-				await this.loadImage(url, img, timeout);
-				img.classList.add("oss-gallery-img-loaded");
-				this.options.onImageLoaded?.(img, url);
+	private startLoad(img: HTMLImageElement, attempt: number): void {
+		const url = this.urls.get(img);
+		if (!url) return;
+		img.onload = () => {
+			clearHandlers(img);
+			if (!this.urls.has(img)) return;
+			img.classList.add("oss-gallery-img-loaded");
+			this.stopObserving(img);
+			this.queue.loaded(img);
+			this.onImageLoaded?.(img, url);
+		};
+		img.onerror = () => {
+			clearHandlers(img);
+			if (!this.urls.has(img)) return;
+			if (!img.isConnected) {
+				this.release(img);
 				return;
-			} catch (error) {
-				if (attempt === maxRetries) {
-					img.classList.add("oss-gallery-img-error");
-					img.src = this.getPlaceholderUrl();
-					console.error(
-						"Image load failed after retries:",
-						url,
-						error
-					);
-					return;
-				}
-
-				// 指数退避
-				const delay = Math.min(1000 * Math.pow(2, attempt - 1), 3000);
-				await new Promise((resolve) => window.setTimeout(resolve, delay));
 			}
+			this.queue.failed(img);
+		};
+		img.removeAttribute("data-src");
+		// The service decides when to load; native lazy loading could hold
+		// a slot without ever starting the request.
+		img.loading = "eager";
+		// A retry follows a finished (failed) request, so nothing in flight is
+		// aborted here. Removing the attribute first makes the browser run a
+		// fresh fetch even when the new value equals the old one; failed
+		// images are not kept in the image cache, so no cache-busting needed
+		// (it would also break signed URLs).
+		if (attempt > 1 || img.getAttribute("src") === url) {
+			img.removeAttribute("src");
 		}
+		img.src = url;
 	}
 
-	/**
-	 * 加载图片
-	 */
-	private loadImage(
-		url: string,
-		img: HTMLImageElement,
-		timeout: number
-	): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const timeoutId = window.setTimeout(() => {
-				reject(new Error(`Image load timeout: ${url}`));
-			}, timeout);
+	private showFailed(img: HTMLImageElement): void {
+		clearHandlers(img);
+		this.stopObserving(img);
+		img.classList.add("oss-gallery-img-error");
+		img.src = this.getPlaceholderUrl();
+		console.warn("Image load failed after retries:", this.urls.get(img));
+	}
 
-			img.onload = () => {
-				window.clearTimeout(timeoutId);
-				resolve();
-			};
+	private stopObserving(img: HTMLImageElement): void {
+		this.nearObserver?.unobserve(img);
+		this.visibleObserver?.unobserve(img);
+		this.visible.delete(img);
+	}
 
-			img.onerror = () => {
-				window.clearTimeout(timeoutId);
-				img.onload = null;
-				img.onerror = null;
-				reject(new Error(`Failed to load image: ${url}`));
-			};
-
-			// 重试时 src 可能已是同一 URL，直接重赋值不会再次触发 load 事件
-			if (img.src === url) {
-				img.removeAttribute("src");
-			}
-			img.src = url;
-		});
+	/** Cancel the load, clear the element and forget it. */
+	private release(img: HTMLImageElement): void {
+		const tracked = this.urls.delete(img);
+		this.stopObserving(img);
+		this.queue.cancel(img);
+		if (!tracked) return;
+		clearHandlers(img);
+		// Aborts an in-flight request and frees decoded memory. Removing the
+		// attribute (instead of src = "") fires no error event.
+		img.removeAttribute("src");
 	}
 
 	/**
@@ -174,23 +217,47 @@ export class LazyImageService {
 	}
 
 	/**
-	 * 清理断开的图片元素
+	 * Release tracked images that were removed from the document.
 	 */
 	cleanup(): void {
-		this.imageElements.forEach((img) => {
+		for (const img of [...this.urls.keys()]) {
 			if (!img.isConnected) {
-				this.imageElements.delete(img);
-				img.src = ""; // 释放内存
+				this.release(img);
 			}
-		});
+		}
 	}
 
 	/**
 	 * 销毁服务
 	 */
 	destroy(): void {
+		for (const img of [...this.urls.keys()]) {
+			this.release(img);
+		}
 		this.destroyed = true;
-		this.observer.disconnect();
-		this.imageElements.clear();
+		this.queue.destroy();
+		this.nearObserver?.disconnect();
+		this.visibleObserver?.disconnect();
+		this.nearObserver = null;
+		this.visibleObserver = null;
+		this.visible.clear();
 	}
+}
+
+function clearHandlers(img: HTMLImageElement): void {
+	img.onload = null;
+	img.onerror = null;
+}
+
+/** Nearest scrolling ancestor, or null for the viewport. */
+function findScrollParent(el: HTMLElement): Element | null {
+	let node = el.parentElement;
+	while (node && node !== document.body && node !== document.documentElement) {
+		const overflowY = window.getComputedStyle(node).overflowY;
+		if (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") {
+			return node;
+		}
+		node = node.parentElement;
+	}
+	return null;
 }

@@ -32,10 +32,19 @@ export interface GalleryState {
 }
 
 export interface LazyImageOptions {
+	/** Prefetch margin around the scroll container (default 300px). */
 	rootMargin?: string;
+	/** Visibility threshold for the visible-first priority. */
 	threshold?: number;
+	/** Attempts in total; retries only follow a real load error. */
 	retryCount?: number;
+	/**
+	 * Stall timeout in ms, counted from when a load gets a slot. A stalled
+	 * load gives its slot up but is never aborted or restarted.
+	 */
 	timeout?: number;
+	/** Concurrent loads (default 6). */
+	maxConcurrent?: number;
 	onImageLoaded?: (img: HTMLImageElement, url: string) => void;
 }
 
