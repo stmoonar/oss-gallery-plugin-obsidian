@@ -8,7 +8,7 @@ export interface GeneratedRuntimeFile {
 }
 
 export const GENERATED_RUNTIME_FILES: readonly GeneratedRuntimeFile[] = [
-	{ file: "semantic-worker.js", size: 554113, sha256: "485a20e27a4acf5aae1f77c35518bfef5154b16c6f4b0181a9ef4ec9b6e09d46" },
+	{ file: "semantic-worker.js", size: 640672, sha256: "9e6fadc585ba30860657c9823a93bac739105765355c9d4c8a167157eb00375e" },
 	{ file: "ort-wasm-simd-threaded.asyncify.wasm", size: 26861777, sha256: "49871f5a4409519797e127440868a6d1923339d9185907f301a5b2a1d90af082" },
 	{ file: "ort-wasm-simd-threaded.asyncify.mjs", size: 53057, sha256: "0966b6105cd936744498aa60df7a22cbd47af3374dbc64a9ab561c08a71e3611" },
 ];

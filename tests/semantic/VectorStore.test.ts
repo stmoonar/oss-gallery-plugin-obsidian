@@ -5,7 +5,6 @@ import { currentEmbeddingConfig, seededVector } from "../../src/semantic/Embeddi
 import {
 	headerFromConfig,
 	IndexHeader,
-	INDEX_DIR_NAME,
 	META_FILE,
 	sameHeader,
 	scopeIndexDir,
@@ -712,15 +711,17 @@ describe("VectorStore atomic meta write", () => {
 });
 
 describe("VectorStore helpers", () => {
-	it("scopeIndexDir builds <base>/<pluginDir parts>/semantic-index/<id>", () => {
-		const base = path.join(root, "vault");
-		expect(scopeIndexDir(base, "cfgdir/plugins/oss-gallery", "abc_DEF-123")).toBe(
-			path.join(base, "cfgdir", "plugins", "oss-gallery", INDEX_DIR_NAME, "abc_DEF-123")
-		);
+	it("scopeIndexDir builds <indexRoot>/<vaultId>/<scopeId>", () => {
+		const base = path.join(root, "indexes");
+		expect(scopeIndexDir(base, "vault_1", "abc_DEF-123")).toBe(path.join(base, "vault_1", "abc_DEF-123"));
 	});
 
 	it.each(["", "a/b", "..", "a b", "a.b", "x".repeat(65), "a\\b"])("scopeIndexDir rejects %j", (id) => {
-		expect(() => scopeIndexDir("/vault", "cfgdir/plugins/oss-gallery", id)).toThrow(/Invalid scope id/);
+		expect(() => scopeIndexDir("/indexes", "vault", id)).toThrow(/Invalid scope id/);
+	});
+
+	it.each(["", "..", "a/b", "a\\b", "a.b"])("scopeIndexDir rejects vault id %j", (id) => {
+		expect(() => scopeIndexDir("/indexes", id, "scope")).toThrow(/Invalid vault id/);
 	});
 
 	it("headerFromConfig copies exactly the header fields", () => {

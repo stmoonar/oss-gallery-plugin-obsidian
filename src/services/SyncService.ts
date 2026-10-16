@@ -1,5 +1,12 @@
 import { SyncChanges, ServiceDependencies } from '../types/gallery';
-import { OssImage } from '../types/oss';
+import { ListResult, OssImage } from '../types/oss';
+
+export interface SyncResult {
+    objects: OssImage[];
+    changes: SyncChanges;
+    /** The listing as returned by the provider (completeness + covered prefix). */
+    listing: ListResult;
+}
 
 export class SyncService {
     constructor(private deps: ServiceDependencies) {}
@@ -7,14 +14,16 @@ export class SyncService {
     /**
      * Sync with remote server
      */
-    async sync(localObjects: OssImage[]): Promise<{ objects: OssImage[]; changes: SyncChanges }> {
+    async sync(localObjects: OssImage[]): Promise<SyncResult> {
         try {
-            const remoteObjects = await this.fetchRemoteObjects();
+            const listing = await this.fetchRemoteObjects();
+            const remoteObjects = listing.items;
             const changes = this.detectChanges(localObjects, remoteObjects);
 
             return {
                 objects: remoteObjects,
-                changes
+                changes,
+                listing,
             };
         } catch (error) {
             console.error('Remote sync failed:', error);
@@ -25,12 +34,13 @@ export class SyncService {
     /**
      * Fetch remote objects, scoped to the configured base path (if any).
      */
-    private async fetchRemoteObjects(): Promise<OssImage[]> {
+    private async fetchRemoteObjects(): Promise<ListResult> {
         const prefix = this.deps.listPrefix || undefined;
-        const objects = await this.deps.provider.listImages(prefix);
-        return objects.sort((a, b) =>
+        const listing = await this.deps.provider.listImages(prefix);
+        listing.items.sort((a, b) =>
             (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
         );
+        return listing;
     }
 
     /**

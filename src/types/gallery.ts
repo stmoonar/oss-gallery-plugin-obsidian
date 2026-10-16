@@ -11,12 +11,21 @@ export interface SyncChanges {
 	modified: OssImage[];
 }
 
+/** A ranked semantic result; re-applied to every new listing (docs §7.6). */
+export type SemanticResultState =
+	| { kind: "semantic"; query: string; hits: { key: string; score: number }[] }
+	| { kind: "similar"; key: string; hits: { key: string; score: number }[] };
+
 export interface GalleryState {
 	remoteObjects: OssImage[];
 	visibleImages: OssImage[];
 	isSearching: boolean;
 	savedSearchTerm: string;
 	useRegexSearch: boolean;
+	/** The search box is in semantic mode (per view session). */
+	useSemanticSearch: boolean;
+	/** Shown semantic / "find similar" result, ranked (null = normal list or text search). */
+	semanticResult: SemanticResultState | null;
 	/** Key of the image shown in the preview modal (keys survive deletes, indexes do not). */
 	currentPreviewKey: string | null;
 	isLoading: boolean;

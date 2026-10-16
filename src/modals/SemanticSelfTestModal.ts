@@ -72,7 +72,7 @@ export class SemanticSelfTestModal extends Modal {
 				for (const v of row) {
 					const td = tr.createEl("td", { text: v === null ? "-" : v.toFixed(3) });
 					if (v !== null && v === best) {
-						td.addClass("mod-cta");
+						td.addClass("oss-gallery-semantic-best");
 					}
 				}
 			});

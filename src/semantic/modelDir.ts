@@ -9,6 +9,8 @@ import * as path from "path";
 
 export const APP_DIR_NAME = "obsidian-oss-gallery";
 export const MODELS_DIR_NAME = "models";
+/** Per-device semantic indexes: <appDir>/indexes/<vaultId>/<scopeId>/ (§4.4). */
+export const INDEXES_DIR_NAME = "indexes";
 
 export interface PlatformEnv {
 	platform: string;
@@ -47,6 +49,10 @@ export function defaultModelDir(p: PlatformEnv = currentPlatform()): string {
 	return pathFor(p.platform).join(defaultAppDir(p), MODELS_DIR_NAME);
 }
 
+export function defaultIndexDir(p: PlatformEnv = currentPlatform()): string {
+	return pathFor(p.platform).join(defaultAppDir(p), INDEXES_DIR_NAME);
+}
+
 export type ResolvedModelDir =
 	| { ok: true; dir: string; isDefault: boolean }
 	| { ok: false; error: "relative-path" };
@@ -60,10 +66,22 @@ export function resolveModelDir(
 	configured: string,
 	p: PlatformEnv = currentPlatform()
 ): ResolvedModelDir {
+	return resolveConfiguredDir(configured, defaultModelDir(p), p);
+}
+
+/** Index directory setting; same rules as the model directory. */
+export function resolveIndexDir(
+	configured: string,
+	p: PlatformEnv = currentPlatform()
+): ResolvedModelDir {
+	return resolveConfiguredDir(configured, defaultIndexDir(p), p);
+}
+
+function resolveConfiguredDir(configured: string, defaultDir: string, p: PlatformEnv): ResolvedModelDir {
 	const P = pathFor(p.platform);
 	const trimmed = configured.trim();
 	if (trimmed === "") {
-		return { ok: true, dir: defaultModelDir(p), isDefault: true };
+		return { ok: true, dir: defaultDir, isDefault: true };
 	}
 	let candidate = trimmed;
 	if (candidate === "~" || candidate.startsWith("~/") || candidate.startsWith("~\\")) {
@@ -73,5 +91,5 @@ export function resolveModelDir(
 		return { ok: false, error: "relative-path" };
 	}
 	const dir = P.normalize(candidate);
-	return { ok: true, dir, isDefault: dir === P.normalize(defaultModelDir(p)) };
+	return { ok: true, dir, isDefault: dir === P.normalize(defaultDir) };
 }

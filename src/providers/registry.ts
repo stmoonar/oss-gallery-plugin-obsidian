@@ -12,6 +12,7 @@ import { ImgurProvider } from './ImgurProvider';
 import { R2Provider } from './R2Provider';
 import { S3Provider } from './S3Provider';
 import { LocalProvider } from './LocalProvider';
+import { getIndexIdentity, IndexIdentity, INDEX_IDENTITY } from './indexIdentity';
 
 export interface ProviderCapabilities {
     upload: boolean;
@@ -32,6 +33,13 @@ export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = key
     isAvailable?(app?: App): boolean;
     isConfigured(settings: ProviderSettingsMap[K], app?: App): boolean;
     create(settings: ProviderSettingsMap[K], app?: App): IOssProvider;
+    /**
+     * Settings fields that decide which objects a listing sees (bucket,
+     * endpoint, repo, path...; never credentials), hashed into the semantic
+     * index scope id (docs/semantic-search.md §4.6). Without it the provider
+     * cannot be indexed. Defined in ./indexIdentity.ts.
+     */
+    getIndexIdentity?(settings: ProviderSettingsMap[K]): IndexIdentity;
 }
 
 const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
@@ -165,6 +173,13 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
     },
 ];
 
+// Attach the index identity getters (kept in a pure module for tests).
+for (const entry of PROVIDER_ENTRIES) {
+    if (INDEX_IDENTITY[entry.id]) {
+        entry.getIndexIdentity = (settings) => getIndexIdentity(entry.id, settings) ?? {};
+    }
+}
+
 /**
  * Provider registry - single source of truth for all provider metadata.
  * To add a new provider, only add an entry to PROVIDER_ENTRIES above.
@@ -219,6 +234,18 @@ export class ProviderRegistry {
         }
         return !entry.acceptedFileTypes
             || (entry.acceptedFileTypes as string[]).includes(fileType);
+    }
+
+    /**
+     * Index identity of a provider's settings, or null when it cannot be
+     * indexed (no list capability or no identity, e.g. Imgur).
+     */
+    getIndexIdentity(id: string, settings: unknown, app?: App): IndexIdentity | null {
+        const entry = this.get(id, app);
+        if (!entry || !entry.capabilities.list || !entry.getIndexIdentity || !settings) {
+            return null;
+        }
+        return entry.getIndexIdentity(settings as never);
     }
 
     getLabel(id: string, app?: App): string {

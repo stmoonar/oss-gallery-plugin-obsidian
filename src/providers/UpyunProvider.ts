@@ -1,10 +1,10 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { UpyunSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
-import { MAX_LIST_REQUESTS, warnListingCapped } from './shared/listing';
+import { ListingCollector, MAX_LIST_REQUESTS } from './shared/listing';
 import {
     buildListPrefix,
     buildObjectKey,
@@ -62,22 +62,23 @@ export class UpyunProvider implements IOssProvider {
         directory: string,
         visitedDirectories: Set<string>,
         seenPaths: Set<string>,
-        budget: { requests: number }
-    ): Promise<OssImage[]> {
+        budget: { requests: number },
+        images: ListingCollector,
+        isRoot: boolean
+    ): Promise<void> {
         const directoryKey = normalizePath(directory);
         if (visitedDirectories.has(directoryKey)) {
             console.warn(`Upyun: skipping duplicate directory "${directoryKey || '/'}" during listing`);
-            return [];
+            return;
         }
         visitedDirectories.add(directoryKey);
 
-        const images: OssImage[] = [];
         let iter = '';
 
         while (true) {
             if (budget.requests >= MAX_LIST_REQUESTS) {
-                warnListingCapped(this.name, MAX_LIST_REQUESTS);
-                return images;
+                images.capped(MAX_LIST_REQUESTS);
+                return;
             }
             budget.requests++;
 
@@ -104,10 +105,13 @@ export class UpyunProvider implements IOssProvider {
                 throw: false,
             });
 
-            // A missing directory (e.g. the base path before the first
-            // upload) simply has no images.
+            // A missing base path (e.g. before the first upload) simply has
+            // no images; a subdirectory vanishing mid-walk was missed.
             if (response.status === 404) {
-                return images;
+                if (!isRoot || iter) {
+                    images.markIncomplete();
+                }
+                return;
             }
             if (response.status !== 200) {
                 throw new Error(`List failed with status: ${response.status}`);
@@ -125,9 +129,7 @@ export class UpyunProvider implements IOssProvider {
                 }
                 if (isUpyunDirectory(entry.type)) {
                     seenPaths.add(entryPath);
-                    images.push(
-                        ...await this.listDirectory(entryPath, visitedDirectories, seenPaths, budget)
-                    );
+                    await this.listDirectory(entryPath, visitedDirectories, seenPaths, budget, images, false);
                     continue;
                 }
                 if (isImageFile(entryPath)) {
@@ -142,7 +144,7 @@ export class UpyunProvider implements IOssProvider {
             }
 
             if (!page.iter || page.iter === iter) {
-                return images;
+                return;
             }
             iter = page.iter;
         }
@@ -207,25 +209,33 @@ export class UpyunProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         // Upyun list API
+        const listPrefix = buildListPrefix(this.settings.path, prefix);
         if (!this.settings.operator || !this.settings.password || !this.settings.bucket) {
-            return [];
+            return { items: [], complete: false, prefix: listPrefix };
         }
 
         try {
             // Uploads land under "<path>/<base path>/", so walk that directory.
-            const rootDirectory = normalizePath(buildListPrefix(this.settings.path, prefix));
-            return await this.listDirectory(
-                rootDirectory,
+            const images = new ListingCollector(this.name, listPrefix);
+            await this.listDirectory(
+                normalizePath(listPrefix),
                 new Set<string>(),
                 new Set<string>(),
-                { requests: 0 }
+                { requests: 0 },
+                images,
+                true
             );
+            return images.result();
         } catch (error) {
             console.error('Failed to list Upyun images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    listingKeyForUpload(path: string): string {
+        return buildObjectKey(this.settings.path, path);
     }
 
     async deleteImage(key: string): Promise<void> {

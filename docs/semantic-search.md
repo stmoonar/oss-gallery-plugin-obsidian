@@ -1,6 +1,6 @@
 # 语义搜索（Semantic Search）设计文档
 
-状态：设计已定，P0 spike 完成，P1、P2 已实施（分支 `feat/semantic-search`），P3–P4 待实施。
+状态：设计已定，P0 spike 完成，P1–P4 已实施（分支 `feat/semantic-search`）；P4 的端到端验收（Local + 一个 S3 兼容 provider，真实 GPU）待维护者按 §10 手工完成。
 读者：维护者与后续实施者（人或 AI）。本文是实施依据，标注"已定"的内容不要自行更改。
 P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 `spike/semantic-p0/RESULTS.md`（下文引用为 [P0]）。
 
@@ -35,7 +35,7 @@ P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 
 | D4 | Opt-in 分发：用户在设置中明确确认后才下载 | 插件体积与隐私；下载量大需知情同意 |
 | D5 | worker bundle（~547 KB）+ ORT WebGPU wasm（~25.6 MB）从本项目 GitHub Release 下载；模型权重从 Hugging Face 下载；每个文件由写死在 main.js 中的 SHA-256 校验后才使用 | 防篡改；代码类资源来源可控 |
 | D6 | 模型/runtime 存系统用户目录（Node `fs`），路径可配置，所有 vault 共享 | Cache API 可被清除且不透明；OPFS 同理；插件目录会被 Obsidian Sync/iCloud 同步 316 MB。`isDesktopOnly: true` 所以可用 `fs` |
-| D7 | 索引文件存插件目录（不进 `data.json`），每个 scope 一份 | 体积小（约 1 KB/图）可被同步；`data.json` 不适合放二进制 |
+| D7 | 索引文件**按设备**存在 vault 之外的 `semantic.indexDir`（默认 `<appDir>/indexes`，与模型目录同级），路径 `<indexDir>/<vaultId>/<scopeId>/`；不进 `data.json`，不同步，每台设备各自建立（P3 修订，取代"存插件目录"） | 插件目录会被 Obsidian Sync/iCloud 同步，多设备并发写 `meta.json`/`vectors.bin` 会冲突；索引是可重建缓存，按设备存放从设计上消除同步冲突；`data.json` 不适合放二进制 |
 | D8 | 向量截断到 256 维、重新归一化、float32 | P0 在 768/256 维下检索结果一致；约 1 KB/图 |
 | D9 | 只排序，不设绝对阈值 | 不相关对约 0.5，正确对约 0.73，分布随内容变化 [P0 §6] |
 | D10 | 图像 token budget 默认 70（`processor.image_processor.max_soft_tokens`），可选 70/140/280，修改即全量重建 | 70 token：309 ms/张，批量 8 时 235 ms/张；280 token：1.43 s/张且批量无收益 [P0 §3] |
@@ -58,9 +58,9 @@ P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 
 │       ▼                                        │                                │
 │  SemanticController (plugin-level, in main.ts) │                                │
 │    ├─ WebGpuProbe                              │                                │
-│    ├─ SemanticIndexService ──── VectorStore ──► <pluginDir>/semantic-index/     │
+│    ├─ SemanticIndexService ──── VectorStore ──► <indexDir>/<vaultId>/          │
 │    │     ▲  (per scope, serial queue)          │     <scopeId>/{meta.json,      │
-│    │     │ reconcile/enqueue                   │               vectors.bin}     │
+│    │     │ reconcile/enqueue                   │      vectors.bin,status.json}  │
 │    │     │                                     │                                │
 │  OssGalleryView ── SyncService.sync() ─ listImages → {items, complete}          │
 │    │  SearchComponent[语义] ──► SemanticSearchService.query()                   │
@@ -72,16 +72,14 @@ P0 实测报告：分支 `spike/semantic-search-p0`，commit `6683806`，文件 
 │  │ WebGPU, ~175 MB, idle→kill  │   │ WebGPU, batch 8, idle→kill  │              │
 │  └─────────────────────────────┘   └─────────────────────────────┘              │
 └─────────────────────────────────────────────────────────────────────────────────┘
-        图片字节来源：Local = fs 读取；远程 = fetch(url)；上传 = 内存中的 File
+        图片字节来源：Local = fs 读取；远程 = requestUrl(url)（被拒时签名 GET）；上传 = 内存中的 File
 ```
 
 ## 4. 模块与接口
 
 新增目录 `src/semantic/`（不放入现有 `src/services/` 以便整体 lazy-load）。以下为接口草图，签名可在实现时微调，语义不变。
 
-### 4.1 现有接口的改动（P3）
-
-当前 `IStorageProvider.listImages(prefix?)` 返回 `Promise<OssImage[]>`（`src/types/oss.ts`）。改为：
+### 4.1 现有接口的改动（P3，已实现）
 
 ```ts
 // src/types/oss.ts
@@ -90,7 +88,7 @@ export interface OssImage {
     url: string;
     lastModified?: Date;
     size: number;
-    /** S3 系 etag / GitHub blob sha。用于 fingerprint；缺省则退化为 size+lastModified。 */
+    /** S3 系 ETag（含引号原样）/ Qiniu hash / GitHub blob sha。用于 fingerprint；缺省则退化为 size+lastModified。 */
     etag?: string;
 }
 
@@ -98,20 +96,42 @@ export interface ListResult {
     items: OssImage[];
     /** false = 列表被截断或部分请求失败；此时绝不能据此判定"已删除"。 */
     complete: boolean;
+    /** 本次列表覆盖的 key 前缀（'' = 全部）；只对这个前缀之下的已索引 key 做删除对账。 */
+    prefix: string;
 }
 
 interface IStorageProvider {
     listImages(prefix?: string): Promise<ListResult>;
+    /** 上传路径 → 列表中的 key；无法预知（S.EE 自行分配 id）则不实现 / 返回 null。 */
+    listingKeyForUpload?(path: string): string | null;
 }
 ```
 
-- 所有 provider 的 `listImages` 都要改：Aliyun / Tencent / Qiniu / S3Compatible（`MAX_LIST_PAGES`）、GitHub / Upyun（`MAX_LIST_REQUESTS`）、SmMs（自有 `SEE_MAX_PAGES`）、Local、Imgur（返回 `{ items: [], complete: true }`）。
-- 凡调用 `warnListingCapped(...)` 的分支，同时置 `complete = false`；中途请求抛错但已返回部分结果的分支同样置 `false`。
-- `src/providers/shared/listing.ts` 可新增辅助 `ListingCollector`，统一 push 与 `markIncomplete()`。
-- `SyncService.sync()` 返回值增加 `complete: boolean`；`SyncService.fetchRemoteObjects` 透传。`detectChanges` 的 `deleted` 在 `complete === false` 时对索引侧无意义（视图侧现有行为不在本特性范围内）。
-- 各 provider 填充 `etag`：S3 系 `<ETag>`、Aliyun/Tencent/Qiniu 列表自带的 etag/hash 字段、GitHub 取 tree entry 的 `sha`。取不到则留空。
+与草图的差异：`ListResult` 增加 `prefix`。各 provider 的 key 空间不同（Aliyun/Tencent/Qiniu/Upyun 的 key 含 provider 自身的 `path` 设置，S3 系/GitHub/Local 不含，S.EE 忽略前缀），只有 provider 知道列表实际覆盖了哪个前缀，所以由它返回；对账不再自行推断。
 
-### 4.2 Fingerprint
+`src/providers/shared/listing.ts`：
+
+- `ListingCollector(provider, prefix)`：`push()`、`markIncomplete()`、`capped(limit)`（= `warnListingCapped` + `markIncomplete`）、`result()`。
+- `collectPages(collector, maxPages, fetchPage)`：游标分页通用循环（S3 系 V2 continuation token、Aliyun/Tencent V1 marker、Qiniu marker）。到达 `maxPages`、服务器说"还有"却不给游标、或游标重复（会死循环）时 `complete = false`；请求错误照旧抛出（视图的错误处理不变）。
+
+各 provider 的 `complete = false` 条件：
+
+| provider | 条件 |
+|---|---|
+| S3 / R2 / MinIO（`S3CompatibleProvider`）、Aliyun、Tencent、Qiniu | `MAX_LIST_PAGES`；`IsTruncated` 但无 / 重复游标 |
+| GitHub | tree 截断后改走目录遍历：`MAX_LIST_REQUESTS`、超过 `GITHUB_MAX_WALK_DEPTH` 的子目录、遍历中子目录 404（根目录 404 = 空列表，仍完整） |
+| Upyun | `MAX_LIST_REQUESTS`；子目录或续页 404 |
+| S.EE（SmMs） | `SEE_MAX_PAGES`；API 重复返回同一页（忽略分页）。前缀恒为 `''` |
+| Local | 存储目录不可访问（盘符未挂载等，不再当作"全部删除"）；任一子目录 `readdir` 失败；文件在 `readdir` 与 `stat` 之间消失 |
+| 任一 provider | 未配置（返回空列表时 `complete = false`） |
+| Imgur | `{ items: [], complete: true, prefix: '' }`（registry 中不可列表，不会建索引） |
+
+- etag：S3 系 / Aliyun / Tencent 取 `<ETag>`，Qiniu 取 `hash`，GitHub 取 tree / contents entry 的 `sha`；Upyun、S.EE、Local 无，用 `size+lastModified`。
+- `listingKeyForUpload`：Local、S3 系、GitHub = 上传路径；Aliyun/Tencent/Qiniu/Upyun = `buildObjectKey(settings.path, path)`；S.EE / Imgur 不实现（上传钩子跳过，下一次列表时按普通新增处理）。
+- `SyncService.sync()` 返回 `{ objects, changes, listing }`（`listing` 为 provider 原样的 `ListResult`，`items` 已按时间排序）。视图对 `objects` / `changes` 的使用不变。
+- `LocalProvider.readObjectBytes(key)`：经 `resolveWithinStorage` 解析（拒绝 `..` 越界），`fs.promises.readFile`。
+
+### 4.2 Fingerprint（P3，已实现：`src/semantic/fingerprint.ts`）
 
 ```ts
 export function fingerprint(o: OssImage): string {
@@ -119,6 +139,8 @@ export function fingerprint(o: OssImage): string {
     return `s:${o.size}:${o.lastModified?.getTime() ?? 0}`;
 }
 ```
+
+P3 补充：插件内上传在列表还没报告真实 etag/mtime 之前存临时 fingerprint `u:<size>`；之后第一次出现该 key 的列表若 size 相同（或 size 未知为 0），直接 `setFingerprint` 为真实值，**不重新 embed**；size 不同则按"已修改"重新 embed。
 
 ### 4.3 EmbeddingBackend（P2，已实现）
 
@@ -182,7 +204,7 @@ model = await AutoModel.from_pretrained(id, { ...opts, config, device: 'webgpu',
 - `fsModelCache`：只服务宿主列出的文件（`files`），把 `https://huggingface.co/<model>/resolve/<revision>/<file>` 映射到 P1 写入的 `<modelDir>/huggingface.co/...`；不在列表内 → miss；列表内但缺失/大小不符 → 抛错；`put` 不写盘。**`/resolve/main/` 别名**：transformers.js 4.3.1 的 `get_tokenizer_files` / `get_processor_files` 探测 `tokenizer_config.json` / `preprocessor_config.json` 是否存在时**不传 revision**（固定问 `main`），不做别名则 tokenizer 配置被判为不存在，加载报 `reading 'tokenizer_class'`。因本地只有固定 revision 的文件，`main` 键直接映射到它。
 - Node `fs` 通过 `self.require`（Obsidian worker 有 `nodeIntegrationInWorker`，Blob URL worker 也有）取得；按属性读取，esbuild 不会解析或替换它，lint 也无需 `eval`。仍用 `define: { process: 'undefined' }` 打包（D14）。
 - 文本：`processor(queries.map(q => QUERY_PREFIX + q))`，批量一次调用。
-- 图片（`PREPROCESS_VERSION = 1`）：`createImageBitmap(new Blob([bytes], {type: mime}))`；若像素数 > `max(1 MP, budget × 9 × 256 × 4)`（处理器目标像素的 4 倍）则用 `createImageBitmap(..., {resizeWidth, resizeHeight, resizeQuality: 'high'})` 等比缩小；画到白底 `OffscreenCanvas`（透明像素不变黑）→ `new RawImage(rgba, w, h, 4)`。解码失败（如 SVG、损坏文件）→ 该张 `code: 'decode'`。
+- 图片（`PREPROCESS_VERSION = 1`）：`createImageBitmap(new Blob([bytes], {type: mime}))`；若像素数 > `max(1 MP, budget × 9 × 256 × 4)`（处理器目标像素的 4 倍）则用 `createImageBitmap(..., {resizeWidth, resizeHeight, resizeQuality: 'high'})` 等比缩小；画到白底 `OffscreenCanvas`（透明像素不变黑）→ `new RawImage(rgba, w, h, 4)`。解码失败（如损坏文件）→ 该张 `code: 'decode'`。P3：`mime === 'image/tiff'` 时先用 UTIF.js 解码为 `ImageData` 再走同一路径；SVG 在主线程栅格化为 PNG 后才送入 worker（§12）。
 - 批量：`processor(null, imgs.map(i => [i]))`；每批张数按 budget 查表 `MAX_BATCH_BY_BUDGET = {70: 8, 140: 4, 280: 1}`（P0：70 token 批 8 有收益；280 token 批量无收益且每批 4 张多占约 900 MB 共享显存；140 未测，取与 8×70 相同的 patch 数）。整批推理失败时逐张重试，只让坏图失败。
 - 输出：`sentence_embedding` 取前 256 维 → L2 归一化 → `Float32Array`（`truncateAndNormalize`）。
 
@@ -190,21 +212,24 @@ model = await AutoModel.from_pretrained(id, { ...opts, config, device: 'webgpu',
 
 若未来 Obsidian 去掉 `nodeIntegrationInWorker`，退回"主线程代理 fs"方案 [P0 §7]，接口不变（`fsModelCache` 的 `CacheFs` 换成 postMessage 代理）。
 
-### 4.4 VectorStore（P2，已实现）
+### 4.4 VectorStore（P2 实现，P3 扩展）
 
 文件：`src/semantic/VectorStore.ts`。
 
 ```ts
 export interface IndexHeader { modelId; revision; dtype; dims; imageTokenBudget; preprocessVersion }
 export function headerFromConfig(cfg: EmbeddingConfig): IndexHeader;
-export function scopeIndexDir(vaultBasePath, manifestDir, scopeId): string;   // <vault>/<manifest.dir>/semantic-index/<scopeId>
+export const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export function scopeIndexDir(indexRoot, vaultId, scopeId): string;   // <indexRoot>/<vaultId>/<scopeId>（P3 修订）
 
 export class VectorStore {
-    static open(dir: string, header: IndexHeader, opts?: { fs?, timers?, flushDelayMs?, onFlushError? }): VectorStore;
+    static open(dir: string, header: IndexHeader, opts?: { fs?, timers?, flushDelayMs?, onFlushError?, asyncIo?, asyncFs? }): VectorStore;
     openResult: { status: 'created' | 'loaded' | 'reset' | 'repaired'; reason?: 'header-mismatch' | 'corrupt-meta'; dropped: number; recoveredTmp: boolean };
     get(key): { fp; vec; missingSince?; missCount? } | undefined;
-    has(key); keys(); size; stats(); holeRatio();
+    peek(key): { fp; missingSince?; missCount? } | undefined;   // P3：不复制向量
+    has(key); keys(); size; stats(); holeRatio(); visibleCount();
     upsert(key, fp, vec): void;               // 新增或重新 embed；清除 tombstone
+    setFingerprint(key, fp): void;            // P3：只换 fingerprint（上传的临时 fp → 列表的真实 fp）
     markMissing(key, now): void;              // 首次 missingSince=now, missCount=1；之后 missCount++
     restore(key): void;
     remove(key): void;                        // 立即清除
@@ -221,52 +246,110 @@ export class VectorStore {
 - 修改后按 `flushDelayMs`（默认 2 s）防抖自动 flush；插件卸载时调用 `close()`（同步写，退出 Obsidian 时也能落盘）。
 - `search` 为暴力点积（向量已归一化）。1 万张 × 256 维 ≈ 10 MB，主线程可接受；若超 5 万张再移入 worker（§11）。
 - `allow` = 当前内存中的远程对象 key 集合（§7.6）。
-- **I/O 选择**：插件为 `isDesktopOnly`，直接用 Node 同步 `fs` 操作 `adapter.getBasePath()` 解析出的绝对路径，而不是 `DataAdapter`：需要定位写（只追加新槽位）、`fsync`、覆盖式 `rename` 与 `ftruncate`，这些 `DataAdapter` 都没有；同步调用保证卸载时 flush 可靠；写入量小（新增槽位 + meta；整文件重写只在 compaction 时发生，1 万张约 10 MB）。也便于在纯 Node 单元测试中注入故障（`StoreFs` 接口）。
+- **I/O 选择**：插件为 `isDesktopOnly`，直接用 Node `fs` 操作 `semantic.indexDir` 下的绝对路径，而不是 `DataAdapter`：需要定位写（只追加新槽位）、`fsync`、覆盖式 `rename` 与 `ftruncate`，这些 `DataAdapter` 都没有；同步调用保证卸载时 flush 可靠。也便于在纯 Node 单元测试中注入故障（`StoreFs` 接口）。
+- **`asyncIo`（P3）**：实测 1 万条时同步 flush（追加 8 个槽位 + 重写 1.1 MB meta + 两次 fsync）阻塞主线程 13–20 ms，索引期间每 2 s 一次即可见卡顿。`SemanticIndexService` 打开的 store 用 `asyncIo: true`：主线程只做快照（`JSON.stringify` meta + 复制新槽位）和最后一步 `renameSync`，写入与 fsync 走 `fs.promises`，实测最大阻塞 7–14 ms。协议不变（先追加槽位并 fsync，再原子替换 meta），区别：
+  - meta 写到私有临时文件 `meta.json.a<N>.tmp`；打开时直接删除这类孤儿（从未提交，追加的槽位按"未提交尾部"截掉）。
+  - 槽位按固定偏移写入、不 `ftruncate`，与并发的 `flushSync` 只会写入相同字节。
+  - 任何同步写（`flushSync`、compaction、`clear`、`close`）都会递增 `writeGeneration`；异步 flush 在 rename 前若发现代数变化或已关闭，丢弃自己的临时 meta，绝不用旧 meta 覆盖新状态。`clear` 改为 unlink 后新建 `vectors.bin`，使仍持有旧文件句柄的异步写落到旧 inode。
+  - 期间发生的修改使 `dirty` 保持为 true，由下一次 flush 提交。
 
-### 4.5 SemanticIndexService（P3）
+### 4.5 SemanticIndexService（P3，已实现）
 
-插件级单例（在 `main.ts` 中创建，生命周期随插件），**按 scope 隔离**，不属于某个 `OssGalleryView`（因为 `SyncService` 目前由每个 view 实例各自 `initializeServices()` 创建）。
+文件：`src/semantic/SemanticIndexService.ts`（纯逻辑，不 import Obsidian；UI 通过 deps 注入）+ `src/semantic/SemanticIndexing.ts`（Obsidian 胶水：scope、取字节、对话框、Notice、状态栏、视图钩子、命令）。插件级单例，生命周期随插件，按 scope 隔离。
 
 ```ts
-export interface IndexScope { id: string; providerId: string; listPrefix: string; }
+export interface IndexScope { id: string; providerId: string; listPrefix: string; local: boolean }
+
+export interface IndexServiceDeps {
+    indexRoot(): string | null; vaultId: string; embeddingConfig(): EmbeddingConfig;
+    isEnabled(): boolean;              // semantic.enabled：对账与钩子
+    isReady(): boolean;                // enabled 且模型已安装：可以 embed
+    autoIndex(): boolean;
+    createBackend(): EmbeddingBackend | null;                       // index 模式
+    readBytes(scope, obj): Promise<ArrayBuffer>;                    // Local=fs，远程=requestUrl(obj.url)
+    rasterizeSvg(bytes): Promise<ArrayBuffer>;                      // 主线程
+    confirmTraffic(scope, estimate, reason): Promise<boolean>;      // §9.4；reason = manual | auto-first | auto-large
+    onRunFinished?(summary: RunSummary): void;
+    now?(); timers?; storeOptions?; prepare?;                       // 测试注入
+}
 
 export class SemanticIndexService {
-    beginListing(scope: IndexScope): number;                          // 返回单调递增 token
-    reconcile(token: number, scope: IndexScope, r: ListResult): void; // 见 §7；过期 token 直接丢弃
-    onUploaded(scope: IndexScope, obj: OssImage, bytes: ArrayBuffer): void;
-    onDeleted(scope: IndexScope, key: string): void;
-    estimate(scope: IndexScope): { pendingCount: number; pendingBytes: number; indexedCount: number };
-    start(scope): void; pause(): void; cancel(): void;               // provider 切换时 cancel
-    onProgress(cb: (p: { done: number; total: number; state: 'idle'|'running'|'paused' }) => void): () => void;
+    beginListing(scope): number;                                    // 全局单调递增 token
+    reconcile(token, scope, r: ListResult): boolean;                // §7；过期 token / 功能关闭 → false
+    onUploaded(scope, obj, bytes): void;                            // 用手头字节，零流量
+    onDeleted(scope, key): void;                                    // 立即 remove
+    estimate(scope): { pendingCount; pendingBytes; indexedCount; unknownSizeCount? };  // Local 的 pendingBytes = 0；size 为 0 的远程对象计入 unknownSizeCount（P4）
+    start(scope, { auto? }): Promise<boolean>;                      // 远程先确认（§9.4）
+    pause(); resume(); cancel(); isRunning(); isPaused(); whenIdle();
+    onScopeChanged(currentScopeId | null): void;                    // provider/scope 切换：取消其他 scope、作废其 token
+    closeAll(): void;                                               // indexDir / token budget 变化、清除索引
+    getProgress(); onProgress(cb): () => void;                      // { state, scopeId, done, total, currentKey }（currentKey：P4）
+    getStats(scope): IndexStats;                                    // 各状态计数 + 非 ok 条目及原因（§12）
+    resetFailed(scope): number;                                     // P4 "重试失败"：清除 failed 记录（次数与退避），重新进入待办
+    hasIndex(scope); isIndexed(scope, key); getSearchStore(scope); getRemote(scope);
+    dispose(): void;                                                // 卸载：cancel + close 所有 store（同步落盘）
 }
 ```
 
-- 内部为串行低优先级队列，批大小 8；暂停/取消可中断。
-- **取字节**：Local 用 `fs` 读取（需把 `LocalProvider.resolveWithinStorage` 由 private 暴露为 `readBytes(key)` 之类的公共方法，保持路径越界检查）；远程用 `fetch(obj.url)`；上传用手头 `File`。
-- 变更检测：复用 `SyncService` 的 diff 语义，但 `detectChanges` 目前是 private 且只比较 `lastModified`。索引侧以 `fingerprint()` 为准自行比较（`VectorStore.get(key).fp !== fingerprint(obj)`），不依赖 view 的 `SyncChanges`。
+- **串行低优先级 runner**：一次一批（批大小 = `MAX_BATCH_BY_BUDGET`：70→8、140→4、280→1），先处理上传队列，再处理已授权 scope 的待办；批与批之间可暂停 / 取消。取消会终止 worker（D13），未处理项留在待办中，下次 `start` 继续；已处理的不回退。
+- **授权**：一次 `start` 授权一次 run；run 结束后新出现的待办需要再次 `start`（或 `autoIndex` 按 §9.4 规则自动开始）。
+- **取字节**：Local 用 `LocalProvider.readObjectBytes`（零流量）；远程用 `src/semantic/remoteBytes.ts` `fetchRemoteImageBytes`（P4）：Obsidian `requestUrl({ url: obj.url, throw: false })`——不受 `app://obsidian.md` 源的 CORS 限制（`fetch()` 需要存储桶配置 CORS，大多数用户没有配置；`<img>` 不需要），走系统代理；URL 与图库显示的相同，每次取自最新列表（预签名 URL 原样使用），缓存键永远是 key + fingerprint（D15）。401/403 且 provider 实现了 `signedObjectGet(key)`（S3 / R2 / MinIO：SigV4 签名 GET，与列表/删除同一套签名）时再试一次签名请求；仍失败按状态码给出可读原因（本地化）：401/403 → "拒绝访问（HTTP 403）：请检查存储桶权限，或将图片设为公开可读"，404 → "找不到"，其他 → "下载失败（HTTP n）"，网络错误 → "网络错误：…"，记为 `failed`（重试规则见 §12）。上传用手头 `File` 的字节。单元测试：`tests/semantic/remoteBytes.test.ts`（模拟 requestUrl：200、预签名 URL、403 无签名 / 签名重试成功 / 二次 403、404 不尝试签名、500、网络错误、无 URL）。
+- **worker**：index 模式 backend 懒创建并复用，空闲 30 s 后由 `WorkerEmbeddingBackend` 自行回收；backend 级错误（`model-load`、`runtime-verify`、`worker-crashed`…）终止本次 run 并以 Notice 报告，未处理项留在待办；token budget 改变时换新 backend。
+- **变更检测**：只看 `fingerprint()`（§4.2），不依赖 `SyncService.detectChanges`。
+- **视图挂接**：`OssGalleryView` 在 `syncService.sync()` 前 `beginListing`、在 `isCurrentLoad(generation)` 通过后 `reconcile`（手动刷新与 2 分钟自动同步两条路径；自动同步即使图库无变化也对账）；删除成功后 `onDeleted`。上传成功后 `main.ts` 调 `SemanticIndexing.onUploaded`（仅图片、key 可预知、且该 scope 已有索引时）。
+- **run 结束**：每个 store `compactIfNeeded()` + 异步 flush，status 落盘；`onRunFinished(summary)` → Notice（§12）。
 
-### 4.6 Scope id
+### 4.6 Scope id（P3，已实现）
 
 ```ts
-scopeId = sha256(JSON.stringify({ providerId, identity, listPrefix })).slice(0, 16)
+scopeId = sha256(stableStringify({ providerId, identity, listPrefix })).slice(0, 16)   // src/semantic/fingerprint.ts computeScopeId
 ```
 
-`identity` 为 provider 配置中决定"桶/仓库/目录"的字段：bucket、endpoint、region、repo+branch、Local 的 `storagePath`、path 等。凭证（key/secret/token）**不得**参与哈希。建议在 `ProviderRegistryEntry`（`src/providers/registry.ts`）新增可选 `getIndexIdentity?(settings): object`，registry 仍是 provider 元数据的唯一来源；缺省则 `semantic` 能力视为不可用。同时 `ProviderCapabilities` 不新增字段：是否可建索引 = `capabilities.list`。
+`stableStringify` 对对象键排序，保证同一 identity 哈希不变。`identity` 由 `ProviderRegistryEntry.getIndexIdentity?(settings)` 给出（实现集中在纯模块 `src/providers/indexIdentity.ts`，registry 挂到每个 entry 上；`providerRegistry.getIndexIdentity(id, settings)` 对不可列表或无 identity 的 provider 返回 null）：
 
-### 4.7 SemanticSearchService
+| provider | identity |
+|---|---|
+| local | `storagePath`（去首尾 `/`）、`useRelativePath` |
+| github | `repo`（小写）、`branch` |
+| aliyun / qiniu | `bucket`、`area`、`path` |
+| tencent | `bucket`、`region`、`path` |
+| upyun | `bucket`、`path` |
+| r2 | `accountId`（出现在每个 R2 URL 中，不是凭证）、`bucket` |
+| s3 | `endpoint`（小写）、`region`、`bucket`、`forcePathStyle` |
+| minio | `endpoint`（小写）、`port`、`useSSL`、`bucket` |
+| smms | `{}`：只有（保密的）token 能区分账号，所以所有 S.EE 账号共用一个 scope；换账号后完整列表会按 §7 把旧条目 tombstone 再清除 |
+| imgur | 无（不可建索引） |
+
+凭证（key/secret/token/password）一律不参与；单元测试断言 identity 不含任何凭证且轮换凭证不改变 scope id。`listPrefix` = 图库列表前缀（全局 base path + `/`），所以改 base path 会得到新 scope。`ProviderCapabilities` 不新增字段：可建索引 = `capabilities.list` 且有 identity。
+
+### 4.7 SemanticSearchService（P3，已实现）
 
 ```ts
 export class SemanticSearchService {
-    searchByText(scope, q: string, remote: OssImage[], k?: number): Promise<OssImage[]>;
-    searchSimilar(scope, key: string, remote: OssImage[], k?: number): OssImage[];  // 用已存向量，无需 worker
+    searchByTextScored(scope, q, remote: OssImage[], k = remote.length): Promise<{ object: OssImage; score: number }[]>;
+    searchByText(scope, q, remote, k?): Promise<OssImage[]>;
+    searchSimilarScored(scope, key, remote, k?): { object; score }[];   // 用已存向量，无需 worker；排除自身
+    searchSimilar(scope, key, remote, k?): OssImage[];
+    isWarm(): boolean;                                                 // P4：query worker 已加载（否则 UI 显示"正在加载搜索模型"）
+    dispose(): void;                                                   // 终止 query worker
 }
 ```
 
-`SearchService.search(objects, text, useRegex)`（`src/services/SearchService.ts`）保持不变；语义模式由 `OssGalleryView.handleSearch` 分派到 `SemanticSearchService`，返回的 `OssImage[]` 按 score 降序，不再按 `lastModified` 排序。
+- 文本查询用 query 模式 worker（只加载文本模型，D12，空闲 5 分钟回收）；worker 出错即丢弃，下次重建。
+- 结果始终与传入的 `remote`（当前内存中的对象列表）取交集，且不含 tombstone（§7.6）。
+- `SearchService.search(objects, text, useRegex)` 保持不变；P4 由 `OssGalleryView.handleSearch` 按 `queryFor(mode, text)`（`src/components/searchMode.ts`）分派到语义模式，结果按 score 降序（§9.1）。
 
 ## 5. 数据格式
 
-目录：`<vault>/<manifest.dir>/semantic-index/<scopeId>/`（`manifest.dir` 通常为 `.obsidian/plugins/oss-gallery`；`scopeIndexDir()` 只接受 `[A-Za-z0-9_-]{1,64}` 的 scopeId）。
+目录：`<indexDir>/<vaultId>/<scopeId>/`（P3 修订，D7）。
+
+- `indexDir` = 设置 `semantic.indexDir`，`''` = 平台默认 `<appDir>/indexes`（`src/semantic/modelDir.ts` `defaultIndexDir()`，与 `models` 同级；Windows 为 `%LOCALAPPDATA%obsidian-oss-galleryindexes`）。与 `modelDir` 相同的校验：前导 `~` 展开，其余必须是绝对路径。
+- `vaultId`（`src/semantic/indexFiles.ts` `vaultIdFor`）：Obsidian 的每 vault `app.appId`（未公开 API，做类型守卫）清洗为 `[A-Za-z0-9_-]`、最长 64；没有则 `v` + vault 绝对路径（小写、`/` 分隔）SHA-256 的前 16 位。
+- `scopeIndexDir()` 对 `vaultId` 与 `scopeId` 都只接受 `[A-Za-z0-9_-]{1,64}`。
+- 文件：`meta.json`、`vectors.bin`（下文）、`status.json`（索引状态旁注，§12），以及各自的 `.tmp` / `meta.json.a<N>.tmp`。
+- 修改 `indexDir` 即指向新位置：旧索引原地保留，服务关闭并在新位置重新打开 store；远程 provider 需要重新确认流量（确认记录 `confirmedAt` 存在 `status.json` 中）。
+- **清除本 vault 的索引**（设置页，`clearVaultIndex`）：只删除 `<indexDir>/<vaultId>/<scopeId>/` 下本插件写入的文件名（上面列出的那些），跳过符号链接、未知文件和名字不是 scope id 的目录，然后删除变空的目录（含 `<vaultId>` 本身）；`indexDir` 根目录与其他 vault 的目录永不触碰。"删除模型"不触碰索引，清除索引也不触碰模型。
+- 旧位置 `<vault>/<manifest.dir>/semantic-index/` 不再使用，也不迁移（P3 之前没有发布过索引）。
 
 ### meta.json
 
@@ -330,8 +413,8 @@ export class SemanticSearchService {
 
 | 事件 | 处理 |
 |---|---|
-| 插件内删除（`SyncService.deleteObject` 成功后） | `onDeleted` → `VectorStore.remove` 立即清除，不走 tombstone |
-| 插件内上传成功 | `onUploaded` → 用手头 `File` 字节入队 add，零额外流量 |
+| 插件内删除（`SyncService.deleteObject` 成功后） | `onDeleted` → `VectorStore.remove` 立即清除，不走 tombstone；同时移出待办 / 上传队列；若该 key 正在批处理中，结果到达时丢弃 |
+| 插件内上传成功 | `onUploaded` → 用手头 `File` 字节入上传队列（优先于列表待办），零额外流量，不需要流量确认；key 由 `listingKeyForUpload` 得到，fingerprint 先记 `u:<size>`（§4.2）。仅当该 scope 已有索引时执行（不为从未建过索引的 scope 建立索引目录） |
 | 外部变更（别的客户端、手动删除等） | 只能通过完整列表对账（§7.2–7.5）发现，不做猜测 |
 
 ### 7.2 完整性门槛
@@ -339,7 +422,9 @@ export class SemanticSearchService {
 `reconcile(token, scope, { items, complete })`：
 
 - `complete === false`：**只处理新增与修改**（入队 embed），**不处理任何删除**，也不推进 tombstone 计数。
-- 仅对"在本次 `listPrefix` 之下"的已索引 key 做对账；prefix 之外的条目（例如用户改过 base path 前遗留的）保持原样，不被视为删除。
+- 仅对"在本次 `ListResult.prefix` 之下"的已索引 key 做对账（前缀由 provider 返回，§4.1）；prefix 之外的条目保持原样，不被视为删除。
+- 上传队列中尚未处理的 key 不做删除对账（列表可能早于上传完成）。
+- `complete === true` 时同时清理该前缀下已不在列表中、也没有向量的 `status.json` 条目。
 
 ### 7.3 两阶段 tombstone（`complete === true`）
 
@@ -358,10 +443,10 @@ export class SemanticSearchService {
 沿用 `OssGalleryView` 的 load generation 思想（`beginLoad/isCurrentLoad`，`loadGeneration` 是 view 私有的，服务层不能直接引用）：
 
 - 发起 `listImages` 之前调用 `beginListing(scope)` 取 token；
-- `reconcile` 时若 `token < lastAppliedToken(scope)` 直接丢弃，避免较慢的旧列表覆盖较新的对账结果；
-- provider 切换（`updateProvider` 中 `providerSwitched`）时 `cancel()` 当前队列，并使旧 scope 的所有 token 失效。
+- `reconcile` 时若 `token <= lastAppliedToken(scope)`（重复的也丢弃）或 token 早于该 scope 最近一次失效，直接丢弃，避免较慢的旧列表覆盖较新的对账结果；
+- 当前 scope 变化（切换 provider，或修改 bucket/路径/base path 等 identity 字段；在 `saveSettings` 中比较 scope id）时 `onScopeChanged`：取消正在为其他 scope 运行的队列，并使其他 scope 此前发出的所有 token 失效。
 
-挂接点：`OssGalleryView.loadGallery` 在 `syncService.sync()` 前后调用 `beginListing` / `reconcile`（仅在 `isCurrentLoad(generation)` 通过之后，与现有逻辑同位）；自动同步路径（约第 454 行附近的 `beginLoad` 分支）同理。
+挂接点（已实现）：`OssGalleryView.loadGallery` 在 `syncService.sync()` 前调用 `beginListing`、在 `isCurrentLoad(generation)` 通过后调用 `reconcile`；2 分钟自动同步路径同理，且即使图库无变化也对账。命令"立即为当前图床建立索引"与图库的"建立 / 更新索引"走同一协议（图库尚未对账过该 scope 时先列表）。
 
 ### 7.5 Fingerprint 规则
 
@@ -369,7 +454,9 @@ etag（含 GitHub sha）> `size + lastModified`。变化即重新 embed。注意
 
 ### 7.6 渲染前交集
 
-任何语义结果在渲染前，与当前内存中的 `state.remoteObjects` 的 key 集合取交集（`VectorStore.search(..., allow)`），保证即便索引滞后也不展示已不在图库中的图片。
+任何语义结果在渲染前，与当前内存中的 `state.remoteObjects` 的 key 集合取交集（`VectorStore.search(..., allow)`），保证即便索引滞后也不展示已不在图库中的图片。P4：图库把结果（key + score）缓存在 `state.semanticResult`，每次重新列表后用 `intersectHits(remoteObjects, hits)` 重新取交集再渲染（保持原排序，丢弃已不在列表中的 key，用列表里的新 URL）；"找相似"每次重新排序（无需 worker，新索引的图片会加入）；文本查询不在自动同步时重跑 worker。
+
+实现验证（`tests/semantic/SemanticIndexService.test.ts`）：截断列表不删除也不推进计数；完整列表缺失 → 立即隐藏（搜索不返回）；连续 2 次完整缺失清除（中间的不完整列表不计数）；缺失满 7 天清除；同 fingerprint 重新出现 → 恢复且零下载、零 embed；fingerprint 变化 → 重新 embed；旧 token 丢弃；scope 切换使旧 token 失效；只在前缀内对账；上传钩子不下载且随后采用真实 fingerprint；删除钩子立即清除。真实 worker 端到端见附录 P3。
 
 ## 8. 下载与安装流程
 
@@ -445,10 +532,15 @@ limits 下限 = 最大单个权重张量：`model_embed_tokens_weight_quant` [26
 
 - `esbuild.config.mjs` 新增第二个入口：`src/semantic/worker/entry.ts` → `dist/semantic-worker.js`，`bundle: true`、`format: "iife"`、`platform: "browser"`、`define: { process: 'undefined' }`、minify。**不要**把它并入 `main.js`。
 - worker 与 ORT wasm/mjs 作为 GitHub Release 的独立资产上传（并生成 sha256 清单写入源码）；`releaseAssets`（`manifest.json`、`styles.css`、`LICENSE`）不变，`main.js` 不含 transformers.js / onnxruntime（生产构建对此做断言）。
-- P1 实现：worker 还需 `target: es2022`、`legalComments: none`，以及把 `node:*` 导入替换为空模块的插件（同 P0 `build.js`）。onnxruntime-web 是 transformers.js 的传递依赖，构建脚本通过 transformers.js 的 `require.resolve('onnxruntime-web/webgpu')` 定位其 `dist/` 并复制 `ort-wasm-simd-threaded.asyncify.{wasm,mjs}`。`release.yml` 上传并 attest 这三个文件。P2 起 worker 为完整实现（§4.3），541 KB（minified）。
+- P1 实现：worker 还需 `target: es2022`、`legalComments: none`，以及把 `node:*` 导入替换为空模块的插件（同 P0 `build.js`）。onnxruntime-web 是 transformers.js 的传递依赖，构建脚本通过 transformers.js 的 `require.resolve('onnxruntime-web/webgpu')` 定位其 `dist/` 并复制 `ort-wasm-simd-threaded.asyncify.{wasm,mjs}`。`release.yml` 上传并 attest 这三个文件。P2 起 worker 为完整实现（§4.3），541 KB（minified）；P3 加入 UTIF.js + pako（TIFF 解码）后 625 KB。
 - 测试：`vitest`（devDependency，`pnpm test`，用例在 `tests/`，Node 环境），不进入任何 bundle；CI（`lint.yml`）在 lint 后运行。
 - 依赖：`@huggingface/transformers` 精确锁定 `4.3.1`（其依赖 `onnxruntime-web 1.31.0-dev.20260914-8d85527a0`）；`pnpm-workspace.yaml` 将 `onnxruntime-node`、`protobufjs` 列为 `ignoredBuiltDependencies`（Node 端原生包，插件用不到）。
-- 实测 main.js：196,413 → 238,723 字节（P1，+42 KB）→ 267,523 字节（P2，+29 KB：宿主、VectorStore、自检与 locale），均无 transformers.js。
+- 实测 main.js：196,413 → 238,723 字节（P1，+42 KB）→ 267,523 字节（P2，+29 KB：宿主、VectorStore、自检与 locale）→ 329,785 字节（P3，+62 KB：索引/搜索服务、设置与对话框、locale；约一半为三份 locale，见 §11 第 17 条）→ P4 代码 360,359 字节（+31 KB：图库 UI、详情对话框、locale）→ 加 `charset: "utf8"` 后 **339,454 字节**（−20,905 字节，−5.8%），均无 transformers.js / UTIF.js。
+- **P4 构建变更**：
+  - main.js 与 worker 都设 `charset: "utf8"`（esbuild 默认把非 ASCII 转义为 `\uXXXX`，中文每字 6 字节 → UTF-8 3 字节）。worker 几乎全是 ASCII，节省可忽略（与加入的 banner 相抵后 640,466 → 640,672 字节）。
+  - worker 加一行 `/*! … */` banner，说明打包了哪些开源包、许可证见 release 中的 `THIRD_PARTY_NOTICES.txt`（`legalComments: "none"` 仍然去掉各包自带的许可注释）。
+  - `THIRD_PARTY_NOTICES.txt`：`scripts/third-party-notices.mjs` 由 worker 构建的 esbuild metafile 得到打包进来的 npm 包，加上直接复制的 onnxruntime-web 与 transformers.web.js 预先内联的包（按其 `// node_modules/<pkg>/` 路径注释识别：@huggingface/jinja、@huggingface/tokenizers），逐包写入名称、版本、许可证、来源和许可证全文（onnxruntime-web/common 的 npm 包没有 LICENSE 文件，按其 MIT 声明补全文，并给出 ORT wasm 内第三方组件的 ThirdPartyNotices 链接）。当前：@huggingface/jinja 0.5.10、@huggingface/tokenizers 0.2.0、@huggingface/transformers 4.3.1、onnxruntime-common 1.30.0、onnxruntime-web 1.31.0-dev、pako 1.0.11、utif 3.1.0，约 30 KB。找不到许可证文本时构建失败。
+  - 该文件是 release 资产（`release.yml` 上传并 attest），**不进入** `assets.generated.ts` 的哈希清单、也不由下载管理器下载：运行不需要它；加入清单会让每次启动 worker 都多读一个文件做哈希，并让已安装的 runtime 目录变成"未完成"。worker 文件头的 banner 指向它。
 - 注意：现有配置 `external` 含 `...builtinModules`，所以主线程使用 `fs`/`path`/`crypto` 无需额外处理；worker 端是 browser 平台，Node 的 `require` 通过 `self.require` 取得（P2 实测在 Blob URL worker 中可用；P0 用的 `(0, eval)('require')` 同样可行，但会触发 lint 的 `no-eval`）[P0 §7]。
 - ORT 的 mjs 需应用与 transformers.js 相同的补丁 `code.replaceAll('globalThis.process?.versions?.node','false')`，仅在走"binary 模式"时需要 [P0 §8]。P2 采用 binary 模式（§4.3），由 worker 在 `engine.ts` 中打补丁。
 
@@ -465,21 +557,33 @@ limits 下限 = 最大单个权重张量：`model_embed_tokens_weight_quant` [26
 
 ## 9. UI
 
-### 9.1 SearchComponent
+### 9.1 SearchComponent（P4 已实现）
 
-`src/components/SearchComponent.ts` 现有正则按钮（`regexBtn`，`onToggleRegex`）。仿照新增"语义"按钮：
+`src/components/SearchComponent.ts`；模式规则是纯函数 `src/components/searchMode.ts`（`toggleSemantic / toggleRegex / applyAvailability / queryFor / intersectHits`，`tests/semantic/searchMode.test.ts`）。
 
-- `SearchComponentOptions` 增加 `onToggleSemantic?: (enabled: boolean) => void`；组件内 `useSemantic` 与 `setSemanticEnabled / isSemanticEnabled`。
-- 语义与正则互斥：开其一自动关另一。
-- 仅当 `semantic.enabled && 当前 provider 有索引 scope` 时显示按钮；未索引完成时 tooltip 提示"索引进行中，结果可能不完整"。
-- `GalleryState`（`src/types/gallery.ts`）增加 `useSemanticSearch: boolean`。
+- **语义开关**（✨ `sparkles` 图标，`aria-pressed`）放在输入框**外**、搜索按钮之前：输入框内右侧已有正则开关与原生清除按钮，二者由 Obsidian 的 `input-right-decorator` / `search-input-clear-button` 定位，再塞第三个按钮需要猜测 Obsidian 的内部偏移，容易重叠。
+- **始终显示**，不可用时为禁用外观（`aria-disabled="true"`，仍可聚焦，tooltip 说明原因，而不是用 `disabled`——禁用按钮收不到悬停，tooltip 不出现）。可用性由 `SemanticIndexing.availability(provider, prefix)` 给出：`checking`（启动检查中）、`not-installed`、`webgpu`、`disabled`（已安装但关闭）、`no-list`（provider 不可列表/不可建索引）、`no-index`（尚无索引）；可用且该 scope 正在索引时 tooltip 为"索引进行中，结果可能不完整"。
+- 语义与正则互斥：打开语义自动关闭正则；语义模式下正则开关禁用。可用性丢失（清除索引、关闭功能）时自动退出语义模式并回到全部图片。
+- 语义模式下 placeholder 变为"例如：沙发上的猫"，输入框边框带强调色。Enter / 搜索按钮 → `SemanticSearchService.searchByTextScored`（query worker），结果替换网格，按分数降序，每张图左下角一个淡色小分数（两位小数）。结果区显示"语义：“查询” · N 张，最相关的在前 ×"。
+- 首次查询（query worker 冷启动约 1.5 s）时结果区显示"正在加载搜索模型…"（`SemanticSearchService.isWarm()` 为 false），否则"正在搜索…"；较新的请求使旧请求的结果作废（`semanticToken`）。
+- 清除按钮、有内容时 Esc、或结果区 × → 回到全部图片；空输入框时 Esc 也退出语义/相似结果（`onEscapeEmpty`）。
+- 模式按视图会话记住（`GalleryState.useSemanticSearch`，不持久化）；结果缓存在 `GalleryState.semanticResult`（§7.6）。
 
-### 9.2 其它 UI
+### 9.2 其它 UI（P4 已实现）
 
-- 图片右键菜单增加"找相似图片"，结果展示同语义搜索，并在搜索框区域显示"相似于 xxx"，可一键退出。
-- 图库顶部显示索引进度条（`done/total`，暂停/继续/取消）。
-- 设置页新增"语义搜索"区块：WebGPU 检测状态、启用/下载、删除模型、存储路径、token budget（修改时提示将全量重建）、自动索引开关、当前 scope 的索引统计。
-- 所有新增字符串同步更新 `src/locale/en.ts`、`src/locale/zh-cn.ts`、`src/locale/zh-tw.ts`；README（`README.md`、`README-zh.md`）说明功能、WebGPU 要求、下载来源、**写入 vault 之外目录**以及流量。
+- **找相似图片**：图片右键菜单（Obsidian `Menu`：找相似图片 / 复制 URL / 删除；键盘菜单键或 Shift+F10 在图块上同样可用）与悬停按钮（`images` 图标，仅对已索引的图片显示；未索引时菜单项禁用并注明"尚未索引"）。用已存向量排序（不需要 worker），排除自身；结果区显示"与 <文件名> 相似 · N 张 ×"。同时把搜索框切到语义模式。
+- **图库顶部的语义条**（`src/components/SemanticIndexBar.ts`，在工具栏下方；功能未启用或 provider 不可建索引时隐藏）：
+  - 索引进行中（本 scope）："正在索引 12 / 340 · cat.png" + 进度条（`role=progressbar`）+ 暂停/继续 + 停止（停止保留已完成的部分）。
+  - 空闲且无索引："当前图床还没有语义索引。" + **建立索引**。
+  - 空闲且有索引：状态标签"已索引 1,234 张 · 3 张已转换 · 2 张不支持 · 1 张失败 · 5 张待索引"（为 0 的部分省略，`formatIndexSummary`），点击打开**详情对话框**；有待办时另有 **更新索引（N 张新图片）**。
+  - 只有形状（运行/暂停/空闲有无待办/无索引）变化时才重建按钮，进度只更新文字，键盘焦点不丢失。变化通知由 `SemanticIndexing` 合并（100 ms）：索引进度、模型安装状态、设置变化、清除索引。
+- **详情对话框**（`SemanticIndexDetailsModal`）：标题"语义索引状态"、汇总行、经转换的文件（原格式）与不支持/失败的文件（状态（失败次数）、原因）两张表，文件名是按钮，点击后关闭对话框并在图库中定位（如有搜索先退出、等待分批渲染、滚动到中央、强调色描边并聚焦）；**重试失败的图片（N）**调用 `resetFailed` 后按手动开始（远程照常弹流量对话框）。表格组件 `src/components/IndexStatusDetails.ts` 与设置页共用（设置页不带定位）。
+- **建立 / 更新索引**按钮 = 手动开始：未对账过时先列表；远程每次弹流量对话框；无待办时提示"已是最新"并创建空索引。
+- **状态栏**：索引中显示"正在索引 done/total"（点击暂停/继续）；空闲且当前 provider 有索引时显示"语义：已索引 N 张"，点击（或聚焦后 Enter）打开/聚焦图库并切到语义模式（不可用时以 Notice 说明原因）。
+- **图块键盘可达**：图块 `tabindex=0`，Enter/空格预览，聚焦时显示悬停按钮；复制/删除/找相似按钮有 `aria-label`。
+- **命令**：保留"运行自检"（诊断）、"立即为当前图床建立索引"、"停止建立索引"；删除"搜索（调试）"及其对话框与字符串。
+- 设置页"语义搜索"区块：WebGPU 检测状态、启用/下载、删除模型、存储路径、token budget（修改时提示将全量重建）、自动索引开关、当前 scope 的索引统计与问题文件（与详情对话框同一组件）。
+- 所有新增字符串同步更新 `src/locale/en.ts`、`src/locale/zh-cn.ts`、`src/locale/zh-tw.ts`；CSS 全部以 `oss-gallery-` 前缀限定，只用 Obsidian 主题变量（明暗主题通用），并尊重 `prefers-reduced-motion`。README 说明用法、WebGPU 要求、下载来源、**写入 vault 之外目录**、流量与第三方许可。
 
 ### 9.3 设置模型
 
@@ -489,6 +593,7 @@ limits 下限 = 最大单个权重张量：`model_embed_tokens_weight_quant` [26
 semantic: {
     enabled: boolean;
     modelDir: string;           // '' = 平台默认
+    indexDir: string;           // P3：'' = <appDir>/indexes；按设备存放索引，不同步（§5）
     imageTokenBudget: 70 | 140 | 280;
     autoIndex: boolean;
     hfEndpoint: string;         // '' = https://huggingface.co；否则为规范化的 https URL（§8.6）
@@ -496,14 +601,20 @@ semantic: {
 }
 ```
 
-P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex: false, hfEndpoint: '', githubMirror: '' }`；`loadStoredSettings` 对缺失/非法字段逐项回退默认值（镜像 URL 经 `normalizeMirrorUrl` 规范化，非法则回退 `''`）。`enabled` 只由"下载并全部校验通过"或"开关打开时完整校验通过"置为 true；校验失败、删除模型、`modelDir` 改到未安装的目录都会置回 false。
+默认值：`{ enabled: false, modelDir: '', indexDir: '', imageTokenBudget: 70, autoIndex: false, hfEndpoint: '', githubMirror: '' }`（`indexDir` 为 P3 新增，旧 data.json 缺失时回退 `''`）；`loadStoredSettings` 对缺失/非法字段逐项回退默认值（镜像 URL 经 `normalizeMirrorUrl` 规范化，非法则回退 `''`）。`enabled` 只由"下载并全部校验通过"或"开关打开时完整校验通过"置为 true；校验失败、删除模型、`modelDir` 改到未安装的目录都会置回 false。
 
-### 9.4 流量提示对话框
+### 9.4 流量提示对话框（P3 最小版本，P4 已打磨）
 
-远程 provider 首次（或增量较大时）建索引前：
+远程 provider 建索引前（`SemanticIndexService.start` → `deps.confirmTraffic(scope, estimate, reason)`，`SemanticTrafficModal`）：
 
-- 估算 = 所有未索引对象的 `size` 之和；Local 为 0（直接读盘），不弹框。
-- 显示形如："N 张 / X GB / M 张已有索引"，确认后才开始。`autoIndex` 开启后仅在估算超过阈值（默认 200 MB）时再次确认。
+- 估算 = 所有待办对象（未索引或 fingerprint 已变化，且不是 `unsupported` / 退避中的 `failed`）的 `size` 之和；Local 为 0（直接读盘），不弹框。列表没有给出大小（`size` 为 0）的对象单独计数（`unknownSizeCount`），此时下载量显示为"≥ X"并注明"图床没有报告其中 N 张图片的大小，实际下载量可能更大"。
+- 显示三个大号数字"N 张待索引 / 需下载 X MB|GB / M 张已有索引"（`formatBytes`，≥ 1 GB 用 GB；数量带千分位）、来源 provider 与"可能消耗移动流量或流量额度"的提示；只有点"开始建立索引"才返回 true，关闭或取消都是 false。
+- 自动索引弹框时第一行说明原因：`auto-first`"自动索引在本设备上首次从远程图床下载前会先询问"；`auto-large`"本次需要下载超过 200 MB，自动索引再次询问"。
+- 规则（纯函数 `trafficPromptReason({ local, pendingCount, auto, confirmedBefore, pendingBytes })`，`tests/semantic/trafficPrompt.test.ts`）：
+  - Local 或没有待办：不弹框（`null`）。
+  - 手动开始（图库"建立 / 更新索引"、"重试失败"、命令"立即为当前图床建立索引"）：远程 scope 有待办时**每次**都弹框（`manual`）。
+  - `autoIndex`：列表对账后若有待办且模型就绪则自动开始；远程 scope 若从未确认过（`status.json` 无 `confirmedAt`）或估算超过 `AUTO_CONFIRM_LIMIT_BYTES = 200 MB` 则弹框，同一会话中被拒绝后不再自动弹出（手动命令仍可）。
+  - 确认成功写入 `confirmedAt`；修改 `indexDir` 后新位置没有该记录，所以需要重新确认。
 - 后续若支持 provider 端缩略图，改显示"最多 X GB"。
 
 ## 10. 实施阶段
@@ -513,10 +624,12 @@ P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex:
 | P0 | 已完成。Spike：模型、延迟、内存、缓存、Blob worker [P0] | RESULTS.md |
 | P1 | 下载管理器 + 设置页：WebGPU 检测、opt-in 对话框、SHA-256 校验、fs 存储、进度、删除模型；esbuild 第二入口；Release 资产与清单生成 | 断网/中断/篡改文件均能正确失败与恢复；`pnpm run lint` 通过 |
 | P2 | 已完成。worker 与 `EmbeddingBackend` 接口、`fsCache`、`VectorStore`（格式、原子写、compaction）、自检命令、vitest | 单元测试：崩溃恢复、header 不符重建；本地能嵌入并检索（见附录 P2 实测） |
-| P3 | `SemanticIndexService`、对账协议、`listImages` → `ListResult`、`etag`、挂接 `OssGalleryView`/上传/删除 | 模拟截断列表不删向量；删除后立即不可见；过期 token 被丢弃 |
-| P4 | UI：语义开关、"找相似图片"、流量对话框、进度、i18n（en/zh-cn/zh-tw）、README | 手工在 Local 与一个 S3 兼容 provider 上端到端验证 |
+| P3 | 已完成。`SemanticIndexService` / `SemanticSearchService`、对账协议、`listImages` → `ListResult`、`etag`、挂接 `OssGalleryView`/上传/删除、按设备的索引目录、流量确认（最小版）、图片格式处理（§12）、调试命令、状态栏进度、设置页索引统计与问题文件列表 | 已满足：模拟截断列表不删向量；删除后立即不可见；过期 token 被丢弃（单元测试 221 个通过，真实 worker 端到端见附录 P3） |
+| P4 | 已实现（待手工验收）。UI：语义开关、"找相似图片"、流量对话框打磨、图库内进度条与状态标签、问题文件详情面板（定位、重试）、状态栏入口；远程取字节改为 `requestUrl` + 签名 GET 回退；`.avif` 加入图库；`THIRD_PARTY_NOTICES.txt`；`charset: "utf8"`；README（§9、附录 P4） | 手工在 Local 与一个 S3 兼容 provider 上端到端验证（单元测试 245 个通过） |
 
 涉及 WebGPU 的代码先在本地做可跑通的部分（下载、存储、VectorStore、协议，可用 `FakeEmbeddingBackend`）；真实推理用 Electron 39.6.0 测试工具（Obsidian 同款设置）或在 Obsidian 中运行"语义搜索：运行自检"命令验证（P2 已在 Intel Arc iGPU 上实测）。
+
+P3 的调试入口（P4 图库 UI 之前）：命令"语义搜索：立即为当前图床建立索引"（先列表 + 对账，再 `start`）、"语义搜索：搜索（调试）"（输入描述 → 前 10 个 key、分数与缩略图）、"语义搜索：停止建立索引"；状态栏显示"正在索引 done/total"，点击暂停 / 继续。P4 起"搜索（调试）"已删除（由图库搜索框取代），其余命令保留；整个功能可只通过图库 UI 测试（§9.1–§9.2）。
 
 ## 11. 风险与未决问题
 
@@ -525,18 +638,75 @@ P1 默认值：`{ enabled: false, modelDir: '', imageTokenBudget: 70, autoIndex:
 3. **iGPU 内存压力**：iGPU 共享系统内存；GPU 进程批量时达 2.4 GB（无批量 1.08 GB），渲染进程约 1.1 GB [P0 §5]。低内存机器可能卡顿。缓解：索引结束即回收 worker；可选降低批大小；设置页给出内存提示。
 4. **模型文件布局变化**：`onnx-community` 仓库可能调整文件结构。缓解：URL 固定 revision（commit hash），清单中记录。
 5. **`minAppVersion` 与 WebGPU**：manifest 为 `1.7.2`，P0 只在 Obsidian 1.14.4（Electron 39.6.0）验证。旧版 Electron 的 WebGPU 支持不一致，由 `WebGpuProbe` 兜底；是否提高 `minAppVersion` 待定（默认不提高，探测失败即不可用）。
-6. **插件目录同步冲突**：多设备通过 Obsidian Sync/iCloud 同步 `semantic-index/` 时，`meta.json` 与 `vectors.bin` 可能出现不一致版本。P2 的逐条校验和（§5）保证不一致只会丢弃受影响条目（重新 embed），不会错配；是否需要 per-device 子目录仍待定。
+6. ~~**插件目录同步冲突**~~（P3 已从设计上解决）：索引改为按设备存放在 vault 之外的 `semantic.indexDir`（D7、§5），不再经 Obsidian Sync/iCloud 同步，也就不存在多设备并发写同一 `meta.json`/`vectors.bin`。代价：索引不随 vault 漫游，每台设备各自建立（远程图床需各自下载一次）。P2 的逐条校验和仍保留，用于崩溃与手工拷贝的情形。
 7. **暴力检索规模**：当前设计在主线程暴力点积，约 5 万张以内可接受；更大规模需移入 worker 或分块。
 8. **跨 vault 共享模型目录**：P1 已加下载锁（§8.2 第 7 条）；删除只删清单与记录中的文件（§8.2 第 5 条），但仍会影响共享该目录的其他 vault（对话框已提示）。删除与另一 vault 的下载之间未加锁。
-9. **`listImages` 返回类型变更**是破坏性内部变更，需一次改完 10 个 provider 并更新相关测试。
+9. ~~**`listImages` 返回类型变更**~~：P3 已一次改完 11 个 provider（含 Imgur）及调用方，`ListingCollector` / `collectPages` 有单元测试（§4.1）。provider 自身的 HTTP 分页逻辑仍无单元测试（依赖 `requestUrl` / `DOMParser`），需在 P4 端到端验证一个 S3 兼容 provider。
 10. 不再需要：向上游提交 patched `GatherBlockQuantized` 图（无 CPU 路径，此项不适用）。
 11. **代理 / 镜像**（P1 新发现）：Node `https` 不走系统代理，Hugging Face / GitHub 在部分地区不可直连或很慢。
     - [x] 可配置镜像：`hfEndpoint`（如 hf-mirror.com）与 `githubMirror`（代理前缀），已在 P1 实现（§8.6）。
     - [ ] **未决**：系统代理 / 自定义代理 agent 仍不支持（`https.get` 不读取系统或 Electron 代理设置）。可考虑读取 `session.resolveProxy` 或允许配置 `https://` / SOCKS 代理。
 12. **transformers.js 内部假设**（P2 新发现）：4.3.1 的 `get_tokenizer_files` / `get_processor_files` 忽略 `revision`，固定探测 `resolve/main/`；离线 fs 缓存靠 `main → 固定 revision` 别名绕过（§4.3）。升级 transformers.js 时需重新验证：离线加载、`local_files_only`、`allowLocalModels=true + allowRemoteModels=false` 组合、binary 模式的 `wasmBinary` / Blob mjs。
 13. **`self.require` 依赖 `nodeIntegrationInWorker`**（P2）：worker 读模型文件需要 Node `fs`。若 Obsidian 关闭该选项，`init` 以 `model-load`（"Node integration is not available"）失败，需改为主线程代理 fs（§4.3 末）。
-14. **主线程同步 I/O**（P2）：`VectorStore` 用同步 fs；flush 只写新槽位与 meta（1 万张时 meta 约 1–2 MB，`JSON.stringify` + 写盘约十几 ms），compaction 重写约 10 MB。若 P3 发现卡顿，可把 compaction 挪到 `requestIdleCallback` 或改异步。
-15. **图片解码差异**（P2）：`PREPROCESS_VERSION 1` 用浏览器解码（`createImageBitmap`），不同 Chromium 版本的缩放/色彩管理可能有细微差异，向量不完全可复现但不影响排序；SVG、HEIC 等无法在 worker 中解码的格式返回 `decode` 错误，P3 需决定是否跳过并记录。
+14. **主线程 I/O**（P2 提出，P3 实测并缓解）：1 万条时同步 flush 阻塞 13–20 ms、首次全量 flush 约 60 ms、打开约 60 ms、compaction（6 千条）约 27 ms。索引服务改用 `asyncIo` flush，最大阻塞降到 7–14 ms（主要是 `JSON.stringify` 1.1 MB meta）；`close()`（卸载）与 compaction 仍为同步，后者每次 run 结束最多一次。若更大规模仍卡顿：增量 meta（只追加日志）或把 meta 序列化移入 worker。
+15. ~~**图片解码差异 / 无法解码的格式**~~（P3 已决定，§12）：SVG 主线程栅格化、TIFF 在 worker 内用 UTIF.js 解码，二者记为 `converted`；HEIC/HEIF、PSD、RAW、无法识别的数据记为 `unsupported` 并跳过。浏览器解码在不同 Chromium 版本间的细微差异仍存在，不影响排序。
+16. **远程取字节的权限**（P3 新发现，P4 部分解决）：远程索引一律用 `requestUrl`（无 CORS 要求；`fetch()` 从 `app://obsidian.md` 源请求需要存储桶 CORS，私有桶还会 403）。S3 / R2 / MinIO 在公开 URL 返回 401/403 时改用 SigV4 签名 GET（`signedObjectGet`，§4.5）。
+    - [x] S3 系私有桶；403/404 给出可读原因。
+    - [ ] **未决**：Aliyun / Tencent / Qiniu / Upyun / GitHub 私有仓库没有签名 GET 回退（各自签名方式不同），私有时记为 `failed`（"拒绝访问：请检查存储桶权限"）。需要时按 provider 实现 `signedObjectGet`。
+    - [ ] 未在真实私有桶上手工验证（单元测试用模拟的 requestUrl）。
+17. ~~**main.js 体积**~~（P3 提出，P4 已解决）：main.js 与 worker 都设 `charset: "utf8"`，main.js 360,359 → 339,454 字节（−20,905，−5.8%；§8.5）。
+18. **P4 UI 未在真实 Obsidian 中自动化测试**：图库 UI 依赖 DOM / Obsidian API，单元测试只覆盖纯逻辑（模式切换、状态文本、流量规则、远程取字节）。按 §10 的手工脚本验收；尤其注意：首次查询的"正在加载搜索模型"、键盘菜单键在图块上的菜单位置、深色主题下的分数徽标与选中描边。
+19. **语义文本结果不随自动同步重排**：缓存的命中只做交集（删除的图片会消失），新增并完成索引的图片要重新按 Enter 才会出现在文本结果中；"找相似"每次重排。
+
+## 12. 图片格式与索引状态（P3）
+
+维护者决定：worker 解码器读不了的格式尽量转换，并把"经转换"和"不支持"的文件都告诉用户。实现：`src/semantic/imageFormat.ts`（纯函数，可单测）、`src/semantic/svgRasterizer.ts`（主线程）、`src/semantic/worker/tiff.ts`（worker 内）。
+
+**检测**：以字节魔数为准（扩展名只用于区分 TIFF 容器的相机 RAW，如 `.cr2/.nef/.dng`）。JPEG `FF D8 FF`、PNG、`GIF8`、`RIFF…WEBP`、`BM`、ICO/CUR、ISO-BMFF `ftyp`（品牌含 `avif`/`avis` → AVIF，否则 `heic/heix/hevc/mif1/…` → HEIC）、`8BPS`（PSD）、TIFF `II*\0` / `MM\0*`（含 BigTIFF 魔数）、文本开头含 `<svg` → SVG。
+
+| 类别 | 格式 | 处理 | 状态 |
+|---|---|---|---|
+| 原生 | JPEG、PNG、WebP、GIF（第一帧）、BMP、ICO、AVIF | 字节直接交给 worker（`createImageBitmap`） | `ok` |
+| 转换 | SVG | 主线程：Blob URL + `<img>` 解码（图片上下文不执行脚本、不加载外部资源，Blob URL 随即撤销，不插入 DOM）→ `OffscreenCanvas` 白底绘制，最长边缩放到 [512, 1024] px → PNG。源文件 > 10 MB 视为不支持；画布被污染等错误按 `failed` 处理 | `converted`（`format: svg`） |
+| 转换 | TIFF | worker 内 UTIF.js 3.1.0（MIT，photopea）+ pako 1.x（MIT/Zlib）解码最大的一页（多页 TIFF 常带缩略图）→ RGBA → `ImageData` → 与其他格式相同的缩放与白底合成；> 64 MP 拒绝；支持无压缩、LZW、PackBits、Deflate、TIFF 内嵌 JPEG、CCITT。只打进 worker（main.js 中无 UTIF/pako，构建产物已核对） | `converted`（`format: tiff`） |
+| 不支持 | HEIC/HEIF、PSD、相机 RAW、无法识别的字节 | 不送 worker，记录原因 | `unsupported`（`format`, `reason`），fingerprint 不变就不再尝试 |
+| 失败 | 下载失败、SVG 栅格化失败、受支持格式解码失败（如截断的 JPEG）、推理失败 | 记录原因与次数 | `failed`（`reason`, `attempts`），退避重试：第 1 次失败后 1 分钟、第 2 次后 10 分钟，共 `MAX_ATTEMPTS = 3` 次；之后不再重试，直到 fingerprint 变化 |
+
+注意：图库列表只包含 `IMAGE_EXTENSIONS`（jpg/jpeg/png/gif/bmp/webp/svg/ico/tiff/tif，P4 起加 **avif**：Chromium 原生解码，图库缩略图、预览与 worker 的 `createImageBitmap` 都可用；上传路径、embed 渲染不依赖该列表，不受影响），所以 HEIC 等扩展名的文件不会出现在列表与索引中；`unsupported` 主要来自扩展名与内容不符的文件（如实为 HEIC 的 `.png`）。
+
+不新增 `PREPROCESS_VERSION`：已有格式的解码路径不变，TIFF / SVG 之前都是失败，不存在旧向量。
+
+**状态存储**：`status.json`（`IndexStatusStore`），只记录非 `ok` 条目 `{ fp, status, format?, reason?, attempts?, nextRetryAt?, at }` 与 `confirmedAt`（§9.4）；`ok` = 有向量且无旁注。向量库 `reset`（header 变化）时只保留 `unsupported`。原子写（tmp + rename），2 s 防抖。
+
+**对外接口**：`SemanticIndexService.getStats(scope)` → `{ indexed, ok, converted, unsupported, failed, pending, missing, items: [{ key, status, format?, reason?, attempts? }] }`，供 P4 的详情面板使用。
+
+**用户可见部分**（P3；P4 加入图库状态标签与详情对话框，§9.2）：
+- 每次 run 结束的 Notice（`RunSummary`）："已索引 120 张，其中 3 张经转换（SVG/TIFF）、2 张不支持（HEIC）、1 张失败 — 详情见图库中的索引状态或设置"；只有上传钩子且无问题时不提示；backend 错误时提示"语义索引已停止：原因"。
+- 设置页"本 vault 的索引"：当前 provider 的计数，可展开的"不支持或失败的文件"表（文件 / 状态（失败次数）/ 原因）与"经转换的文件"列表，以及"清除本 vault 的索引"按钮。
+
+## 附录：P4 构建与测试
+
+- 单元测试 221 → 245 个（新增 `remoteBytes`、`searchMode`、`statusText`、`trafficPrompt`），`pnpm run lint` 0 错误（3 个既有警告），`tsc` 通过。
+- main.js：P3 329,785 → P4 代码 360,359 → `charset: "utf8"` 后 339,454 字节；`semantic-worker.js` 640,466 → 640,672 字节（banner +230 字节，utf8 节省约 24 字节）；`THIRD_PARTY_NOTICES.txt` 30,642 字节。worker 哈希因 banner 改变，`assets.generated.ts` 随之更新（已有的开发安装需重新 `dev:install`）。
+- 真实 GPU / Obsidian 中的 UI 验收按 §10 由维护者手工完成（见 §11 第 18 条）。
+
+## 附录：P3 实测数据
+
+环境同 P2（Intel Core Ultra 5 125H / Intel Arc iGPU，Windows 11，Electron 39.6.0 测试工具，Obsidian 同款 `webPreferences`）。直接运行插件源码中的 `SemanticIndexService` + `SemanticSearchService` + `WorkerEmbeddingBackend` + `svgRasterizer`，worker 为本次构建的 `dist/semantic-worker.js`（含 UTIF.js，经 `dev:install` 放入 `runtime/2.1.0/`）。Local 风格目录 `img/` 下 5 个文件：`cats.jpg`、`astronaut.png`、`red-circle.svg`（含 `<script>` 与外部 `<image href="https://…">`）、`corgi.tiff`（由 corgi.jpg 生成的无压缩 RGB TIFF）、`phone.png`（实为 HEIC 头）。会话级拦截所有 http(s) 请求。
+
+| 项目 | 结果 |
+|---|---|
+| 网络请求 | **0**（SVG 的外部引用未被加载，脚本未执行） |
+| 一次 run（含 worker 冷启动、着色器编译、5 个文件） | 11.7 s |
+| RunSummary | 已索引 4（经转换 2：TIFF、SVG），不支持 1（HEIC），失败 0 |
+| 文本检索 top-1（英 4 / 中 2 条） | 6/6：`a red circle`→svg 0.802，`a corgi dog`→tiff 0.808，`cats lying on a couch`→jpg 0.780，`an astronaut`→png 0.797，`红色的圆形`→svg 0.791，`一只柯基犬`→tiff 0.762；第二名 ≤ 0.661 |
+| 找相似（corgi.tiff） | 排除自身，返回其余 3 张 |
+| 外部删除 cats.jpg 后完整列表 ×2 | 第 1 次：隐藏但仍在库中；第 2 次：清除 |
+| 索引目录内容 | `meta.json`、`status.json`、`vectors.bin` |
+
+主线程 flush 阻塞（Node，1 万条 × 256 维，每次追加 8 条）：同步 13–20 ms → `asyncIo` 7–14 ms（§11 第 14 条）。
+
+构建产物：main.js 267,523 → 329,785 字节；`semantic-worker.js` 554,113 → 640,466 字节（+86 KB，UTIF.js + pako）。
 
 ## 附录：P2 实测数据
 

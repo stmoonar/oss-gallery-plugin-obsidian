@@ -1,4 +1,4 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, OssImage, UploadProgressInfo } from '../types/oss';
 import { QiniuSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
@@ -6,7 +6,7 @@ import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
 import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
-import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
+import { collectPages, ListingCollector, MAX_LIST_PAGES } from './shared/listing';
 import {
     createQiniuAccessTokenV2,
     createQiniuUploadToken,
@@ -133,24 +133,18 @@ export class QiniuProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         // Qiniu ListFiles API
+        const listPrefix = buildListPrefix(this.settings.path, prefix);
         if (!this.settings.accessKey || !this.settings.secretKey || !this.settings.bucket) {
-            return [];
+            return { items: [], complete: false, prefix: listPrefix };
         }
 
         try {
             const host = 'rsf.qiniuapi.com';
-            const images: OssImage[] = [];
-            const listPrefix = buildListPrefix(this.settings.path, prefix);
-            let marker = '';
+            const collector = new ListingCollector(this.name, listPrefix);
 
-            for (let pages = 0; ; pages++) {
-                if (pages >= MAX_LIST_PAGES) {
-                    warnListingCapped(this.name, MAX_LIST_PAGES);
-                    return images;
-                }
-
+            return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
                 const query = new URLSearchParams({
                     bucket: this.settings.bucket,
                     limit: '1000',
@@ -183,34 +177,37 @@ export class QiniuProvider implements IOssProvider {
                 }
 
                 const data = getRecord(response.json as unknown);
-                const items = getArray(data?.items) ?? [];
-                for (const item of items) {
+                const items: OssImage[] = [];
+                for (const item of getArray(data?.items) ?? []) {
                     const record = getRecord(item);
                     const itemKey = getString(record?.key);
                     if (itemKey && isImageFile(itemKey)) {
                         const putTime = getNumber(record?.putTime);
-                        images.push({
+                        const hash = getString(record?.hash);
+                        items.push({
                             key: itemKey,
                             url: this.buildPublicUrl(itemKey),
                             lastModified: putTime !== undefined ? new Date(putTime / 10000) : undefined,
                             size: getNumber(record?.fsize) ?? 0,
+                            ...(hash ? { etag: hash } : {}),
                         });
                     }
                 }
 
+                // An empty marker means the last page.
                 const nextMarker = getString(data?.marker)
                     ?? getString(data?.nextMarker)
                     ?? '';
-                if (!nextMarker || nextMarker === marker) {
-                    return images;
-                }
-
-                marker = nextMarker;
-            }
+                return { items, next: nextMarker };
+            });
         } catch (error) {
             console.error('Failed to list Qiniu images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    listingKeyForUpload(path: string): string {
+        return buildObjectKey(this.settings.path, path);
     }
 
     async deleteImage(key: string): Promise<void> {

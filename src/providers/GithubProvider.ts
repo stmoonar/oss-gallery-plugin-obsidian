@@ -1,9 +1,9 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { GithubSettings, PluginSettings } from '../types/settings';
 import { requestUrl, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
-import { MAX_LIST_REQUESTS, warnListingCapped } from './shared/listing';
+import { ListingCollector, MAX_LIST_REQUESTS } from './shared/listing';
 import { buildListPrefix } from './shared/path';
 import { getArray, getNumber, getRecord, getString } from '../utils/typeGuards';
 
@@ -182,13 +182,12 @@ export class GithubProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         const repo = this.settings.repo;
-        if (!repo) {
-            return [];
-        }
-
         const listPrefix = buildListPrefix(undefined, prefix);
+        if (!repo) {
+            return { items: [], complete: false, prefix: listPrefix };
+        }
 
         // One request for the whole repository when the Git tree API works.
         const treeData = await this.getRepositoryTree(repo);
@@ -254,8 +253,8 @@ export class GithubProvider implements IOssProvider {
     /**
      * Extract images under `listPrefix` from Git tree data
      */
-    private extractImagesFromTree(treeData: unknown, listPrefix: string): OssImage[] {
-        const images: OssImage[] = [];
+    private extractImagesFromTree(treeData: unknown, listPrefix: string): ListResult {
+        const images = new ListingCollector(this.name, listPrefix);
         const tree = getArray(getRecord(treeData)?.tree) ?? [];
 
         for (const item of tree) {
@@ -269,19 +268,20 @@ export class GithubProvider implements IOssProvider {
                 images.push({
                     key: entry.path,
                     url: this.buildCustomUrl(entry.path),
-                    size: entry.size ?? 0
+                    size: entry.size ?? 0,
+                    ...(entry.sha ? { etag: entry.sha } : {}),
                 });
             }
         }
 
-        return images;
+        return images.result();
     }
 
     /**
      * List one directory through the Contents API. A missing directory
-     * yields no entries; other failures are thrown.
+     * yields null; other failures are thrown.
      */
-    private async listDirectoryEntries(repo: string, path: string): Promise<GithubFileEntry[]> {
+    private async listDirectoryEntries(repo: string, path: string): Promise<GithubFileEntry[] | null> {
         const url = `https://api.github.com/repos/${repo}/contents/${this.encodePath(path)}?ref=${this.getEncodedBranch()}`;
 
         const response = await requestUrl({
@@ -297,7 +297,7 @@ export class GithubProvider implements IOssProvider {
         });
 
         if (response.status === 404) {
-            return [];
+            return null;
         }
         if (response.status !== 200) {
             throw this.listStatusError(response.status);
@@ -316,8 +316,8 @@ export class GithubProvider implements IOssProvider {
      * Breadth-first directory walk (fallback when the tree API is unusable),
      * bounded by depth and request count.
      */
-    private async walkDirectories(repo: string, listPrefix: string): Promise<OssImage[]> {
-        const images: OssImage[] = [];
+    private async walkDirectories(repo: string, listPrefix: string): Promise<ListResult> {
+        const images = new ListingCollector(this.name, listPrefix);
         const queue: Array<{ path: string; depth: number }> = [
             { path: listPrefix.replace(/\/$/, ''), depth: 0 },
         ];
@@ -325,29 +325,45 @@ export class GithubProvider implements IOssProvider {
 
         for (let next = queue.shift(); next; next = queue.shift()) {
             if (requests >= MAX_LIST_REQUESTS) {
-                warnListingCapped(this.name, MAX_LIST_REQUESTS);
+                images.capped(MAX_LIST_REQUESTS);
                 break;
             }
             requests++;
 
             const entries = await this.listDirectoryEntries(repo, next.path);
+            if (entries === null) {
+                // The base path not existing yet is an empty listing; a
+                // subdirectory vanishing mid-walk means part of it was missed.
+                if (next.depth > 0) {
+                    images.markIncomplete();
+                }
+                continue;
+            }
             for (const entry of entries) {
                 if (!entry.path) continue;
                 if (entry.type === 'dir') {
                     if (next.depth < GITHUB_MAX_WALK_DEPTH) {
                         queue.push({ path: entry.path, depth: next.depth + 1 });
+                    } else {
+                        // Too deep to walk: whatever is inside was not seen.
+                        images.markIncomplete();
                     }
                 } else if (entry.type === 'file' && isImageFile(entry.name ?? entry.path)) {
                     images.push({
                         key: entry.path,
                         url: this.buildCustomUrl(entry.path),
-                        size: entry.size ?? 0
+                        size: entry.size ?? 0,
+                        ...(entry.sha ? { etag: entry.sha } : {}),
                     });
                 }
             }
         }
 
-        return images;
+        return images.result();
+    }
+
+    listingKeyForUpload(path: string): string {
+        return path.replace(/^\//, '');
     }
 
     /**

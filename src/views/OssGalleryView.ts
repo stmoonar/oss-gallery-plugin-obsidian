@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon, debounce } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, setIcon, debounce, Menu } from 'obsidian';
 import { t } from '../i18n';
 import { IOssProvider, OssImage } from '../types/oss';
 import { ImagePreviewModal } from '../modals/ImagePreviewModal';
@@ -7,9 +7,28 @@ import { SearchService } from '../services/SearchService';
 import { SyncService } from '../services/SyncService';
 import { ImageGrid } from '../components/ImageGrid';
 import { SearchComponent } from '../components/SearchComponent';
+import { SemanticIndexBar } from '../components/SemanticIndexBar';
+import { intersectHits, queryFor, SemanticAvailability } from '../components/searchMode';
 import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 import { providerRegistry } from '../providers/registry';
+import type { GallerySemanticHooks } from '../semantic/SemanticIndexing';
+import { fileNameOf } from '../semantic/statusText';
+
+/** Tooltip of the semantic toggle: what it does, or why it is unavailable. */
+function semanticToggleLabel(availability: SemanticAvailability): string {
+    if (availability.ok) {
+        return availability.indexing ? t('Semantic toggle indexing') : t('Semantic toggle on');
+    }
+    switch (availability.reason) {
+        case 'checking': return t('Semantic unavailable checking');
+        case 'not-installed': return t('Semantic unavailable not installed');
+        case 'webgpu': return t('Semantic unavailable webgpu');
+        case 'disabled': return t('Semantic unavailable disabled');
+        case 'no-list': return t('Semantic unavailable provider');
+        case 'no-index': return t('Semantic unavailable no index');
+    }
+}
 
 export const GALLERY_VIEW_TYPE = 'oss-gallery-view';
 
@@ -45,6 +64,12 @@ export class OssGalleryView extends ItemView {
     private syncService: SyncService;
     private imageGrid: ImageGrid | null = null;
     private searchComponent: SearchComponent | null = null;
+    private semanticBar: SemanticIndexBar | null = null;
+    private unsubscribeSemantic: (() => void) | null = null;
+    /** Semantic search/similar requests: a newer one drops older results. */
+    private semanticToken = 0;
+    /** Semantic search usable for this provider (hover action, menu). */
+    private semanticReady = false;
 
     // State
     private state: GalleryState = {
@@ -53,11 +78,18 @@ export class OssGalleryView extends ItemView {
         isSearching: false,
         savedSearchTerm: '',
         useRegexSearch: false,
+        useSemanticSearch: false,
+        semanticResult: null,
         currentPreviewKey: null,
         isLoading: false
     };
 
-    constructor(leaf: WorkspaceLeaf, provider: IOssProvider, listPrefix = '') {
+    constructor(
+        leaf: WorkspaceLeaf,
+        provider: IOssProvider,
+        listPrefix = '',
+        private readonly semanticHooks: GallerySemanticHooks | null = null
+    ) {
         super(leaf);
         this.provider = provider;
         this.listPrefix = listPrefix;
@@ -81,6 +113,9 @@ export class OssGalleryView extends ItemView {
 
         // Anything still loading belongs to the previous provider/settings.
         this.invalidateLoads();
+        // Semantic results belong to the previous index scope.
+        this.dropSemanticResult();
+        this.refreshSemanticUi();
 
         if (providerSwitched) {
             // Never keep showing the previous provider's images.
@@ -121,6 +156,7 @@ export class OssGalleryView extends ItemView {
         this.container.empty();
 
         this.createToolbar(container);
+        this.createSemanticBar(container);
         await this.loadGallery();
         this.startAutoSync();
         this.setupScrollListener(container);
@@ -136,7 +172,21 @@ export class OssGalleryView extends ItemView {
             },
             onToggleRegex: (enabled) => {
                 this.state.useRegexSearch = enabled;
-            }
+            },
+            ...(this.semanticHooks ? {
+                semanticPlaceholder: t('Semantic query placeholder'),
+                onToggleSemantic: (enabled: boolean) => {
+                    this.state.useSemanticSearch = enabled;
+                    if (!enabled && this.state.semanticResult) {
+                        void this.clearSemanticResult(false);
+                    }
+                },
+                onEscapeEmpty: () => {
+                    if (this.state.semanticResult) {
+                        void this.clearSemanticResult(true);
+                    }
+                },
+            } : {}),
         });
 
         this.refreshBtn = toolbar.createEl('button', {
@@ -149,6 +199,56 @@ export class OssGalleryView extends ItemView {
                 void this.loadGallery(true);
             }
         };
+    }
+
+    /** Index progress / status strip under the toolbar (semantic search). */
+    private createSemanticBar(container: HTMLElement): void {
+        const hooks = this.semanticHooks;
+        if (!hooks) return;
+        this.semanticBar = new SemanticIndexBar(container, {
+            summaryText: (state) => (state.stats ? hooks.summaryText(state.stats) : ''),
+            onStart: () => {
+                void hooks.startIndexing(this.provider.name, this.listPrefix);
+            },
+            onPause: () => hooks.pause(),
+            onResume: () => hooks.resume(),
+            onCancel: () => hooks.cancel(),
+            onDetails: () => hooks.openDetails(this.provider.name, this.listPrefix, (key) => {
+                void this.revealImage(key);
+            }),
+            onClearResult: () => {
+                void this.clearSemanticResult(true);
+            },
+        });
+        this.unsubscribeSemantic = hooks.subscribe(() => this.refreshSemanticUi());
+        this.refreshSemanticUi();
+    }
+
+    /** Re-read availability and index state (progress, install, settings changed). */
+    private refreshSemanticUi(): void {
+        const hooks = this.semanticHooks;
+        if (!hooks || !this.container) return;
+        const availability = hooks.availability(this.provider.name, this.listPrefix);
+        this.semanticReady = availability.ok;
+        this.searchComponent?.setSemanticAvailability(availability, semanticToggleLabel(availability));
+        this.semanticBar?.update(hooks.indexState(this.provider.name, this.listPrefix));
+        if (!availability.ok && this.state.semanticResult) {
+            void this.clearSemanticResult(true);
+        }
+    }
+
+    /**
+     * Switch the search box to semantic mode (status bar click). Explains
+     * with a notice when it is not available yet.
+     */
+    enterSemanticMode(): void {
+        const hooks = this.semanticHooks;
+        if (!hooks || !this.searchComponent) return;
+        this.refreshSemanticUi();
+        if (!this.searchComponent.enableSemantic()) {
+            new Notice(semanticToggleLabel(hooks.availability(this.provider.name, this.listPrefix)));
+        }
+        this.searchComponent.focus();
     }
 
     async loadGallery(forceRefresh = false): Promise<void> {
@@ -201,10 +301,12 @@ export class OssGalleryView extends ItemView {
                 loading = container.createDiv({ cls: 'oss-gallery-loading-spinner' });
             }
 
-            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
+            const ticket = this.semanticHooks?.beginListing(this.provider.name, this.listPrefix) ?? null;
+            const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
             if (!this.isCurrentLoad(generation)) return;
 
             this.state.remoteObjects = objects;
+            if (ticket) this.semanticHooks?.reconcile(ticket, listing);
             loading?.remove();
             if (!showCachedFirst || changes.hasChanges) {
                 await this.renderCurrentObjects();
@@ -269,6 +371,10 @@ export class OssGalleryView extends ItemView {
      * Render the loaded objects, re-applying the active search (if any).
      */
     private async renderCurrentObjects(): Promise<void> {
+        if (this.state.semanticResult) {
+            await this.renderSemanticResult();
+            return;
+        }
         let objects = this.state.remoteObjects;
         if (this.state.isSearching) {
             try {
@@ -286,12 +392,162 @@ export class OssGalleryView extends ItemView {
         await this.renderObjects(objects);
     }
 
-    private async renderObjects(objects: OssImage[]): Promise<void> {
+    private async renderObjects(objects: OssImage[], scores?: Map<string, number>): Promise<void> {
         this.state.visibleImages = objects;
         this.clearStatusMessages();
         this.cleanupImageGrid();
         const grid = this.createImageGrid();
-        await grid?.renderImages(objects);
+        await grid?.renderImages(objects, undefined, scores);
+    }
+
+    /**
+     * Render the current semantic / similar result against the latest
+     * listing: deleted images drop out (§7.6), "similar" is re-ranked so
+     * newly indexed images join, text results keep their cached ranking.
+     */
+    private async renderSemanticResult(): Promise<void> {
+        const result = this.state.semanticResult;
+        const hooks = this.semanticHooks;
+        if (!result || !hooks) return;
+        if (result.kind === 'similar') {
+            result.hits = hooks.searchSimilar(this.provider.name, this.listPrefix, result.key, this.state.remoteObjects)
+                .map((h) => ({ key: h.object.key, score: h.score }));
+        }
+        const hits = intersectHits(this.state.remoteObjects, result.hits);
+        this.semanticBar?.setResult(result.kind === 'semantic'
+            ? { kind: 'semantic', query: result.query, count: hits.length }
+            : { kind: 'similar', name: fileNameOf(result.key), count: hits.length });
+        await this.renderObjects(
+            hits.map((h) => h.object),
+            new Map(hits.map((h) => [h.object.key, h.score]))
+        );
+    }
+
+    /** Semantic mode, Enter: rank the listed images by the query (query worker). */
+    private async runSemanticSearch(query: string): Promise<void> {
+        const hooks = this.semanticHooks;
+        if (!hooks) return;
+        const token = ++this.semanticToken;
+        this.semanticBar?.setResult({ kind: 'loading', cold: !hooks.isQueryWarm() });
+        try {
+            const hits = await hooks.searchText(this.provider.name, this.listPrefix, query, this.state.remoteObjects);
+            if (token !== this.semanticToken) return;
+            this.state.isSearching = true;
+            this.state.savedSearchTerm = query;
+            this.state.semanticResult = {
+                kind: 'semantic',
+                query,
+                hits: hits.map((h) => ({ key: h.object.key, score: h.score })),
+            };
+            await this.renderSemanticResult();
+        } catch (error) {
+            if (token !== this.semanticToken) return;
+            this.semanticBar?.setResult(null);
+            console.error('Semantic search failed:', error);
+            new Notice(`${t('Semantic search failed')}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /** "Find similar images": rank by the stored vector of `key`. */
+    private async findSimilar(key: string): Promise<void> {
+        const hooks = this.semanticHooks;
+        if (!hooks) return;
+        if (!hooks.isIndexed(this.provider.name, this.listPrefix, key)) {
+            new Notice(t('Image not indexed yet'));
+            return;
+        }
+        this.semanticToken++;
+        // Typing a query afterwards searches semantically as well.
+        this.searchComponent?.enableSemantic();
+        this.searchComponent?.clear();
+        this.state.isSearching = true;
+        this.state.savedSearchTerm = '';
+        this.state.semanticResult = { kind: 'similar', key, hits: [] };
+        await this.renderSemanticResult();
+        this.container?.scrollTo({ top: 0 });
+    }
+
+    /** Forget the semantic result without rendering (provider changed). */
+    private dropSemanticResult(): void {
+        this.semanticToken++;
+        if (this.state.semanticResult) {
+            this.state.semanticResult = null;
+            this.state.isSearching = false;
+            this.state.savedSearchTerm = '';
+        }
+        this.semanticBar?.setResult(null);
+    }
+
+    /** Leave a semantic / similar result and show every image again. */
+    private async clearSemanticResult(clearInput: boolean): Promise<void> {
+        this.dropSemanticResult();
+        if (clearInput) {
+            this.searchComponent?.clear();
+        }
+        await this.renderObjects(this.state.remoteObjects);
+    }
+
+    /** Details dialog → scroll to an image and select it (leaving any search). */
+    private async revealImage(key: string): Promise<void> {
+        if (this.state.isSearching || this.state.semanticResult) {
+            this.dropSemanticResult();
+            this.state.isSearching = false;
+            this.state.savedSearchTerm = '';
+            this.searchComponent?.clear();
+            const rendering = this.renderObjects(this.state.remoteObjects);
+            const found = await this.imageGrid?.reveal(key);
+            await rendering;
+            if (!found) new Notice(t('Image not in the gallery'));
+            return;
+        }
+        if (!(await this.imageGrid?.reveal(key))) {
+            new Notice(t('Image not in the gallery'));
+        }
+    }
+
+    /** Right click on a tile: find similar, copy URL, delete. */
+    private openContextMenu(key: string, event: MouseEvent, element: HTMLElement): void {
+        const object = this.state.visibleImages.find((o) => o.key === key);
+        const menu = new Menu();
+        const hooks = this.semanticHooks;
+        if (hooks && this.semanticReady) {
+            const indexed = hooks.isIndexed(this.provider.name, this.listPrefix, key);
+            menu.addItem((item) => item
+                .setTitle(indexed ? t('Find similar images') : `${t('Find similar images')} (${t('Image not indexed yet')})`)
+                .setIcon('images')
+                .setDisabled(!indexed)
+                .onClick(() => {
+                    void this.findSimilar(key);
+                }));
+        }
+        if (object?.url) {
+            menu.addItem((item) => item
+                .setTitle(t('Copy URL'))
+                .setIcon('copy')
+                .onClick(async () => {
+                    try {
+                        await navigator.clipboard.writeText(object.url);
+                        new Notice(t('URL copied'));
+                    } catch {
+                        new Notice(t('Copy failed'));
+                    }
+                }));
+        }
+        if (providerRegistry.supports(this.provider.name, 'delete')) {
+            menu.addItem((item) => item
+                .setTitle(t('Delete'))
+                .setIcon('trash')
+                .onClick(() => {
+                    void this.handleDelete(key, element);
+                }));
+        }
+        // The context-menu key reports (0, 0): open the menu at the tile instead.
+        if (event.clientX === 0 && event.clientY === 0) {
+            const rect = element.getBoundingClientRect();
+            menu.showAtPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        } else {
+            menu.showAtMouseEvent(event);
+        }
     }
 
     private createImageGrid(): ImageGrid | null {
@@ -309,7 +565,15 @@ export class OssGalleryView extends ItemView {
             },
             onDelete: (objectName, element) => {
                 void this.handleDelete(objectName, element);
-            }
+            },
+            onContextMenu: (objectName, event, element) => {
+                this.openContextMenu(objectName, event, element);
+            },
+            canFindSimilar: (objectName) => this.semanticReady
+                && (this.semanticHooks?.isIndexed(this.provider.name, this.listPrefix, objectName) ?? false),
+            onFindSimilar: (objectName) => {
+                void this.findSimilar(objectName);
+            },
         });
         return this.imageGrid;
     }
@@ -325,6 +589,16 @@ export class OssGalleryView extends ItemView {
     }
 
     private async handleSearch(searchText: string): Promise<void> {
+        const query = queryFor(
+            { semantic: this.state.useSemanticSearch, regex: this.state.useRegexSearch },
+            searchText
+        );
+        if (query.kind === 'semantic') {
+            await this.runSemanticSearch(query.query);
+            return;
+        }
+        // Any other search (or clearing) leaves the semantic result.
+        this.dropSemanticResult();
         const term = searchText.trim() === '' ? '' : searchText;
         this.state.savedSearchTerm = term;
         this.state.isSearching = term !== '';
@@ -423,6 +697,9 @@ export class OssGalleryView extends ItemView {
             return;
         }
 
+        // The vector goes right away (no tombstone for our own deletes).
+        this.semanticHooks?.onDeleted(this.provider.name, this.listPrefix, objectName);
+
         // Update in-memory state instead of re-listing the whole bucket.
         element.remove();
         this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
@@ -453,8 +730,13 @@ export class OssGalleryView extends ItemView {
 
         const generation = this.beginLoad();
         try {
-            const { objects, changes } = await this.syncService.sync(this.state.remoteObjects);
-            if (!this.isCurrentLoad(generation) || !changes.hasChanges) return;
+            const ticket = this.semanticHooks?.beginListing(this.provider.name, this.listPrefix) ?? null;
+            const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
+            if (!this.isCurrentLoad(generation)) return;
+            // Reconcile even when the gallery itself has nothing to redraw:
+            // the index may still be missing objects or hold deleted ones.
+            if (ticket) this.semanticHooks?.reconcile(ticket, listing);
+            if (!changes.hasChanges) return;
 
             this.state.remoteObjects = objects;
             await this.renderCurrentObjects();
@@ -528,6 +810,12 @@ export class OssGalleryView extends ItemView {
 
         this.searchComponent?.destroy();
         this.searchComponent = null;
+
+        this.semanticToken++;
+        this.unsubscribeSemantic?.();
+        this.unsubscribeSemantic = null;
+        this.semanticBar?.destroy();
+        this.semanticBar = null;
 
         this.imageGrid?.destroy();
         this.imageGrid = null;

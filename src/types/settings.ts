@@ -112,6 +112,12 @@ export interface SemanticSettings {
     enabled: boolean;
     /** Directory for runtime + model files; '' = platform default (outside the vault). */
     modelDir: string;
+    /**
+     * Root of the per-device index files, '' = platform default
+     * (<appDir>/indexes, next to the models). Outside the vault, never
+     * synced: every device builds its own index.
+     */
+    indexDir: string;
     /** Image tokens per picture; changing it rebuilds every index. */
     imageTokenBudget: ImageTokenBudget;
     autoIndex: boolean;
@@ -233,6 +239,7 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
 export const DEFAULT_SEMANTIC_SETTINGS: SemanticSettings = {
     enabled: false,
     modelDir: '',
+    indexDir: '',
     imageTokenBudget: 70,
     autoIndex: false,
     hfEndpoint: '',

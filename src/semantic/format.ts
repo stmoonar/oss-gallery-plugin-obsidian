@@ -13,3 +13,11 @@ export function formatPercent(done: number, total: number): string {
 	}
 	return `${Math.min(100, Math.floor((done / total) * 100))}%`;
 }
+
+/** Like formatMegabytes, switching to GB from 1 GB on (traffic estimates). */
+export function formatBytes(bytes: number): string {
+	if (bytes >= 1_000_000_000) {
+		return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
+	}
+	return formatMegabytes(bytes);
+}

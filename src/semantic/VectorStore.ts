@@ -27,11 +27,12 @@ import { fnv1a } from "./EmbeddingBackend";
 import type { EmbeddingConfig } from "./protocol";
 import type { Timers } from "./WorkerEmbeddingBackend";
 
-export const INDEX_DIR_NAME = "semantic-index";
 export const META_FILE = "meta.json";
 export const VECTORS_FILE = "vectors.bin";
 export const STORE_FORMAT = 1;
 const TMP = ".tmp";
+/** Private meta tmp file of an async flush: meta.json.a<N>.tmp. */
+export const ASYNC_META_TMP = /^meta\.json\.a\d+\.tmp$/;
 /** Compact when holes / slots exceeds this. */
 export const COMPACTION_THRESHOLD = 0.3;
 export const DEFAULT_FLUSH_DELAY_MS = 2000;
@@ -73,12 +74,21 @@ export function sameHeader(a: unknown, b: IndexHeader): boolean {
 	return HEADER_FIELDS.every((f) => rec[f] === b[f]);
 }
 
-/** Absolute index directory of a scope. */
-export function scopeIndexDir(vaultBasePath: string, pluginDir: string, scopeId: string): string {
-	if (!/^[A-Za-z0-9_-]{1,64}$/.test(scopeId)) {
+/** Scope and vault ids are used as directory names. */
+export const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Absolute index directory of a scope: <indexRoot>/<vaultId>/<scopeId>
+ * (indexRoot = the per-device `semantic.indexDir`, outside the vault).
+ */
+export function scopeIndexDir(indexRoot: string, vaultId: string, scopeId: string): string {
+	if (!SAFE_ID.test(vaultId)) {
+		throw new Error(`Invalid vault id: ${vaultId}`);
+	}
+	if (!SAFE_ID.test(scopeId)) {
 		throw new Error(`Invalid scope id: ${scopeId}`);
 	}
-	return path.join(vaultBasePath, ...pluginDir.split("/"), INDEX_DIR_NAME, scopeId);
+	return path.join(indexRoot, vaultId, scopeId);
 }
 
 /** Synchronous fs subset used by the store (Node's `fs` satisfies it; tests inject failures). */
@@ -145,6 +155,33 @@ export interface VectorStoreOptions {
 	flushDelayMs?: number;
 	/** Called when an automatic flush fails. */
 	onFlushError?: (error: unknown) => void;
+	/**
+	 * Automatic and flush() writes use async fs (the main thread only builds
+	 * the snapshot and renames meta.json), so a 10k-entry index does not stall
+	 * the UI while indexing. flushSync/close/compaction stay synchronous.
+	 * Ignored when `fs` is injected without `asyncFs`.
+	 */
+	asyncIo?: boolean;
+	/** Async fs used with `asyncIo` (default: Node's fs.promises). */
+	asyncFs?: StoreAsyncFs;
+}
+
+/** Async fs subset for asyncIo flushes. */
+export interface StoreAsyncFs {
+	mkdir(p: string, options: { recursive: true }): Promise<unknown>;
+	open(p: string, flags: string): Promise<{
+		write(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesWritten: number }>;
+		sync(): Promise<void>;
+		close(): Promise<void>;
+	}>;
+	unlink(p: string): Promise<void>;
+}
+
+/** Key data without the vector. */
+export interface EntryInfo {
+	fp: string;
+	missingSince?: number;
+	missCount?: number;
 }
 
 export interface SearchHit {
@@ -182,6 +219,17 @@ export class VectorStore {
 	private dirty = false;
 	private flushTimer: number | null = null;
 	private closed = false;
+	/** Bumped by every change; an async flush only clears `dirty` if unchanged. */
+	private changeVersion = 0;
+	/**
+	 * Bumped by every synchronous write of meta.json / vectors.bin layout
+	 * (flushSync, compaction, clear, close). An async flush that started
+	 * before discards its result instead of renaming an older meta over it.
+	 */
+	private writeGeneration = 0;
+	private asyncFlush: Promise<void> | null = null;
+	private asyncFlushAgain = false;
+	private tmpCounter = 0;
 	openResult: OpenResult = { status: "created", dropped: 0, recoveredTmp: false };
 
 	private constructor(
@@ -239,6 +287,31 @@ export class VectorStore {
 			out.missCount = e.missCount;
 		}
 		return out;
+	}
+
+	/** Fingerprint and tombstone state without copying the vector. */
+	peek(key: string): EntryInfo | undefined {
+		const e = this.entries.get(key);
+		if (!e) {
+			return undefined;
+		}
+		const out: EntryInfo = { fp: e.fp };
+		if (e.missingSince !== undefined) {
+			out.missingSince = e.missingSince;
+			out.missCount = e.missCount;
+		}
+		return out;
+	}
+
+	/** Number of entries not tombstoned. */
+	visibleCount(): number {
+		let n = 0;
+		for (const e of this.entries.values()) {
+			if (e.missingSince === undefined) {
+				n++;
+			}
+		}
+		return n;
 	}
 
 	/** Keys that may appear in results (tombstoned entries excluded). */
@@ -320,6 +393,20 @@ export class VectorStore {
 		this.changed();
 	}
 
+	/**
+	 * Replace the fingerprint of an existing entry without touching its
+	 * vector (an upload's provisional fingerprint replaced by the listed one).
+	 */
+	setFingerprint(key: string, fp: string): void {
+		this.assertOpen();
+		const e = this.entries.get(key);
+		if (!e || e.fp === fp) {
+			return;
+		}
+		e.fp = fp;
+		this.changed();
+	}
+
 	/** Tombstone (§7.3): hidden from results; counts consecutive complete listings without it. */
 	markMissing(key: string, now: number): void {
 		this.assertOpen();
@@ -365,18 +452,133 @@ export class VectorStore {
 		this.free.clear();
 		this.slotCount = 0;
 		this.data = new Float32Array(this.dims * 64);
-		// Rewrite from scratch: drop the file, commit an empty meta.
+		// Rewrite from scratch: drop the file, commit an empty meta. Unlink
+		// rather than truncate, so an async flush still holding the old file
+		// open cannot write stale slots into the new one.
 		this.committedSlots = 0;
-		this.truncateVectors(0);
+		this.writeGeneration++;
+		if (this.fs.existsSync(this.vecPath)) {
+			this.unlinkQuiet(this.vecPath);
+			this.fs.closeSync(this.fs.openSync(this.vecPath, "w"));
+		}
 		this.changed();
 	}
 
+	/** Commit pending changes (async I/O with `asyncIo`, else flushSync). */
 	flush(): Promise<void> {
+		if (this.usesAsyncIo()) {
+			return this.flushAsync();
+		}
 		try {
 			this.flushSync();
 			return Promise.resolve();
 		} catch (error) {
 			return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+
+	private usesAsyncIo(): boolean {
+		return this.options.asyncIo === true && (this.options.fs === undefined || this.options.asyncFs !== undefined);
+	}
+
+	private getAsyncFs(): StoreAsyncFs {
+		return this.options.asyncFs ?? nodeFs.promises;
+	}
+
+	/** Async flushes run one after another. */
+	private flushAsync(): Promise<void> {
+		this.cancelFlushTimer();
+		const previous = this.asyncFlush ?? Promise.resolve();
+		const next = previous.catch(() => undefined).then(() => this.flushAsyncOnce());
+		this.asyncFlush = next;
+		next.then(
+			() => {
+				if (this.asyncFlush === next) {
+					this.asyncFlush = null;
+				}
+			},
+			() => {
+				if (this.asyncFlush === next) {
+					this.asyncFlush = null;
+				}
+			}
+		);
+		return next;
+	}
+
+	/**
+	 * Same protocol as flushSync with the slow parts (writes, fsync) off the
+	 * main thread: snapshot new slots + meta now, append the slots and write a
+	 * private meta tmp asynchronously, then rename it over meta.json in one
+	 * synchronous step, unless a synchronous write (flushSync, compaction,
+	 * clear, close) happened meanwhile; that write already committed a newer
+	 * state, so this one is dropped. Slots are written at fixed offsets
+	 * without truncating, so racing with flushSync only rewrites identical
+	 * bytes; anything past the committed slot count is trimmed on open.
+	 */
+	private async flushAsyncOnce(): Promise<void> {
+		if (!this.dirty || this.closed) {
+			return;
+		}
+		const afs = this.getAsyncFs();
+		const generation = this.writeGeneration;
+		const version = this.changeVersion;
+		const from = this.committedSlots;
+		const to = this.slotCount;
+		const B = this.slotBytes;
+		const slots = new Uint8Array(this.data.buffer, this.data.byteOffset + from * B, (to - from) * B).slice();
+		const meta = Buffer.from(JSON.stringify(this.buildMeta(this.entries, to, [...this.free])), "utf8");
+		const tmp = `${this.metaPath}.a${++this.tmpCounter}${TMP}`;
+		const stale = (): boolean => this.closed || generation !== this.writeGeneration;
+
+		await afs.mkdir(this.dir, { recursive: true });
+		if (to > from) {
+			if (stale()) {
+				return;
+			}
+			if (!this.fs.existsSync(this.vecPath)) {
+				this.fs.closeSync(this.fs.openSync(this.vecPath, "a"));
+			}
+			const fh = await afs.open(this.vecPath, "r+");
+			try {
+				// A compaction/clear may have replaced the file before it was opened.
+				if (stale()) {
+					return;
+				}
+				let off = 0;
+				while (off < slots.length) {
+					const { bytesWritten } = await fh.write(slots, off, slots.length - off, from * B + off);
+					off += bytesWritten;
+				}
+				await fh.sync();
+			} finally {
+				await fh.close();
+			}
+		}
+		try {
+			const fh = await afs.open(tmp, "w");
+			try {
+				let off = 0;
+				while (off < meta.length) {
+					const { bytesWritten } = await fh.write(meta, off, meta.length - off, off);
+					off += bytesWritten;
+				}
+				await fh.sync();
+			} finally {
+				await fh.close();
+			}
+			if (stale()) {
+				await afs.unlink(tmp).catch(() => undefined);
+				return;
+			}
+			this.fs.renameSync(tmp, this.metaPath);
+		} catch (error) {
+			await afs.unlink(tmp).catch(() => undefined);
+			throw error;
+		}
+		this.committedSlots = to;
+		if (this.changeVersion === version) {
+			this.dirty = false;
 		}
 	}
 
@@ -386,6 +588,7 @@ export class VectorStore {
 		if (!this.dirty) {
 			return;
 		}
+		this.writeGeneration++;
 		this.fs.mkdirSync(this.dir, { recursive: true });
 		if (this.slotCount > this.committedSlots) {
 			this.writeVectors(this.vecPath, this.committedSlots, this.slotCount, false);
@@ -416,6 +619,7 @@ export class VectorStore {
 	compactSync(): void {
 		this.assertOpen();
 		this.cancelFlushTimer();
+		this.writeGeneration++;
 		const ordered = [...this.entries.entries()].sort((a, b) => a[1].slot - b[1].slot);
 		const d = this.dims;
 		const next = new Float32Array(Math.max(64, ordered.length) * d);
@@ -507,6 +711,7 @@ export class VectorStore {
 
 	private changed(): void {
 		this.dirty = true;
+		this.changeVersion++;
 		const delay = this.options.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
 		if (delay <= 0 || this.flushTimer !== null) {
 			return;
@@ -515,16 +720,26 @@ export class VectorStore {
 			setTimeout: (fn: () => void, ms: number) => window.setTimeout(fn, ms),
 			clearTimeout: (id: number) => window.clearTimeout(id),
 		};
+		const report = (error: unknown): void => {
+			if (this.options.onFlushError) {
+				this.options.onFlushError(error);
+			} else {
+				console.error("OSS Gallery: semantic index flush failed", error);
+			}
+		};
 		this.flushTimer = timers.setTimeout(() => {
 			this.flushTimer = null;
+			if (this.closed) {
+				return;
+			}
+			if (this.usesAsyncIo()) {
+				this.flushAsync().catch(report);
+				return;
+			}
 			try {
 				this.flushSync();
 			} catch (error) {
-				if (this.options.onFlushError) {
-					this.options.onFlushError(error);
-				} else {
-					console.error("OSS Gallery: semantic index flush failed", error);
-				}
+				report(error);
 			}
 		}, delay);
 	}
@@ -672,6 +887,29 @@ export class VectorStore {
 		return true;
 	}
 
+	/**
+	 * An async flush that never reached its rename leaves meta.json.a<N>.tmp
+	 * behind; it was never committed, so it is simply deleted (any appended
+	 * slots are trimmed below as uncommitted bytes).
+	 */
+	private removeAsyncTmpFiles(): void {
+		const list = (this.fs as Partial<{ readdirSync(p: string): string[] }>).readdirSync;
+		if (!list) {
+			return;
+		}
+		let names: string[];
+		try {
+			names = list.call(this.fs, this.dir);
+		} catch {
+			return;
+		}
+		for (const name of names) {
+			if (ASYNC_META_TMP.test(name)) {
+				this.unlinkQuiet(path.join(this.dir, name));
+			}
+		}
+	}
+
 	private resetFiles(): void {
 		this.unlinkQuiet(this.metaPath);
 		this.unlinkQuiet(this.vecPath);
@@ -680,6 +918,7 @@ export class VectorStore {
 	private load(): void {
 		this.fs.mkdirSync(this.dir, { recursive: true });
 		const recoveredTmp = this.recoverTmpFiles();
+		this.removeAsyncTmpFiles();
 
 		if (!this.fs.existsSync(this.metaPath)) {
 			this.unlinkQuiet(this.vecPath);

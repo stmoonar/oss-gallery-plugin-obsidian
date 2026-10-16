@@ -1,12 +1,11 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { TencentSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { simulateProgress } from './shared/progress';
 import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
-import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
-import { parseS3ListObjectsPage } from './shared/s3xml';
-import { isImageFile } from './shared/image';
+import { collectPages, ListingCollector, MAX_LIST_PAGES } from './shared/listing';
+import { parseS3ListObjectsPage, s3EntriesToImages } from './shared/s3xml';
 import { createTencentCosAuthorization } from './shared/tencentcos';
 
 export class TencentProvider implements IOssProvider {
@@ -105,24 +104,18 @@ export class TencentProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         // Tencent COS ListObjects API
+        const listPrefix = buildListPrefix(this.settings.path, prefix);
         if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
-            return [];
+            return { items: [], complete: false, prefix: listPrefix };
         }
 
         try {
             const host = this.getHost();
-            const images: OssImage[] = [];
-            const listPrefix = buildListPrefix(this.settings.path, prefix);
-            let marker = '';
+            const collector = new ListingCollector(this.name, listPrefix);
 
-            for (let pages = 0; ; pages++) {
-                if (pages >= MAX_LIST_PAGES) {
-                    warnListingCapped(this.name, MAX_LIST_PAGES);
-                    return images;
-                }
-
+            return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
                 const query: Record<string, string> = { 'max-keys': '1000' };
                 if (listPrefix) {
                     query.prefix = listPrefix;
@@ -146,28 +139,23 @@ export class TencentProvider implements IOssProvider {
                 }
 
                 const page = parseS3ListObjectsPage(response.text);
-                images.push(
-                    ...page.objects
-                        .filter((item) => isImageFile(item.key))
-                        .map((item) => ({
-                            key: item.key,
-                            url: this.buildPublicUrl(item.key),
-                            lastModified: item.lastModified,
-                            size: item.size,
-                        }))
-                );
-
+                // V1 ListObjects: NextMarker is only sent with a delimiter;
+                // otherwise continue after the last key of the page.
                 const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
-                if (!page.isTruncated || !nextMarker || nextMarker === marker) {
-                    return images;
-                }
-
-                marker = nextMarker;
-            }
+                return {
+                    items: s3EntriesToImages(page.objects, (key) => this.buildPublicUrl(key)),
+                    more: page.isTruncated,
+                    next: nextMarker,
+                };
+            });
         } catch (error) {
             console.error('Failed to list Tencent COS images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    listingKeyForUpload(path: string): string {
+        return buildObjectKey(this.settings.path, path);
     }
 
     async deleteImage(key: string): Promise<void> {

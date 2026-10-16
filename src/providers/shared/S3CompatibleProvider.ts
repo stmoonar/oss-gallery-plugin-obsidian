@@ -1,12 +1,12 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import mime from 'mime';
 import * as aws4 from 'aws4';
-import { IOssProvider, OssImage, UploadProgressInfo } from '../../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../../types/oss';
 import { PluginSettings } from '../../types/settings';
 import { extractSignedHeaders } from './aws4helpers';
-import { parseS3ListObjectsPage, parseS3ListObjectsXml } from './s3xml';
+import { parseS3ListObjectsPage, s3EntriesToImages } from './s3xml';
 import { buildListPrefix } from './path';
-import { MAX_LIST_PAGES, warnListingCapped } from './listing';
+import { collectPages, ListingCollector, MAX_LIST_PAGES } from './listing';
 
 interface S3Credentials {
     accessKeyId: string;
@@ -168,24 +168,15 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
+        const listPrefix = buildListPrefix(undefined, prefix);
         if (!this.canListImages()) {
-            return [];
+            return { items: [], complete: false, prefix: listPrefix };
         }
 
         try {
-            const images: OssImage[] = [];
-            const listPrefix = buildListPrefix(undefined, prefix);
-            let continuationToken: string | undefined;
-            let pages = 0;
-
-            do {
-                if (pages >= MAX_LIST_PAGES) {
-                    warnListingCapped(this.name, MAX_LIST_PAGES);
-                    break;
-                }
-                pages++;
-
+            const collector = new ListingCollector(this.name, listPrefix);
+            return await collectPages(collector, MAX_LIST_PAGES, async (continuationToken) => {
                 const queryParams = new URLSearchParams({
                     'list-type': '2',
                     'max-keys': '1000',
@@ -222,23 +213,41 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
                     throw new Error(`List objects failed with status ${response.status}`);
                 }
 
-                images.push(
-                    ...parseS3ListObjectsXml(
-                        response.text,
-                        (key) => this.generateAccessUrl(key)
-                    )
-                );
-
                 const page = parseS3ListObjectsPage(response.text);
-                continuationToken = page.isTruncated
-                    ? page.nextContinuationToken
-                    : undefined;
-            } while (continuationToken);
-
-            return images;
+                return {
+                    items: s3EntriesToImages(page.objects, (key) => this.generateAccessUrl(key)),
+                    more: page.isTruncated,
+                    next: page.nextContinuationToken,
+                };
+            });
         } catch (error) {
             return this.handleListError(error);
         }
+    }
+
+    listingKeyForUpload(path: string): string {
+        return path;
+    }
+
+    /** SigV4-signed GET of an object (semantic indexing of private buckets). */
+    signedObjectGet(key: string): { url: string; headers: Record<string, string> } | null {
+        if (!this.isConfigured()) {
+            return null;
+        }
+        const requestPath = this.getObjectRequestPath(key);
+        const request = {
+            host: this.getSignedHost(),
+            path: requestPath,
+            service: 's3',
+            region: this.getRegion(),
+            method: 'GET',
+            headers: {},
+        };
+        this.signRequest(request);
+        return {
+            url: this.getRequestUrl(requestPath),
+            headers: extractSignedHeaders(request.headers),
+        };
     }
 
     async deleteImage(key: string): Promise<void> {

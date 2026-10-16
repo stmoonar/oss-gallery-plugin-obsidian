@@ -5,6 +5,8 @@ export interface S3ObjectEntry {
     key: string;
     lastModified?: Date;
     size: number;
+    /** <ETag> as sent, quotes included (S3, Aliyun, Tencent, R2, MinIO). */
+    etag?: string;
 }
 
 export interface S3ListObjectsPage {
@@ -15,15 +17,12 @@ export interface S3ListObjectsPage {
 }
 
 /**
- * Parse an S3-compatible ListObjectsV2 XML response into OssImage[].
+ * Parse one S3-compatible ListObjects(V2) XML page.
  *
  * All S3-compatible providers (MinIO, R2, S3, Tencent, Aliyun) return the same
- * XML schema with Contents > Key / LastModified / Size.  Extracting the parser
- * here eliminates duplication and ensures a single place to fix parsing bugs.
- *
- * @param xml        Raw XML response body
- * @param buildUrl   Provider-specific function that turns an object key into
- *                   a public/access URL
+ * XML schema with Contents > Key / LastModified / Size / ETag.  Extracting the
+ * parser here eliminates duplication and ensures a single place to fix
+ * parsing bugs.
  */
 export function parseS3ListObjectsPage(xml: string): S3ListObjectsPage {
     const parser = new DOMParser();
@@ -36,12 +35,14 @@ export function parseS3ListObjectsPage(xml: string): S3ListObjectsPage {
         const key = item.getElementsByTagName('Key')[0]?.textContent;
         const lastModified = item.getElementsByTagName('LastModified')[0]?.textContent;
         const size = item.getElementsByTagName('Size')[0]?.textContent;
+        const etag = item.getElementsByTagName('ETag')[0]?.textContent?.trim();
 
         if (key) {
             objects.push({
                 key,
                 lastModified: lastModified ? new Date(lastModified) : undefined,
                 size: size ? parseInt(size, 10) : 0,
+                ...(etag ? { etag } : {}),
             });
         }
     }
@@ -59,17 +60,18 @@ export function parseS3ListObjectsPage(xml: string): S3ListObjectsPage {
     };
 }
 
-export function parseS3ListObjectsXml(
-    xml: string,
+/** Image entries of a parsed page as OssImage (etag kept for fingerprints). */
+export function s3EntriesToImages(
+    objects: S3ObjectEntry[],
     buildUrl: (key: string) => string
 ): OssImage[] {
-    return parseS3ListObjectsPage(xml)
-        .objects
+    return objects
         .filter((item) => isImageFile(item.key))
         .map((item) => ({
             key: item.key,
             url: buildUrl(item.key),
             lastModified: item.lastModified,
             size: item.size,
+            ...(item.etag ? { etag: item.etag } : {}),
         }));
 }

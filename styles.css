@@ -765,6 +765,35 @@ If your plugin does not need CSS, delete this file.
     word-break: break-all;
 }
 
+/* Self-test: best query per image (theme accent, readable in light and dark) */
+.oss-gallery-semantic-files td.oss-gallery-semantic-best {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: var(--font-semibold);
+}
+
+/* Settings: index statistics and problem files */
+.oss-gallery-semantic-index-status {
+    padding: 0 0 var(--oss-gallery-spacing-md);
+}
+
+.oss-gallery-semantic-index-status details {
+    margin-top: var(--oss-gallery-spacing-sm);
+}
+
+.oss-gallery-semantic-index-status summary {
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-index-status td {
+    word-break: break-all;
+}
+
+.oss-gallery-semantic-status {
+    cursor: pointer;
+}
+
 .oss-gallery-semantic-warning {
     padding: var(--oss-gallery-spacing-sm) var(--oss-gallery-spacing-md);
     border-left: 3px solid var(--text-warning);
@@ -775,4 +804,249 @@ If your plugin does not need CSS, delete this file.
 .oss-gallery-setting-error {
     margin-top: var(--oss-gallery-spacing-xs);
     color: var(--text-error);
+}
+
+/* ---- Semantic search in the gallery (P4) ---- */
+
+/* Semantic toggle (toolbar) and regex toggle while semantic mode is on */
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-active {
+    color: var(--interactive-accent);
+    background-color: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+}
+
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-active:hover {
+    background-color: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+}
+
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-disabled,
+.oss-gallery-search-input-wrapper .clickable-icon.oss-gallery-regex-btn.is-disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.oss-gallery-search-container.oss-gallery-is-semantic .oss-gallery-search-input-wrapper input {
+    border-color: color-mix(in srgb, var(--interactive-accent) 60%, var(--background-modifier-border));
+}
+
+/* Strip under the toolbar: index progress / status and the result header */
+.oss-gallery-semantic-bar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+    padding: var(--size-4-1) var(--size-4-2);
+    background: var(--background-secondary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-bar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+}
+
+.oss-gallery-semantic-bar-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.oss-gallery-semantic-progress {
+    flex: 1 1 80px;
+    min-width: 60px;
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--background-modifier-border);
+    overflow: hidden;
+}
+
+.oss-gallery-semantic-progress-fill {
+    width: 0;
+    height: 100%;
+    background-color: var(--interactive-accent);
+    transition: width var(--oss-gallery-transition-duration-fast) ease;
+}
+
+.oss-gallery-semantic-bar .clickable-icon.oss-gallery-semantic-bar-btn {
+    --icon-size: var(--icon-xs);
+    padding: var(--size-2-1);
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    height: auto;
+    min-width: 0;
+    padding: var(--size-2-1) var(--size-4-2);
+    border-radius: var(--radius-l);
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-chip:hover {
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
+}
+
+.oss-gallery-semantic-chip-icon {
+    display: inline-flex;
+    --icon-size: var(--icon-xs);
+    color: var(--interactive-accent);
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-start-btn,
+.oss-gallery-semantic-bar button.oss-gallery-semantic-update-btn {
+    height: auto;
+    padding: var(--size-2-1) var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-result-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+    max-width: 100%;
+    padding-inline-start: var(--size-4-2);
+    border-radius: var(--radius-l);
+    background-color: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    color: var(--text-normal);
+}
+
+.oss-gallery-semantic-result-chip > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-result-count {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-loading::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-inline-end: var(--size-4-1);
+    vertical-align: -1px;
+    border: 2px solid var(--background-modifier-border);
+    border-top-color: var(--interactive-accent);
+    border-radius: 50%;
+    animation: oss-gallery-spin 1s linear infinite;
+}
+
+/* Tiles: keyboard focus, "show in gallery" selection, score badge */
+.oss-gallery-item:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: -2px;
+}
+
+.oss-gallery-item.is-selected {
+    outline: 3px solid var(--interactive-accent);
+    outline-offset: -3px;
+}
+
+.oss-gallery-item:focus-within .oss-gallery-buttons {
+    opacity: 1;
+}
+
+.oss-gallery-score-badge {
+    position: absolute;
+    left: var(--oss-gallery-spacing-xs);
+    bottom: var(--oss-gallery-spacing-xs);
+    padding: 0 var(--size-4-1);
+    border-radius: var(--radius-s);
+    background-color: color-mix(in srgb, var(--background-primary) 75%, transparent);
+    color: var(--text-muted);
+    font-size: var(--font-smallest);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-similar-btn:hover {
+    background: var(--oss-gallery-primary);
+    color: var(--text-on-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .oss-gallery-semantic-loading::before {
+        animation: none;
+    }
+
+    .oss-gallery-semantic-progress-fill {
+        transition: none;
+    }
+}
+
+/* Traffic dialog figures, details dialog */
+.oss-gallery-semantic-figures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-4-4);
+    margin: var(--size-4-2) 0 var(--size-4-3);
+}
+
+.oss-gallery-semantic-figure-value {
+    font-size: var(--font-ui-large);
+    font-weight: var(--font-semibold);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-normal);
+}
+
+.oss-gallery-semantic-figure-label {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-details-summary {
+    font-weight: var(--font-semibold);
+}
+
+.oss-gallery-semantic-details {
+    margin-top: var(--size-4-2);
+}
+
+.oss-gallery-semantic-details summary {
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-modal .oss-gallery-semantic-files td {
+    word-break: break-all;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn {
+    height: auto;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    color: var(--text-accent);
+    font-size: inherit;
+    text-align: start;
+    white-space: normal;
+    word-break: break-all;
+    cursor: pointer;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn:hover {
+    text-decoration: underline;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 1px;
 }

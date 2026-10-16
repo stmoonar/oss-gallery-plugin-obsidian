@@ -26,6 +26,7 @@ import { uploadProgressExtension } from "./editor/uploadProgressExtension";
 import { createUploadProgressPostProcessor } from "./editor/uploadProgressPostProcessor";
 import { SemanticController } from "./semantic/SemanticController";
 import { runSemanticSelfTestCommand } from "./semantic/selfTestCommand";
+import { SemanticIndexing } from "./semantic/SemanticIndexing";
 
 /**
  * Where an upload was started from. The Editor (and MarkdownView) of a leaf is
@@ -50,6 +51,8 @@ export default class OssGalleryPlugin extends Plugin {
 	providerManager: OssProviderManager;
 	/** Semantic image search install state (downloads outlive the settings tab). */
 	semantic: SemanticController;
+	/** Semantic index/search services (per-scope indexes, upload/delete hooks). */
+	semanticIndexing: SemanticIndexing;
 	private uploadCounter = 0;
 	/** Upload progress shown in editors/reading view; never written to notes. */
 	private readonly uploadProgress = new UploadProgressStore();
@@ -88,6 +91,9 @@ export default class OssGalleryPlugin extends Plugin {
 
 		this.providerManager = new OssProviderManager(this.settings, this.app);
 		this.semantic = new SemanticController(this);
+		this.semanticIndexing = new SemanticIndexing(this);
+		this.semantic.indexing = this.semanticIndexing;
+		this.semanticIndexing.attachStatusBar(this.addStatusBarItem());
 
 		this.addSettingTab(new SettingsManager(this.app, this, this.providerManager, this.semantic));
 		this.addCommands();
@@ -194,6 +200,35 @@ export default class OssGalleryPlugin extends Plugin {
 				return true;
 			},
 		});
+
+		// Searching happens in the gallery (semantic toggle, "find similar");
+		// these commands remain for keyboard users and troubleshooting.
+		this.addCommand({
+			id: "semantic-index-now",
+			name: t("Semantic search: index current provider now"),
+			checkCallback: (checking: boolean) => {
+				if (!this.settings.semantic.enabled || !this.supportsActiveProviderCapability("list")) {
+					return false;
+				}
+				if (!checking) {
+					void this.semanticIndexing.indexNow();
+				}
+				return true;
+			},
+		});
+		this.addCommand({
+			id: "semantic-stop-indexing",
+			name: t("Semantic search: stop indexing"),
+			checkCallback: (checking: boolean) => {
+				if (!this.semanticIndexing.index.isRunning()) {
+					return false;
+				}
+				if (!checking) {
+					this.semanticIndexing.index.cancel();
+				}
+				return true;
+			},
+		});
 	}
 
 	private registerEvents(): void {
@@ -217,7 +252,12 @@ export default class OssGalleryPlugin extends Plugin {
 				const provider = this.providerManager.getActiveProvider()
 					?? this.providerManager.getAllProviders()[0];
 				if (!provider) throw new Error(t("No active provider"));
-				return new OssGalleryView(leaf, provider, this.getGalleryListPrefix());
+				return new OssGalleryView(
+					leaf,
+					provider,
+					this.getGalleryListPrefix(),
+					this.semanticIndexing.galleryHooks()
+				);
 			}
 		);
 
@@ -234,7 +274,8 @@ export default class OssGalleryPlugin extends Plugin {
 		});
 	}
 
-	async openGalleryView(): Promise<void> {
+	/** Open (or focus) the gallery; `semantic` switches its search box to semantic mode. */
+	async openGalleryView(options: { semantic?: boolean } = {}): Promise<void> {
 		if (!this.supportsActiveProviderCapability("list")) {
 			new Notice(t("Image listing is not available"));
 			return;
@@ -260,13 +301,16 @@ export default class OssGalleryPlugin extends Plugin {
 		}
 
 		await workspace.revealLeaf(leaf);
+		if (options.semantic && leaf.view instanceof OssGalleryView) {
+			leaf.view.enterSemanticMode();
+		}
 	}
 
 	/**
 	 * Directory the gallery lists: the global base path, so it shows what
 	 * this plugin uploads rather than the whole bucket.
 	 */
-	private getGalleryListPrefix(): string {
+	getGalleryListPrefix(): string {
 		const basePath = normalizeBasePath(this.settings.basepath);
 		return basePath ? `${basePath}/` : "";
 	}
@@ -344,6 +388,13 @@ export default class OssGalleryPlugin extends Plugin {
 			);
 
 			this.uploadProgress.update(id, { percent: 100, status: "done" });
+			// Index the new image from the bytes in hand (no download).
+			const uploadedTo = this.providerManager.getActiveProvider();
+			if (uploadedTo) {
+				this.semanticIndexing.onUploaded(uploadedTo, objectName, file).catch((error) => {
+					console.error("OSS Gallery: semantic upload indexing failed", error);
+				});
+			}
 			const finalText = this.embedRenderer.render(fileType, url, file.name);
 			await this.replacePlaceholder(target, id, finalText);
 			this.requestGalleryRefresh();
@@ -615,6 +666,8 @@ export default class OssGalleryPlugin extends Plugin {
 		// pending gallery refresh.
 		this.requestSaveData.run();
 		this.requestGalleryRefresh.cancel();
+		// Stop indexing and write every open index (synchronously).
+		this.semanticIndexing?.dispose();
 		// Stop a running model download; finished files are kept.
 		this.semantic?.dispose();
 		// Drop progress entries and revoke thumbnail object URLs.
@@ -644,6 +697,7 @@ export default class OssGalleryPlugin extends Plugin {
 		this.keyBuilder?.updateSettings(this.settings);
 		this.embedRenderer?.updateSettings(this.settings);
 		this.providerManager?.updateSettings(this.settings);
+		this.semanticIndexing?.onSettingsChanged();
 
 		const activeProvider = this.providerManager?.getActiveProvider();
 		if (activeProvider) {

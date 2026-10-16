@@ -1,10 +1,11 @@
 import { App, debounce, Setting, ToggleComponent } from "obsidian";
 import { t } from "../i18n";
+import { renderIndexStatusDetails } from "../components/IndexStatusDetails";
 import { SemanticDeleteModal, SemanticDownloadModal } from "../modals/SemanticModals";
 import { AssetEntry, totalSize } from "../semantic/assets";
 import { formatMegabytes, formatPercent } from "../semantic/format";
 import { InstallState, remainingFiles, stateHasFiles } from "../semantic/ModelDownloadManager";
-import { defaultModelDir } from "../semantic/modelDir";
+import { defaultIndexDir, defaultModelDir, resolveIndexDir } from "../semantic/modelDir";
 import { MirrorUrlError, normalizeMirrorUrl } from "../semantic/mirrors";
 import { describeDownloadError, SemanticController } from "../semantic/SemanticController";
 import type { WebGpuFailureReason, WebGpuProbeResult } from "../semantic/webGpuProbe";
@@ -51,6 +52,8 @@ export class SemanticSettingsSection {
 	private frame: number | null = null;
 	/** Set while the toggle is updated from code, so onChange ignores it. */
 	private syncingToggle = false;
+	private indexStatusEl: HTMLElement | null = null;
+	private unsubscribeIndex: (() => void) | null = null;
 
 	constructor(
 		private readonly app: App,
@@ -112,6 +115,8 @@ export class SemanticSettingsSection {
 					saveModelDir();
 				}));
 
+		this.renderIndexDirSetting(containerEl);
+
 		new Setting(containerEl)
 			.setName(t("Image detail"))
 			.setDesc(t("Image detail description"))
@@ -134,6 +139,8 @@ export class SemanticSettingsSection {
 					this.settings.autoIndex = value;
 					await this.host.saveSettings();
 				}));
+
+		this.renderIndexStatus(containerEl);
 
 		new Setting(containerEl)
 			.setName(t("Download sources"))
@@ -165,11 +172,101 @@ export class SemanticSettingsSection {
 	dispose(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.unsubscribeIndex?.();
+		this.unsubscribeIndex = null;
+		this.indexStatusEl = null;
 		if (this.frame !== null) {
 			window.cancelAnimationFrame(this.frame);
 			this.frame = null;
 		}
 		this.renderedKey = null;
+	}
+
+	/**
+	 * Per-device index directory (outside the vault, never synced). A new
+	 * value points at a new location: the old index stays where it was, the
+	 * stores reopen there (remote providers ask for confirmation again).
+	 */
+	private renderIndexDirSetting(containerEl: HTMLElement): void {
+		const setting = new Setting(containerEl)
+			.setName(t("Index directory"))
+			.setDesc(t("Index directory description").replace("{dir}", defaultIndexDir()));
+		const errorEl = setting.descEl.createDiv({ cls: "oss-gallery-setting-error" });
+		errorEl.hide();
+		const save = debounce(async () => {
+			await this.host.saveSettings();
+			this.renderIndexStatusContent();
+		}, 600, true);
+		setting.addText((text) => text
+			.setPlaceholder(defaultIndexDir())
+			.setValue(this.settings.indexDir)
+			.onChange((value) => {
+				const trimmed = value.trim();
+				if (!resolveIndexDir(trimmed).ok) {
+					errorEl.setText(t("Index directory must be an absolute path"));
+					errorEl.show();
+					return;
+				}
+				errorEl.hide();
+				if (trimmed !== this.settings.indexDir) {
+					this.settings.indexDir = trimmed;
+					save();
+				}
+			}));
+	}
+
+	/** Index statistics of the active provider, clear button, problem files. */
+	private renderIndexStatus(containerEl: HTMLElement): void {
+		const indexing = this.controller.indexing;
+		if (!indexing) {
+			return;
+		}
+		new Setting(containerEl)
+			.setName(t("Index for this vault"))
+			.setDesc(t("Index for this vault description"))
+			.addButton((btn) => {
+				setDestructiveButton(btn
+					.setButtonText(t("Clear index for this vault"))
+					.onClick(() => indexing.confirmClearIndex(() => this.renderIndexStatusContent())));
+			});
+		this.indexStatusEl = containerEl.createDiv({ cls: "oss-gallery-semantic-index-status" });
+		this.renderIndexStatusContent();
+		let pending = false;
+		this.unsubscribeIndex = indexing.index.onProgress((p) => {
+			// Refresh when a run ends; progress itself is in the status bar.
+			if (p.state === "idle" && !pending) {
+				pending = true;
+				window.setTimeout(() => {
+					pending = false;
+					this.renderIndexStatusContent();
+				}, 200);
+			}
+		});
+	}
+
+	private renderIndexStatusContent(): void {
+		const el = this.indexStatusEl;
+		const indexing = this.controller.indexing;
+		if (!el || !indexing) {
+			return;
+		}
+		el.empty();
+		const stats = indexing.statsForCurrentScope();
+		if (!stats) {
+			el.createDiv({ cls: "setting-item-description", text: t("No index for the current provider") });
+			return;
+		}
+		el.createDiv({
+			cls: "setting-item-description",
+			text: t("Index stats")
+				.replace("{indexed}", String(stats.indexed))
+				.replace("{converted}", String(stats.converted))
+				.replace("{unsupported}", String(stats.unsupported))
+				.replace("{failed}", String(stats.failed))
+				.replace("{pending}", String(stats.pending)),
+		});
+		// Same lists as the gallery's details dialog (without "show in gallery").
+		renderIndexStatusDetails(el, stats);
 	}
 
 	/**

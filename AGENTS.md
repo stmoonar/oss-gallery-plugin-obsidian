@@ -19,11 +19,10 @@ pnpm run dev:install -- --vault <path>  # copy dist/ into a test vault (or OBSID
 - `src/settings/SettingsManager.ts`: settings UI, active provider selection, global object rules, preview settings
 - `src/providers/`: provider implementations and registry metadata
 - `src/views/OssGalleryView.ts`: gallery view
-- `src/components/`: gallery UI pieces
+- `src/components/`: gallery UI pieces (`SearchComponent` with regex/semantic toggles and the pure mode rules in `searchMode.ts`, `ImageGrid`, `SemanticIndexBar` progress/status strip, `IndexStatusDetails` shared by the details dialog and settings)
 - `src/editor/`: CM6 editor extension and Reading-mode post processor that render upload progress cards (display layer only, never written to notes)
 - `src/services/`: upload, sync, object key, search, embed rendering
-- `src/semantic/`: opt-in semantic image search (design: `docs/semantic-search.md`): model download manager, WebGPU probe, worker host (`WorkerEmbeddingBackend`, `FakeEmbeddingBackend`), `VectorStore`, self-test; `src/semantic/worker/` is bundled separately into `dist/semantic-worker.js` and must never be imported by `main.ts` code (the production build asserts main.js has no transformers.js)
-- `src/semantic/`: optional semantic image search (design: `docs/semantic-search.md`): WebGPU probe, asset manifest, model download manager, `worker/entry.ts` (built separately into `dist/semantic-worker.js`, never into main.js)
+- `src/semantic/`: opt-in semantic image search (design: `docs/semantic-search.md`): model download manager, WebGPU probe, worker host (`WorkerEmbeddingBackend`, `FakeEmbeddingBackend`), `VectorStore` (+ `IndexStatusStore` sidecar), `SemanticIndexService` (per-scope indexing, deletion sync protocol, traffic confirmation), `SemanticSearchService`, image format handling (`imageFormat.ts`, `svgRasterizer.ts`), remote byte fetching (`remoteBytes.ts`, requestUrl + signed GET fallback), status texts (`statusText.ts`), Obsidian glue `SemanticIndexing.ts` (gallery hooks, status bar, dialogs), self-test; `src/semantic/worker/` (incl. the UTIF.js TIFF decoder) is bundled separately into `dist/semantic-worker.js` and must never be imported by `main.ts` code (the production build asserts main.js has no transformers.js)
 - `src/types/`: shared types for settings, providers, and gallery state
 - `src/locale/` and `src/i18n.ts`: localization
 
@@ -40,7 +39,7 @@ Global settings:
 - `audioPreview`
 - `docsPreview`
 - `embedFormat`
-- `semantic`: `{ enabled, modelDir, imageTokenBudget: 70 | 140 | 280, autoIndex, hfEndpoint, githubMirror }` (semantic image search; `enabled` becomes true only after a fully verified model install; `hfEndpoint` / `githubMirror` are optional `https://` download mirrors, `''` = official)
+- `semantic`: `{ enabled, modelDir, indexDir, imageTokenBudget: 70 | 140 | 280, autoIndex, hfEndpoint, githubMirror }` (semantic image search; `enabled` becomes true only after a fully verified model install; `indexDir` = per-device index root outside the vault, `''` = `<appDir>/indexes`; `hfEndpoint` / `githubMirror` are optional `https://` download mirrors, `''` = official)
 
 Provider settings live under `settings.providers`.
 
@@ -55,6 +54,7 @@ Each provider entry defines:
 - default settings
 - configuration validation
 - factory function
+- optional `getIndexIdentity` (`src/providers/indexIdentity.ts`): settings fields that decide which objects a listing sees (bucket, endpoint, repo, path...; never credentials), hashed into the semantic index scope id. Without it the provider cannot be indexed.
 
 Use the registry as the source of truth when adding or changing providers.
 
@@ -67,6 +67,12 @@ Use the registry as the source of truth when adding or changing providers.
 - Unit tests live in `tests/` (vitest). Code under test must not import `obsidian` or transformers.js; inject timers/fs instead of using globals.
 - `src/semantic/assets.generated.ts` is written by `esbuild.config.mjs` on every build (hashes of the semantic runtime release assets). Commit it after a build; never edit it by hand. Model files are pinned to a Hugging Face commit in `src/semantic/assets.ts`.
 - Semantic search files live outside the vault. Deleting them must only remove files the plugin knows about, never the whole model directory.
+- `listImages` returns `ListResult { items, complete, prefix }`. Any cap (`MAX_LIST_PAGES`, `MAX_LIST_REQUESTS`, depth limits) or partial failure must set `complete = false` (use `ListingCollector` / `collectPages` in `src/providers/shared/listing.ts`); the semantic index only deletes based on complete listings. Fill `etag` when the API returns one. Implement `listingKeyForUpload` when the listed key of an upload is predictable.
+- Semantic indexes live per device in `semantic.indexDir` (`<indexDir>/<vaultId>/<scopeId>/`), never in the vault. "Clear index" removes only the plugin's index files; "Delete model" never touches indexes and vice versa.
+- Remote indexing downloads images: it must never start without the traffic confirmation (`SemanticIndexService.start`, rules in `trafficPromptReason`).
+- Remote image bytes go through Obsidian `requestUrl` (`src/semantic/remoteBytes.ts`), never `fetch()` (bucket CORS, private buckets). Providers that sign their own requests can implement `signedObjectGet(key)` for private buckets (S3-compatible ones do).
+- Semantic UI in the gallery must respect availability (`SemanticIndexing.availability`: installed, enabled, WebGPU, listable provider, index exists) and must never show images that are not in the current listing (`intersectHits`).
+- The build writes `dist/THIRD_PARTY_NOTICES.txt` (licenses of everything in the worker bundle and the ORT files, `scripts/third-party-notices.mjs`). It is a release asset (`release.yml`), not part of the hashed runtime manifest. Both bundles use esbuild `charset: "utf8"`.
 - Download mirrors (`src/semantic/mirrors.ts`) change only download URLs. Local file names and SHA-256 hashes never depend on them, so changing a mirror must not invalidate installed files.
 
 ## Compact Instructions

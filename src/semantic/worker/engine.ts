@@ -7,6 +7,7 @@
 import { AutoConfig, AutoModel, AutoProcessor, RawImage, env } from "@huggingface/transformers";
 import { decodePixelCap, decodeSize, InitPayload } from "../protocol";
 import { createFsModelCache, FsModelCache } from "./fsModelCache";
+import { decodeTiff } from "./tiff";
 import type { Engine, EngineLoadResult, RawEmbeddings } from "./handler";
 
 interface NodeFs {
@@ -180,8 +181,15 @@ export class TransformersEngine implements Engine<RawImage> {
 	 * don't turn black. Part of PREPROCESS_VERSION 1.
 	 */
 	async decodeImage(bytes: ArrayBuffer, mime: string, budget: number): Promise<RawImage> {
-		const blob = new Blob([bytes], mime ? { type: mime } : undefined);
-		let bitmap = await createImageBitmap(blob);
+		let bitmap: ImageBitmap;
+		if (mime === "image/tiff") {
+			// No TIFF decoder in Chromium: UTIF.js -> RGBA -> bitmap, then the
+			// same downscale/white-composite path as every other format.
+			const { rgba, width, height } = decodeTiff(bytes);
+			bitmap = await createImageBitmap(new ImageData(rgba, width, height));
+		} else {
+			bitmap = await createImageBitmap(new Blob([bytes], mime ? { type: mime } : undefined));
+		}
 		try {
 			const target = decodeSize(bitmap.width, bitmap.height, decodePixelCap(budget));
 			if (target) {

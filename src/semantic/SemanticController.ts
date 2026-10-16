@@ -24,6 +24,7 @@ import { resolveModelDir, ResolvedModelDir } from "./modelDir";
 import type { EmbeddingConfig, EmbeddingMode } from "./protocol";
 import { probeWebGpu, WebGpuProbeResult } from "./webGpuProbe";
 import { WorkerEmbeddingBackend } from "./WorkerEmbeddingBackend";
+import type { SemanticIndexing } from "./SemanticIndexing";
 
 export interface SemanticHost {
 	settings: PluginSettings;
@@ -36,6 +37,8 @@ export class SemanticController {
 	private probeResult: Promise<WebGpuProbeResult> | null = null;
 	/** Live backends; terminated when the files change or the plugin unloads. */
 	private readonly backends = new Set<WorkerEmbeddingBackend>();
+	/** Index/search services (set by the plugin; used by the settings tab). */
+	indexing: SemanticIndexing | null = null;
 
 	constructor(private readonly host: SemanticHost) {
 		this.manager = new ModelDownloadManager({

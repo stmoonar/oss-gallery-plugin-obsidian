@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { builtinModules, createRequire } from 'node:module';
 import { dirname, join } from "node:path";
+import { inlinedPackageDirs, writeThirdPartyNotices } from "./scripts/third-party-notices.mjs";
 
 const banner =
 `/*
@@ -24,6 +25,14 @@ const ORT_RUNTIME_FILES = [
 	"ort-wasm-simd-threaded.asyncify.mjs",
 ];
 const RUNTIME_MANIFEST_PATH = "src/semantic/assets.generated.ts";
+// Licenses of everything in the worker bundle and the ORT files. A release
+// asset next to them, not part of the hashed runtime manifest: it is not
+// needed to run, and the worker banner points to it.
+const NOTICES_FILE = "THIRD_PARTY_NOTICES.txt";
+const WORKER_BANNER =
+	`/*! OSS Gallery semantic search worker. Bundles @huggingface/transformers, onnxruntime-web, ` +
+	`utif, pako and other open-source packages; licenses: ${NOTICES_FILE} in the release ` +
+	`(https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases). */`;
 
 async function copyReleaseAssets() {
 	await mkdir("dist", { recursive: true });
@@ -86,7 +95,7 @@ ${body}
 
 async function buildSemanticRuntime() {
 	await mkdir("dist", { recursive: true });
-	await esbuild.build({
+	const result = await esbuild.build({
 		entryPoints: ["src/semantic/worker/entry.ts"],
 		outfile: join("dist", SEMANTIC_WORKER_FILE),
 		bundle: true,
@@ -94,7 +103,12 @@ async function buildSemanticRuntime() {
 		platform: "browser",
 		target: "es2022",
 		minify: true,
+		// Smaller than \uXXXX escapes for non-ASCII text.
+		charset: "utf8",
+		// License texts go to THIRD_PARTY_NOTICES.txt instead (see below).
 		legalComments: "none",
+		banner: { js: WORKER_BANNER },
+		metafile: true,
 		logLevel: "warning",
 		// Obsidian workers have nodeIntegrationInWorker, so transformers.js
 		// would detect Node and take its Node code paths. Hide `process`.
@@ -115,6 +129,13 @@ async function buildSemanticRuntime() {
 	await Promise.all(
 		ORT_RUNTIME_FILES.map((file) => copyFile(join(ortDir, file), join("dist", file)))
 	);
+	const transformersDir = await realpath(join("node_modules", "@huggingface", "transformers"));
+	const noticed = await writeThirdPartyNotices(
+		result.metafile,
+		[dirname(ortDir), ...(await inlinedPackageDirs(transformersDir, "dist/transformers.web.js"))],
+		join("dist", NOTICES_FILE)
+	);
+	console.log(`[semantic] ${NOTICES_FILE}: ${noticed.join(", ")}`);
 
 	const entries = await Promise.all(
 		[SEMANTIC_WORKER_FILE, ...ORT_RUNTIME_FILES].map(describeFile)
@@ -156,6 +177,8 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile,
 	minify: prod,
+	// Keep CJK locale strings as UTF-8 instead of 6-byte \uXXXX escapes.
+	charset: "utf8",
 });
 
 if (prod) {

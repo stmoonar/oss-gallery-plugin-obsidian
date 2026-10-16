@@ -96,6 +96,7 @@ function loadSemanticSettings(storedValue: unknown): SemanticSettings {
 	return {
 		enabled: getBoolean(stored.enabled) ?? defaults.enabled,
 		modelDir: getString(stored.modelDir)?.trim() ?? defaults.modelDir,
+		indexDir: getString(stored.indexDir)?.trim() ?? defaults.indexDir,
 		imageTokenBudget: isImageTokenBudget(budget)
 			? budget
 			: defaults.imageTokenBudget,
