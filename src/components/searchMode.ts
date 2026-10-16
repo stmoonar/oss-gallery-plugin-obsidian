@@ -88,3 +88,39 @@ export function intersectHits<T extends { key: string }>(
 	}
 	return out;
 }
+
+/**
+ * Does the gallery show the semantic index strip and feed listings to the
+ * index? Only while the feature is actually usable on this device
+ * (installed, enabled, WebGPU, listable provider); a missing index still
+ * shows the strip ("Build index"). `enabled` syncs between devices, so it
+ * alone says nothing about this device.
+ */
+export function semanticBarVisible(availability: SemanticAvailability): boolean {
+	return availability.ok || availability.reason === "no-index";
+}
+
+/**
+ * Must a running index stop? Yes when the feature was turned off or the
+ * model files are gone / being replaced. Transient checks (startup
+ * presence check, "Verify files") keep it running.
+ */
+export function shouldStopIndexing(enabled: boolean, installKind: string): boolean {
+	if (!enabled) {
+		return true;
+	}
+	return !(installKind === "installed" || installKind === "checking" || installKind === "verifying");
+}
+
+/**
+ * A text result was ranked against `rankedKeys` (the listing at query
+ * time). When a newer listing holds keys that were not ranked (the query
+ * was typed while the first listing loaded, or images were added), the
+ * query must run again; dropped keys are handled by `intersectHits`.
+ */
+export function needsSemanticRerank(
+	rankedKeys: ReadonlySet<string>,
+	listed: readonly { key: string }[]
+): boolean {
+	return listed.some((o) => !rankedKeys.has(o.key));
+}

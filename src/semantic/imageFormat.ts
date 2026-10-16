@@ -5,13 +5,22 @@
  * reads JPEG, PNG, WebP, GIF (first frame), BMP, ICO and AVIF. Other formats:
  * - SVG: rasterized on the main thread (workers cannot decode SVG), then sent
  *   as PNG -> status "converted".
- * - TIFF: decoded inside the worker with UTIF.js -> status "converted".
+ * - TIFF: structure and size checked here (tiffStructure.ts), decoded inside
+ *   the worker with UTIF.js -> status "converted". BigTIFF, unsupported
+ *   variants and oversized pages are "unsupported".
  * - HEIC/HEIF, PSD, camera RAW, unrecognized bytes: status "unsupported",
  *   never retried until the object changes.
+ *
+ * Native formats are checked against MAX_IMAGE_PIXELS from their header:
+ * Chromium decodes a Blob at full resolution before any resize applies, so a
+ * small file with huge dimensions (a 30000×30000 1-bit PNG is ~100 KB) would
+ * otherwise allocate gigabytes in the worker.
  *
  * Detection trusts the bytes (magic numbers) over the file extension. Pure
  * module apart from the injected SVG rasterizer.
  */
+import { MAX_IMAGE_PIXELS, NativeImageFormat, readImageSize } from "./imageHeader";
+import { tiffProblem } from "./tiffStructure";
 
 export type ImageFormat =
 	| "jpeg" | "png" | "gif" | "webp" | "bmp" | "ico" | "avif"
@@ -23,6 +32,33 @@ export type ConvertedFormat = "svg" | "tiff";
 export const NATIVE_FORMATS: ReadonlySet<ImageFormat> = new Set<ImageFormat>([
 	"jpeg", "png", "gif", "webp", "bmp", "ico", "avif",
 ]);
+
+export function isNativeFormat(format: ImageFormat): format is NativeImageFormat {
+	return NATIVE_FORMATS.has(format);
+}
+
+/**
+ * Why the worker must not decode these native-format bytes, or null. Also
+ * checked inside the worker. "unreadable" = no size in the header (corrupt or
+ * truncated, so a decode error anyway: retried like one); "too-large" = over
+ * MAX_IMAGE_PIXELS (permanent).
+ */
+export function nativeImageProblem(
+	bytes: Uint8Array,
+	format: NativeImageFormat
+): { kind: "unreadable" | "too-large"; reason: string } | null {
+	const size = readImageSize(bytes, format);
+	if (!size) {
+		return { kind: "unreadable", reason: `Could not read the ${format.toUpperCase()} image size` };
+	}
+	if (size.width * size.height > MAX_IMAGE_PIXELS) {
+		return {
+			kind: "too-large",
+			reason: `Image is too large (${size.width}×${size.height}, limit ${MAX_IMAGE_PIXELS / 1_000_000} MP)`,
+		};
+	}
+	return null;
+}
 
 const MIME: Partial<Record<ImageFormat, string>> = {
 	jpeg: "image/jpeg",
@@ -157,10 +193,23 @@ const UNSUPPORTED_REASON: Partial<Record<ImageFormat, string>> = {
  */
 export async function prepareImage(bytes: ArrayBuffer, key: string, options: PrepareOptions): Promise<PreparedImage> {
 	const format = detectImageFormat(bytes, key);
-	if (NATIVE_FORMATS.has(format)) {
+	if (isNativeFormat(format)) {
+		const problem = nativeImageProblem(new Uint8Array(bytes), format);
+		if (problem) {
+			return { kind: problem.kind === "too-large" ? "unsupported" : "failed", format, reason: problem.reason };
+		}
 		return { kind: "embed", bytes, mime: mimeForFormat(format), format };
 	}
 	if (format === "tiff") {
+		let problem: string | null;
+		try {
+			problem = tiffProblem(new Uint8Array(bytes));
+		} catch (error) {
+			return { kind: "failed", format, reason: `TIFF check: ${error instanceof Error ? error.message : String(error)}` };
+		}
+		if (problem) {
+			return { kind: "unsupported", format, reason: problem };
+		}
 		return { kind: "embed", bytes, mime: mimeForFormat(format), format, convertedFrom: "tiff" };
 	}
 	if (format === "svg") {

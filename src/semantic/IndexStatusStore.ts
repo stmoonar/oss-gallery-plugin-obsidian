@@ -8,7 +8,11 @@
  * - failed: download/decode/inference error; retried with backoff up to
  *   MAX_ATTEMPTS, then left alone until the fingerprint changes.
  * Plus `confirmedAt`: when the user last agreed to download this scope's
- * images (traffic confirmation, docs/semantic-search.md §9.4).
+ * images (traffic confirmation, docs/semantic-search.md §9.4), and
+ * `inflight`: keys of the batch being indexed, written before the batch
+ * starts. Keys still listed there on the next open were being indexed when
+ * the app closed or crashed (poison image, OOM); the index service counts
+ * that as a failed attempt (takeInterrupted).
  *
  * The file is small and rewritten atomically (tmp + rename) after a debounce.
  */
@@ -34,12 +38,20 @@ export interface StatusEntry {
 	nextRetryAt?: number;
 	/** When the status was recorded (ms). */
 	at: number;
+	/** failed: the worker crashed / hung / the app died with it in the batch; retried alone. */
+	crashed?: boolean;
+}
+
+export interface InFlightEntry {
+	fp: string;
+	at: number;
 }
 
 interface StatusFile {
 	format: number;
 	confirmedAt?: number;
 	entries: Record<string, StatusEntry>;
+	inflight?: Record<string, InFlightEntry>;
 }
 
 export interface StatusFs {
@@ -69,6 +81,9 @@ function isStatusEntry(v: unknown): v is StatusEntry {
 
 export class IndexStatusStore {
 	private readonly entries = new Map<string, StatusEntry>();
+	private readonly inflight = new Map<string, InFlightEntry>();
+	/** In-flight markers found on open (a previous session died mid-batch). */
+	private interrupted = new Map<string, InFlightEntry>();
 	private confirmed: number | undefined;
 	private dirty = false;
 	private timer: number | null = null;
@@ -102,6 +117,13 @@ export class IndexStatusStore {
 			for (const [key, entry] of Object.entries(parsed.entries)) {
 				if (isStatusEntry(entry)) {
 					this.entries.set(key, entry);
+				}
+			}
+			if (typeof parsed.inflight === "object" && parsed.inflight !== null) {
+				for (const [key, e] of Object.entries(parsed.inflight)) {
+					if (typeof e?.fp === "string" && typeof e.at === "number") {
+						this.interrupted.set(key, { fp: e.fp, at: e.at });
+					}
 				}
 			}
 		} catch {
@@ -143,6 +165,39 @@ export class IndexStatusStore {
 		if (this.dirty) {
 			this.changed();
 		}
+	}
+
+	/**
+	 * Mark keys as being indexed and write the file now, so a crash of the
+	 * whole app during the batch is remembered (see takeInterrupted).
+	 */
+	markInFlight(entries: Array<[string, string]>, now: number): void {
+		for (const [key, fp] of entries) {
+			this.inflight.set(key, { fp, at: now });
+		}
+		this.dirty = true;
+		this.flush();
+	}
+
+	/** The key's batch item was handled (or put back): no longer in flight. */
+	clearInFlight(key: string): void {
+		if (this.inflight.delete(key)) {
+			this.changed();
+		}
+	}
+
+	inFlightKeys(): string[] {
+		return [...this.inflight.keys()];
+	}
+
+	/** In-flight markers left by a previous session (returned once). */
+	takeInterrupted(): Array<[string, InFlightEntry]> {
+		const out = [...this.interrupted.entries()];
+		if (out.length > 0) {
+			this.interrupted = new Map();
+			this.changed();
+		}
+		return out;
 	}
 
 	get confirmedAt(): number | undefined {
@@ -188,6 +243,10 @@ export class IndexStatusStore {
 			return;
 		}
 		const data: StatusFile = { format: STATUS_FORMAT, entries: Object.fromEntries(this.entries) };
+		if (this.inflight.size > 0 || this.interrupted.size > 0) {
+			// Markers not taken yet stay on disk until the service handles them.
+			data.inflight = { ...Object.fromEntries(this.interrupted), ...Object.fromEntries(this.inflight) };
+		}
 		if (this.confirmed !== undefined) {
 			data.confirmedAt = this.confirmed;
 		}

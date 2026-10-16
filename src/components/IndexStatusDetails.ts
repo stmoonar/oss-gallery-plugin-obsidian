@@ -54,10 +54,11 @@ export function renderIndexStatusDetails(el: HTMLElement, stats: IndexStats, opt
 			const row = table.createEl("tr");
 			fileCell(row, item.key, options.onReveal);
 			row.createEl("td", { text: statusLabel(item) });
+			// Too-large (and interrupted) entries have a reason but no format.
 			const reason = item.format && item.status === "unsupported"
 				? `${item.format.toUpperCase()}${item.reason ? `: ${item.reason}` : ""}`
 				: item.reason ?? "";
-			row.createEl("td", { text: reason });
+			row.createEl("td", { text: reason || "—" });
 		}
 	}
 

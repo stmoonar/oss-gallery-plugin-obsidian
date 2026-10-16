@@ -34,6 +34,28 @@ import { loadVerifiedRuntime, VerifiedRuntime } from "./runtimeFiles";
 export const QUERY_IDLE_TIMEOUT_MS = 5 * 60_000;
 export const INDEX_IDLE_TIMEOUT_MS = 30_000;
 
+/**
+ * Watchdog per request: a worker that does not answer in time (hung GPU
+ * driver, decoder stuck on a poison image) is terminated and the request
+ * rejects with "worker-crashed". Generous on purpose; 0 disables a limit.
+ */
+export interface RequestTimeouts {
+	/** init: runtime already verified; model load + WebGPU session setup. */
+	initMs: number;
+	/** embedText and ping. */
+	textMs: number;
+	/** embedImages: base + perImageMs × images. */
+	imageBaseMs: number;
+	imagePerItemMs: number;
+}
+
+export const DEFAULT_REQUEST_TIMEOUTS: Readonly<RequestTimeouts> = {
+	initMs: 10 * 60_000,
+	textMs: 2 * 60_000,
+	imageBaseMs: 2 * 60_000,
+	imagePerItemMs: 30_000,
+};
+
 export interface WorkerLike {
 	postMessage(message: unknown, transfer: Transferable[]): void;
 	terminate(): void;
@@ -58,13 +80,17 @@ export interface WorkerEmbeddingBackendOptions {
 	timers?: Timers;
 	/** Called after a worker was terminated (idle, crash, dispose, explicit). */
 	onTerminated?: (reason: TerminateReason) => void;
+	/** Per-request watchdog limits (default DEFAULT_REQUEST_TIMEOUTS). */
+	requestTimeouts?: Partial<RequestTimeouts>;
 }
 
-export type TerminateReason = "idle" | "dispose" | "crash" | "init-failed" | "recycle";
+export type TerminateReason = "idle" | "dispose" | "crash" | "init-failed" | "recycle" | "timeout";
 
 interface Pending {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
+	/** Watchdog timer of this request. */
+	timer: number | null;
 }
 
 const windowTimers: Timers = {
@@ -331,21 +357,59 @@ export class WorkerEmbeddingBackend implements EmbeddingBackend {
 		return this.lastInit;
 	}
 
+	/** Watchdog limit for one request (0 = none). */
+	private timeoutFor(type: WorkerRequestType, payload: unknown): number {
+		const t = { ...DEFAULT_REQUEST_TIMEOUTS, ...this.options.requestTimeouts };
+		switch (type) {
+			case "init":
+				return t.initMs;
+			case "embedImages": {
+				const images = (payload as { images?: unknown[] } | undefined)?.images;
+				const count = Array.isArray(images) ? images.length : 1;
+				return t.imageBaseMs > 0 ? t.imageBaseMs + t.imagePerItemMs * count : 0;
+			}
+			default:
+				return t.textMs;
+		}
+	}
+
 	private send(type: WorkerRequestType, payload: unknown, transfer: Transferable[]): Promise<unknown> {
 		const worker = this.worker;
 		if (!worker) {
 			return Promise.reject(new EmbeddingError("terminated", "Worker is not running"));
 		}
 		const id = this.nextId++;
+		const limitMs = this.timeoutFor(type, payload);
 		return new Promise((resolve, reject) => {
-			this.pending.set(id, { resolve, reject });
+			const entry: Pending = { resolve, reject, timer: null };
+			this.pending.set(id, entry);
 			try {
 				worker.postMessage({ id, type, payload }, transfer);
 			} catch (error) {
 				this.pending.delete(id);
 				reject(new EmbeddingError("bad-request", asError(error).message));
+				return;
+			}
+			if (limitMs > 0) {
+				entry.timer = this.timers.setTimeout(() => {
+					entry.timer = null;
+					if (this.pending.get(id) === entry && this.worker === worker) {
+						// Hung or stuck: the worker is not reusable (D13).
+						this.terminate("timeout", new EmbeddingError(
+							"worker-crashed",
+							`The worker did not answer within ${Math.round(limitMs / 1000)} s (${type}); it was stopped`
+						));
+					}
+				}, limitMs);
 			}
 		});
+	}
+
+	private clearWatchdog(entry: Pending): void {
+		if (entry.timer !== null) {
+			this.timers.clearTimeout(entry.timer);
+			entry.timer = null;
+		}
 	}
 
 	private onMessage(data: unknown): void {
@@ -357,6 +421,7 @@ export class WorkerEmbeddingBackend implements EmbeddingBackend {
 			return;
 		}
 		this.pending.delete(data.id);
+		this.clearWatchdog(pending);
 		if (data.ok) {
 			pending.resolve(data.result);
 		} else {
@@ -377,6 +442,7 @@ export class WorkerEmbeddingBackend implements EmbeddingBackend {
 		}
 		const failure = error ?? new EmbeddingError("terminated", `Worker terminated (${reason})`);
 		for (const p of this.pending.values()) {
+			this.clearWatchdog(p);
 			p.reject(failure);
 		}
 		this.pending.clear();

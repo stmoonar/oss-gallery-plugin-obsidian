@@ -367,6 +367,7 @@ export default {
 	"Semantic summary of which": "，其中 ",
 	"Semantic summary converted": "{count} 张经转换（{formats}）",
 	"Semantic summary unsupported": "{count} 张不支持（{formats}）",
+	"Semantic summary unsupported plain": "{count} 张不支持",
 	"Semantic summary failed": "{count} 张失败",
 	"Semantic summary details": " — 详情见图库中的索引状态或设置",
 	// Semantic search in the gallery (P4)
@@ -401,6 +402,7 @@ export default {
 	"Retry failed": "重试失败的图片（{count}）",
 	"Close": "关闭",
 	"No semantic index yet": "当前图床还没有语义索引。",
+	"Semantic index error": "语义索引出错（不影响图库）：{message}",
 	"Build index": "建立索引",
 	"Update index": "更新索引（{count} 张新图片）",
 	"Pause indexing": "暂停索引",
@@ -420,4 +422,6 @@ export default {
 	"Fetch http error": "下载失败（HTTP {status}）",
 	"Fetch network error": "网络错误：{message}",
 	"Fetch no url": "这张图片没有可下载的地址",
+	"Fetch too large": "文件过大，不建立索引（{size}，上限 {limit}）",
+	"Index interrupted": "处理这张图片时索引被中断（Obsidian 关闭或崩溃）",
 };

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { detectImageFormat, MAX_SVG_BYTES, prepareImage } from "../../src/semantic/imageFormat";
 import { svgRasterSize } from "../../src/semantic/svgRasterizer";
 import { toArrayBuffer } from "./helpers";
+import { jpeg, stripTiff } from "./imageBuilders";
 
 function bytes(...values: Array<number | string>): ArrayBuffer {
 	const out: number[] = [];
@@ -52,7 +53,7 @@ describe("prepareImage", () => {
 	const raster = { rasterizeSvg: () => Promise.resolve(bytes(0x89, "PNG-from-svg")) };
 
 	it("passes native formats through with their MIME type", async () => {
-		await expect(prepareImage(JPEG, "x.jpg", raster)).resolves.toMatchObject({ kind: "embed", mime: "image/jpeg", format: "jpeg" });
+		await expect(prepareImage(toArrayBuffer(jpeg(640, 480)), "x.jpg", raster)).resolves.toMatchObject({ kind: "embed", mime: "image/jpeg", format: "jpeg" });
 	});
 
 	it("rasterizes SVG on the main thread (converted)", async () => {
@@ -61,7 +62,12 @@ describe("prepareImage", () => {
 	});
 
 	it("sends TIFF to the worker decoder (converted)", async () => {
-		await expect(prepareImage(TIFF_LE, "x.tif", raster)).resolves.toMatchObject({ kind: "embed", mime: "image/tiff", convertedFrom: "tiff" });
+		const tiff = stripTiff({ width: 2, height: 1, samples: 3, rowsPerStrip: 1, strips: [new Uint8Array(6)] });
+		await expect(prepareImage(tiff, "x.tif", raster)).resolves.toMatchObject({ kind: "embed", mime: "image/tiff", convertedFrom: "tiff" });
+	});
+
+	it("a TIFF the worker can't decode is unsupported, with the reason", async () => {
+		await expect(prepareImage(TIFF_LE, "x.tif", raster)).resolves.toMatchObject({ kind: "unsupported", format: "tiff", reason: "TIFF contains no image" });
 	});
 
 	it.each([[HEIC, "heic"], [bytes("8BPS"), "psd"], [bytes("garbage!"), "unknown"]] as const)("marks %s unsupported", async (data, format) => {

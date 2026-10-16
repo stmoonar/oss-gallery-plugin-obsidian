@@ -663,13 +663,34 @@ describe("VectorStore atomic meta write", () => {
 		return { store, before: allHits(store, vec(302)) };
 	}
 
-	it("(e) compaction crash before vectors.bin is replaced rolls back", async () => {
+	it("(e) a failed vectors.bin rename leaves the store open and usable", async () => {
 		const state = { fail: (_from: string) => false };
 		const { store, before } = holeyStore(state);
 		const oldMeta = fs.readFileSync(metaPath, "utf8");
 		state.fail = (from) => path.basename(from) === `${VECTORS_FILE}.tmp`;
 		await expect(store.compactIfNeeded()).rejects.toThrow(/injected rename failure/);
 		expect(fs.readFileSync(metaPath, "utf8")).toBe(oldMeta);
+		expect(tmpFiles()).toEqual([]);
+		expect(store.isClosed).toBe(false);
+		expect(allHits(store, vec(302))).toEqual(before);
+		// Still writable (Windows EPERM from a scanner must not need a restart).
+		store.upsert(key(20), "fp-20", vec(20));
+		store.flushSync();
+		state.fail = () => false;
+		expect(await store.compactIfNeeded()).toBe(true);
+		const reopened = open();
+		expect(reopened.has(key(20))).toBe(true);
+		expect(reopened.stats()).toMatchObject({ entries: 11, holes: 0 });
+	});
+
+	it("(e2) compaction crash before vectors.bin is replaced rolls back", async () => {
+		const state = { fail: (_from: string) => false };
+		const { store, before } = holeyStore(state);
+		const oldMeta = fs.readFileSync(metaPath, "utf8");
+		// A crash leaves both tmp files (simulated: the process died before the renames).
+		store.close();
+		fs.writeFileSync(vecPath + ".tmp", Buffer.alloc(10 * SLOT_BYTES));
+		fs.writeFileSync(metaPath + ".tmp", oldMeta.replace(/"slotCount":\d+/, "\"slotCount\":10"));
 		expect(tmpFiles().sort()).toEqual([`${META_FILE}.tmp`, `${VECTORS_FILE}.tmp`]);
 
 		const reopened = open();
@@ -687,6 +708,9 @@ describe("VectorStore atomic meta write", () => {
 		await expect(store.compactIfNeeded()).rejects.toThrow(/injected rename failure/);
 		expect(fileSize(vecPath)).toBe(10 * SLOT_BYTES);
 		expect(tmpFiles()).toEqual([`${META_FILE}.tmp`]);
+		// Memory no longer matches the disk: closed until reopened.
+		expect(store.isClosed).toBe(true);
+		expect(() => store.upsert(key(30), "fp", vec(30))).toThrow(/closed/);
 
 		const reopened = open();
 		expect(reopened.openResult).toEqual({ status: "loaded", dropped: 0, recoveredTmp: true });

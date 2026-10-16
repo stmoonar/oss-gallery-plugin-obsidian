@@ -372,6 +372,7 @@ export default {
 	"Semantic summary of which": ", of which ",
 	"Semantic summary converted": "{count} converted ({formats})",
 	"Semantic summary unsupported": "{count} unsupported ({formats})",
+	"Semantic summary unsupported plain": "{count} unsupported",
 	"Semantic summary failed": "{count} failed",
 	"Semantic summary details": " — details: index status in the gallery, or settings",
 	// Semantic search in the gallery (P4)
@@ -406,6 +407,7 @@ export default {
 	"Retry failed": "Retry failed ({count})",
 	"Close": "Close",
 	"No semantic index yet": "No semantic index for this provider yet.",
+	"Semantic index error": "Semantic index error (the gallery is not affected): {message}",
 	"Build index": "Build index",
 	"Update index": "Update index ({count} new)",
 	"Pause indexing": "Pause indexing",
@@ -425,4 +427,6 @@ export default {
 	"Fetch http error": "Download failed (HTTP {status})",
 	"Fetch network error": "Network error: {message}",
 	"Fetch no url": "No download URL for this image",
+	"Fetch too large": "Too large to index ({size}, limit {limit})",
+	"Index interrupted": "Indexing was interrupted while processing this image (Obsidian closed or crashed)",
 };

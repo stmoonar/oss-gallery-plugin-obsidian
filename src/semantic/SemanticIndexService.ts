@@ -28,7 +28,15 @@ import {
 import { ConvertedFormat, prepareImage, PreparedImage } from "./imageFormat";
 import { IndexEntryStatus, IndexStatusStore, StatusEntry } from "./IndexStatusStore";
 import { EmbeddingConfig, EmbeddingError, ImageInput, maxBatchFor } from "./protocol";
-import { RemoteFetchError } from "./remoteBytes";
+import {
+	AbortSignalLike,
+	describeTooLargeEn,
+	FetchAbortedError,
+	MAX_INDEX_IMAGE_BYTES,
+	raceWithTimeout,
+	RemoteFetchError,
+	TooLargeDescriber,
+} from "./remoteBytes";
 import { headerFromConfig, META_FILE, sameHeader, scopeIndexDir, VectorStore, VectorStoreOptions } from "./VectorStore";
 import type { Timers } from "./WorkerEmbeddingBackend";
 
@@ -38,10 +46,21 @@ export const PURGE_AFTER_MISSES = 2;
 export const PURGE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** §9.4: with autoIndex, runs above this estimate ask again. */
 export const AUTO_CONFIRM_LIMIT_BYTES = 200 * 1000 * 1000;
+/** §9.4: objects listed without a size count as this much for the auto-large rule. */
+export const ASSUMED_UNKNOWN_SIZE_BYTES = 2 * 1000 * 1000;
 /** Failed objects are retried this many times in total (until they change). */
 export const MAX_ATTEMPTS = 3;
 /** Wait before retry n (1-based) of a failed object. */
 export const RETRY_BACKOFF_MS = [60_000, 10 * 60_000];
+/** After a run stopped on a backend error, autoIndex does not start again for this long. */
+export const FATAL_BACKOFF_MS = 10 * 60_000;
+/** Consecutive batches whose embedding crashed/hung before the run stops (backend broken, not one image). */
+export const MAX_CONSECUTIVE_CRASHES = 2;
+/** Backstops per object (the remote fetcher has its own, shorter timeout). */
+export const READ_TIMEOUT_MS = 4 * 60_000;
+export const PREPARE_TIMEOUT_MS = 2 * 60_000;
+/** Reason recorded for keys that were in flight when the app closed or crashed. */
+export const INTERRUPTED_REASON = "Indexing was interrupted while processing this image (Obsidian closed or crashed)";
 
 export interface TrafficEstimate {
 	/** Listed objects that still need embedding. */
@@ -61,6 +80,7 @@ export type TrafficPromptReason = "manual" | "auto-first" | "auto-large";
  * §9.4 rules: does starting this run need the traffic dialog, and why?
  * null = start without asking (Local, nothing to download, or autoIndex on
  * a remote scope confirmed before whose estimate is within the limit).
+ * Objects without a listed size count as ASSUMED_UNKNOWN_SIZE_BYTES each.
  */
 export function trafficPromptReason(o: {
 	local: boolean;
@@ -68,6 +88,7 @@ export function trafficPromptReason(o: {
 	auto: boolean;
 	confirmedBefore: boolean;
 	pendingBytes: number;
+	unknownSizeCount?: number;
 }): TrafficPromptReason | null {
 	if (o.local || o.pendingCount === 0) {
 		return null;
@@ -78,7 +99,8 @@ export function trafficPromptReason(o: {
 	if (!o.confirmedBefore) {
 		return "auto-first";
 	}
-	return o.pendingBytes > AUTO_CONFIRM_LIMIT_BYTES ? "auto-large" : null;
+	const bytes = o.pendingBytes + (o.unknownSizeCount ?? 0) * ASSUMED_UNKNOWN_SIZE_BYTES;
+	return bytes > AUTO_CONFIRM_LIMIT_BYTES ? "auto-large" : null;
 }
 
 export type IndexRunState = "idle" | "running" | "paused";
@@ -144,8 +166,16 @@ export interface IndexServiceDeps {
 	autoIndex(): boolean;
 	/** A fresh index-mode backend (not initialized). */
 	createBackend(): EmbeddingBackend | null;
-	/** Bytes of a listed object: Local = disk, remote = download. */
-	readBytes(scope: IndexScope, obj: OssImage): Promise<ArrayBuffer>;
+	/**
+	 * Bytes of a listed object: Local = disk, remote = download. `signal`
+	 * aborts when the run is cancelled (pass it to fetchRemoteImageBytes);
+	 * the service also stops waiting by itself (cancel, READ_TIMEOUT_MS).
+	 */
+	readBytes(scope: IndexScope, obj: OssImage, signal?: AbortSignalLike): Promise<ArrayBuffer>;
+	/** Reason for objects above MAX_INDEX_IMAGE_BYTES (localized; default English). */
+	describeTooLarge?: TooLargeDescriber;
+	/** Reason for keys in flight when the app died (localized; default INTERRUPTED_REASON). */
+	interruptedReason?(): string;
 	/** SVG -> PNG (main thread). */
 	rasterizeSvg(bytes: ArrayBuffer): Promise<ArrayBuffer>;
 	/** Override of format detection/conversion (tests). */
@@ -174,12 +204,33 @@ interface ScopeState {
 	pending: Map<string, OssImage>;
 	/** In-plugin uploads with their bytes. */
 	uploads: Map<string, { obj: OssImage; bytes: ArrayBuffer }>;
-	/** The user started (and, for remote, confirmed) indexing this session. */
-	authorized: boolean;
+	/**
+	 * What the current (or about to start) run may download for this scope;
+	 * null = nothing. Set by start(), bound to one run (see Grant).
+	 */
+	grant: Grant | null;
+	/** Bumped by cancel / scope change / closeAll: a start() awaiting its dialog gives up. */
+	epoch: number;
 	/** autoIndex already asked this session (and was declined or not answered yet). */
 	autoPrompted: boolean;
 	/** Keys deleted while a batch was in flight: their results are dropped. */
 	deletedDuringRun: Set<string>;
+	/** Keys of the batch being processed: a listing meanwhile must not queue them again. */
+	processing: Set<string>;
+}
+
+/**
+ * Authorization of one run (§9.4): the pending objects the user confirmed
+ * (or autoIndex accepted) when start() ran, by key and fingerprint. Objects
+ * a later listing adds, or whose fingerprint changes, are not covered: they
+ * need another start (autoIndex evaluates them on that listing). Local
+ * scopes download nothing, so their grant covers everything (`all`).
+ * A grant is replaced (never mutated) and cleared when the run that saw it
+ * ends, when start() could not start a run, on cancel and on a fatal error.
+ */
+interface Grant {
+	all: boolean;
+	keys: Map<string, string>;
 }
 
 interface WorkItem {
@@ -194,6 +245,14 @@ type ProgressListener = (progress: IndexProgress) => void;
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** embedImages failed for a whole batch (crash, hang); its items were recorded as failed. */
+class BatchCrashError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "BatchCrashError";
+	}
 }
 
 export class SemanticIndexService {
@@ -212,6 +271,10 @@ export class SemanticIndexService {
 	private inFlight = 0;
 	private currentKey: string | null = null;
 	private disposed = false;
+	/** Aborted by cancel(): interrupts the download / preparation in progress. */
+	private abort: AbortController | null = null;
+	/** autoIndex does not start runs before this time (after a backend error). */
+	private autoBlockedUntil = 0;
 
 	constructor(private readonly deps: IndexServiceDeps) {}
 
@@ -233,9 +296,11 @@ export class SemanticIndexService {
 				minToken: 0,
 				pending: new Map(),
 				uploads: new Map(),
-				authorized: false,
+				grant: null,
+				epoch: 0,
 				autoPrompted: false,
 				deletedDuringRun: new Set(),
+				processing: new Set(),
 			};
 			this.states.set(scope.id, st);
 		}
@@ -264,6 +329,10 @@ export class SemanticIndexService {
 	 */
 	private getStore(st: ScopeState, create: boolean): VectorStore | null {
 		const header = headerFromConfig(this.deps.embeddingConfig());
+		if (st.store?.isClosed) {
+			// A compaction failed half-way: reopen (recovery rolls it forward).
+			st.store = null;
+		}
 		if (st.store && !sameHeader(st.store.header, header)) {
 			this.closeState(st);
 		}
@@ -274,23 +343,38 @@ export class SemanticIndexService {
 		if (!dir || (!create && !nodeFs.existsSync(path.join(dir, META_FILE)))) {
 			return null;
 		}
-		st.store = VectorStore.open(dir, header, {
-			asyncIo: true,
-			timers: this.deps.timers,
-			...this.deps.storeOptions,
-		});
-		st.status = IndexStatusStore.open(dir, {
-			timers: this.deps.timers,
-			flushDelayMs: this.deps.statusFlushDelayMs,
-		});
-		if (st.store.openResult.status === "reset") {
+		let store: VectorStore;
+		try {
+			store = VectorStore.open(dir, header, {
+				asyncIo: true,
+				timers: this.deps.timers,
+				...this.deps.storeOptions,
+			});
+			st.status ??= IndexStatusStore.open(dir, {
+				timers: this.deps.timers,
+				flushDelayMs: this.deps.statusFlushDelayMs,
+			});
+		} catch (error) {
+			console.error("OSS Gallery: opening semantic index failed", error);
+			return null;
+		}
+		st.store = store;
+		if (store.openResult.status === "reset") {
 			st.status.dropEmbeddingResults();
 		}
+		this.adoptInterrupted(st);
 		// Pending work was computed without the store's knowledge.
 		if (st.remote) {
 			this.recomputePending(st);
 		}
 		return st.store;
+	}
+
+	/** Keys in flight when a previous session died count as a failed attempt (poison images). */
+	private adoptInterrupted(st: ScopeState): void {
+		for (const [key, m] of st.status?.takeInterrupted() ?? []) {
+			this.recordFailure(st, key, m.fp, undefined, this.deps.interruptedReason?.() ?? INTERRUPTED_REASON, null, true);
+		}
 	}
 
 	/** Open the store for searching (never creates files). */
@@ -317,6 +401,10 @@ export class SemanticIndexService {
 			console.error("OSS Gallery: closing semantic index failed", error);
 		}
 		try {
+			// An orderly close is not a crash: the batch in flight is not an attempt.
+			for (const key of st.status?.inFlightKeys() ?? []) {
+				st.status?.clearInFlight(key);
+			}
 			st.status?.close();
 		} catch (error) {
 			console.error("OSS Gallery: writing semantic index status failed", error);
@@ -347,23 +435,39 @@ export class SemanticIndexService {
 			return false;
 		}
 		st.lastApplied = token;
-		st.remote = new Map(r.items.map((o) => [o.key, o]));
+		const remote = new Map(r.items.map((o) => [o.key, o]));
+		st.remote = remote;
 
-		const store = this.getStore(st, false);
-		if (store && r.complete) {
-			this.applyDeletions(st, store, r.prefix);
-		}
-		if (store && r.complete && st.status) {
-			for (const key of st.status.keys()) {
-				if (key.startsWith(r.prefix) && !st.remote.has(key) && !store.has(key)) {
-					st.status.delete(key);
+		// Index trouble (closed store, I/O error) must never surface as a
+		// listing failure: log it and let the next use reopen the store.
+		try {
+			const store = this.getStore(st, false);
+			if (store && r.complete) {
+				this.applyDeletions(st, store, r.prefix);
+			}
+			if (store && r.complete && st.status) {
+				for (const key of st.status.keys()) {
+					if (key.startsWith(r.prefix) && !remote.has(key) && !store.has(key)) {
+						st.status.delete(key);
+					}
 				}
 			}
+			this.recomputePending(st);
+		} catch (error) {
+			console.error("OSS Gallery: semantic index reconcile failed", error);
+			this.dropBrokenStore(st);
+			st.pending.clear();
 		}
-		this.recomputePending(st);
 		this.emit();
 		this.maybeAutoStart(st);
 		return true;
+	}
+
+	/** Forget a store that threw (closed after a failed compaction); the next use reopens it. */
+	private dropBrokenStore(st: ScopeState): void {
+		if (st.store?.isClosed) {
+			st.store = null;
+		}
 	}
 
 	/** §7.3 step 3 for keys under `prefix` missing from a complete listing. */
@@ -400,7 +504,7 @@ export class SemanticIndexService {
 		const store = st.store;
 		const now = this.now();
 		for (const obj of st.remote.values()) {
-			if (st.uploads.has(obj.key)) {
+			if (st.uploads.has(obj.key) || st.processing.has(obj.key)) {
 				continue;
 			}
 			const fp = fingerprint(obj);
@@ -464,9 +568,14 @@ export class SemanticIndexService {
 		if (this.running) {
 			st.deletedDuringRun.add(key);
 		}
-		const store = this.getStore(st, false);
-		store?.remove(key);
-		st.status?.delete(key);
+		try {
+			const store = this.getStore(st, false);
+			store?.remove(key);
+			st.status?.delete(key);
+		} catch (error) {
+			console.error("OSS Gallery: removing a deleted image from the semantic index failed", error);
+			this.dropBrokenStore(st);
+		}
 		this.emit();
 	}
 
@@ -474,9 +583,20 @@ export class SemanticIndexService {
 
 	estimate(scope: IndexScope): TrafficEstimate {
 		const st = this.state(scope);
+		return this.estimateOf(st, [...st.pending.values()]);
+	}
+
+	/** Is `obj` covered by the scope's current grant (same key and fingerprint)? */
+	private isGranted(st: ScopeState, obj: OssImage): boolean {
+		const g = st.grant;
+		return g !== null && (g.all || g.keys.get(obj.key) === fingerprint(obj));
+	}
+
+	private estimateOf(st: ScopeState, objects: OssImage[]): TrafficEstimate {
+		const scope = st.scope;
 		let pendingBytes = 0;
 		let unknownSizeCount = 0;
-		for (const obj of st.pending.values()) {
+		for (const obj of objects) {
 			if (obj.size > 0) {
 				pendingBytes += obj.size;
 			} else {
@@ -493,7 +613,7 @@ export class SemanticIndexService {
 			}
 		}
 		return {
-			pendingCount: st.pending.size,
+			pendingCount: objects.length,
 			pendingBytes: scope.local ? 0 : pendingBytes,
 			indexedCount,
 			...(!scope.local && unknownSizeCount > 0 ? { unknownSizeCount } : {}),
@@ -505,6 +625,10 @@ export class SemanticIndexService {
 	 * first: always for a manual start; with autoIndex only the first time and
 	 * when the estimate exceeds AUTO_CONFIRM_LIMIT_BYTES. Returns whether
 	 * indexing was started (or nothing was left to do).
+	 *
+	 * The confirmation covers exactly the pending objects of the estimate
+	 * (Grant): during a run only objects not yet covered are estimated and
+	 * added. It is bound to one run: when no run starts, it is dropped.
 	 */
 	async start(scope: IndexScope, options: { auto?: boolean } = {}): Promise<boolean> {
 		if (this.disposed || !this.deps.isReady()) {
@@ -517,13 +641,16 @@ export class SemanticIndexService {
 		if (!this.getStore(st, true)) {
 			return false;
 		}
-		const estimate = this.estimate(scope);
+		const epoch = st.epoch;
+		const uncovered = [...st.pending.values()].filter((o) => !this.isGranted(st, o));
+		const estimate = this.estimateOf(st, uncovered);
 		const reason = trafficPromptReason({
 			local: scope.local,
 			pendingCount: estimate.pendingCount,
 			auto: options.auto === true,
 			confirmedBefore: st.status?.confirmedAt !== undefined,
 			pendingBytes: estimate.pendingBytes,
+			unknownSizeCount: estimate.unknownSizeCount,
 		});
 		if (reason) {
 			if (options.auto && st.autoPrompted) {
@@ -534,14 +661,29 @@ export class SemanticIndexService {
 				st.autoPrompted = true;
 			}
 			const ok = await this.deps.confirmTraffic(scope, estimate, reason);
-			if (!ok || this.disposed) {
+			// Cancelled, scope switched or index closed while the dialog was open.
+			if (!ok || this.disposed || st.epoch !== epoch || !this.deps.isReady()) {
 				return false;
 			}
 			st.autoPrompted = false;
 			st.status?.setConfirmed(this.now());
 		}
-		st.authorized = true;
+		if (!options.auto) {
+			// The user asked explicitly: lift the backoff after a backend error.
+			this.autoBlockedUntil = 0;
+		}
+		// A new object: a run finishing up only clears the grant it saw.
+		const keys = new Map(st.grant?.keys ?? []);
+		for (const o of uncovered) {
+			keys.set(o.key, fingerprint(o));
+		}
+		const grant: Grant = { all: (st.grant?.all ?? false) || scope.local, keys };
+		st.grant = grant;
 		this.kick();
+		if (!this.running && st.grant === grant) {
+			// Nothing to do: the authorization must not outlive this call.
+			st.grant = null;
+		}
 		return true;
 	}
 
@@ -561,18 +703,32 @@ export class SemanticIndexService {
 			}
 		}
 		if (count > 0) {
-			st.status?.flush();
+			try {
+				st.status?.flush();
+			} catch (error) {
+				console.error("OSS Gallery: writing semantic index status failed", error);
+			}
 			this.recomputePending(st);
 			this.emit();
 		}
 		return count;
 	}
 
+	/**
+	 * autoIndex: start for pending objects no grant covers yet (new ones a
+	 * listing found, also while a run is going), unless a backend error
+	 * happened recently (FATAL_BACKOFF_MS).
+	 */
 	private maybeAutoStart(st: ScopeState): void {
-		if (st.pending.size === 0 || st.authorized || !this.deps.autoIndex() || !this.deps.isReady()) {
+		if (!this.deps.autoIndex() || !this.deps.isReady() || this.now() < this.autoBlockedUntil) {
 			return;
 		}
-		void this.start(st.scope, { auto: true });
+		if (![...st.pending.values()].some((o) => !this.isGranted(st, o))) {
+			return;
+		}
+		this.start(st.scope, { auto: true }).catch((error) => {
+			console.error("OSS Gallery: automatic semantic indexing failed to start", error);
+		});
 	}
 
 	pause(): void {
@@ -607,12 +763,15 @@ export class SemanticIndexService {
 	 */
 	cancel(): void {
 		for (const st of this.states.values()) {
-			st.authorized = false;
+			st.grant = null;
+			st.epoch++;
 		}
 		if (!this.running) {
 			return;
 		}
 		this.cancelRequested = true;
+		// Interrupt the download / preparation in progress (also while paused).
+		this.abort?.abort();
 		this.resume();
 		this.disposeBackend();
 	}
@@ -630,7 +789,8 @@ export class SemanticIndexService {
 		for (const st of this.states.values()) {
 			if (st.scope.id !== currentScopeId) {
 				st.minToken = this.nextToken + 1;
-				st.authorized = false;
+				st.grant = null;
+				st.epoch++;
 				st.uploads.clear();
 			}
 		}
@@ -677,7 +837,18 @@ export class SemanticIndexService {
 	getProgress(): IndexProgress {
 		let remaining = 0;
 		for (const st of this.states.values()) {
-			remaining += st.uploads.size + (st.authorized ? st.pending.size : 0);
+			remaining += st.uploads.size;
+			if (st.grant?.all) {
+				remaining += st.pending.size;
+			} else if (st.grant) {
+				// Taken keys leave the grant, so this shrinks as the run goes.
+				for (const [key, fp] of st.grant.keys) {
+					const obj = st.pending.get(key);
+					if (obj && fingerprint(obj) === fp) {
+						remaining++;
+					}
+				}
+			}
 		}
 		return {
 			state: this.running ? (this.paused ? "paused" : "running") : "idle",
@@ -744,6 +915,7 @@ export class SemanticIndexService {
 		}
 		this.cancelRequested = false;
 		this.done = 0;
+		this.abort = new AbortController();
 		const run = this.runLoop().finally(() => {
 			if (this.running === run) {
 				this.running = null;
@@ -751,8 +923,9 @@ export class SemanticIndexService {
 			this.activeScopeId = null;
 			this.paused = false;
 			this.emit();
-			// Work queued while finishing up (e.g. an upload) starts a new run.
-			if (!this.cancelRequested) {
+			// Work queued while finishing up (an upload, or a start confirmed
+			// meanwhile, even after a cancel) starts a new run.
+			if (!this.cancelRequested || [...this.states.values()].some((st) => st.grant !== null)) {
 				this.kick();
 			}
 		});
@@ -760,7 +933,11 @@ export class SemanticIndexService {
 		this.emit();
 	}
 
-	/** Uploads first, then pending objects of authorized scopes. */
+	/**
+	 * Uploads first, then granted pending objects. An object whose last
+	 * attempt crashed the worker is embedded alone, so one poison image does
+	 * not take the rest of its batch down with it again.
+	 */
 	private nextBatch(peekOnly = false): { st: ScopeState; items: WorkItem[] } | null {
 		const size = maxBatchFor(this.deps.embeddingConfig().imageTokenBudget);
 		const ordered = [...this.states.values()].sort((a, b) =>
@@ -772,11 +949,20 @@ export class SemanticIndexService {
 				items.push({ obj: u.obj, bytes: u.bytes, upload: true });
 				if (!peekOnly) st.uploads.delete(key);
 			}
-			if (st.authorized) {
+			if (st.grant) {
 				for (const [key, obj] of st.pending) {
 					if (items.length >= size) break;
+					if (!this.isGranted(st, obj)) continue;
+					const s = st.status?.get(key);
+					const crashed = s?.crashed === true && s.fp === fingerprint(obj);
+					if (crashed && items.length > 0) continue;
 					items.push({ obj, upload: false });
-					if (!peekOnly) st.pending.delete(key);
+					if (!peekOnly) {
+						st.pending.delete(key);
+						// Covered once: a later listing that queues it again needs a new start.
+						st.grant.keys.delete(key);
+					}
+					if (crashed) break;
 				}
 			}
 			if (items.length > 0) {
@@ -850,6 +1036,7 @@ export class SemanticIndexService {
 			return s;
 		};
 		let fatal: string | undefined;
+		let crashes = 0;
 		try {
 			for (;;) {
 				await this.waitIfPaused();
@@ -866,6 +1053,7 @@ export class SemanticIndexService {
 				this.emit();
 				try {
 					await this.processBatch(batch.st, batch.items, summary);
+					crashes = 0;
 				} catch (error) {
 					// Put listed objects back: they were not attempted.
 					for (const item of batch.items) {
@@ -877,11 +1065,19 @@ export class SemanticIndexService {
 					if (this.cancelRequested || this.disposed) {
 						break;
 					}
+					// The worker is gone or unusable either way; the next batch gets a new one.
+					this.disposeBackend();
+					if (error instanceof BatchCrashError && ++crashes < MAX_CONSECUTIVE_CRASHES) {
+						// Its images were recorded as failed (retried alone, with backoff).
+						this.emit();
+						continue;
+					}
 					fatal = errorText(error);
 					for (const st of this.states.values()) {
-						st.authorized = false;
+						st.grant = null;
 					}
-					this.disposeBackend();
+					// Do not let autoIndex retry (and download) on every listing.
+					this.autoBlockedUntil = this.now() + FATAL_BACKOFF_MS;
 					break;
 				}
 				this.inFlight = 0;
@@ -890,32 +1086,71 @@ export class SemanticIndexService {
 		} finally {
 			this.inFlight = 0;
 			this.currentKey = null;
+			// A start authorizes one run: the grants this run saw end with it.
+			// A start confirmed while finishing up made a new grant, kept for
+			// the next run (kick after this one).
+			const seen = new Map<ScopeState, Grant | null>();
 			for (const st of this.states.values()) {
-				// A start authorizes one run; later listings need a new start
-				// (or autoIndex, which applies its own confirmation rules).
-				st.authorized = false;
+				seen.set(st, st.grant);
 				st.deletedDuringRun.clear();
-				if (st.store) {
-					await st.store.compactIfNeeded().catch((error) => {
-						console.error("OSS Gallery: semantic index compaction failed", error);
-					});
-					await st.store.flush().catch((error) => {
-						console.error("OSS Gallery: semantic index flush failed", error);
-					});
+			}
+			for (const st of this.states.values()) {
+				await this.finishScope(st);
+			}
+			for (const [st, grant] of seen) {
+				if (st.grant === grant) {
+					st.grant = null;
 				}
-				st.status?.flush();
 			}
 			for (const summary of summaries.values()) {
 				summary.cancelled = this.cancelRequested;
 				if (fatal) {
 					summary.error = fatal;
 				}
-				this.deps.onRunFinished?.(summary);
+				try {
+					this.deps.onRunFinished?.(summary);
+				} catch (error) {
+					console.error("OSS Gallery: semantic index run report failed", error);
+				}
 			}
 		}
 	}
 
-	private recordFailure(st: ScopeState, key: string, fp: string, format: string | undefined, reason: string, summary: RunSummary): void {
+	/** End of a run for one scope: flush, compact, write the status. Never throws. */
+	private async finishScope(st: ScopeState): Promise<void> {
+		const store = st.store;
+		if (store && !store.isClosed) {
+			// Flush first: a compaction that fails half-way loses nothing committed.
+			await store.flush().catch((error) => {
+				console.error("OSS Gallery: semantic index flush failed", error);
+			});
+			await store.compactIfNeeded().catch((error) => {
+				console.error("OSS Gallery: semantic index compaction failed", error);
+			});
+			if (store.isClosed && st.store === store) {
+				// Reopened (and rolled forward) on next use.
+				st.store = null;
+			}
+		}
+		try {
+			for (const key of st.status?.inFlightKeys() ?? []) {
+				st.status?.clearInFlight(key);
+			}
+			st.status?.flush();
+		} catch (error) {
+			console.error("OSS Gallery: writing semantic index status failed", error);
+		}
+	}
+
+	private recordFailure(
+		st: ScopeState,
+		key: string,
+		fp: string,
+		format: string | undefined,
+		reason: string,
+		summary: RunSummary | null,
+		crashed = false
+	): void {
 		const prev = st.status?.get(key);
 		const attempts = (prev && prev.status === "failed" && prev.fp === fp ? prev.attempts ?? 0 : 0) + 1;
 		const backoff = RETRY_BACKOFF_MS[Math.min(attempts, RETRY_BACKOFF_MS.length) - 1];
@@ -926,8 +1161,26 @@ export class SemanticIndexService {
 		if (attempts < MAX_ATTEMPTS) {
 			entry.nextRetryAt = this.now() + backoff;
 		}
+		if (crashed) {
+			entry.crashed = true;
+		}
 		st.status?.set(key, entry);
-		summary.failed++;
+		if (summary) {
+			summary.failed++;
+		}
+	}
+
+	private recordUnsupported(st: ScopeState, store: VectorStore, key: string, fp: string, format: string | undefined, reason: string, summary: RunSummary): void {
+		const entry: StatusEntry = { fp, status: "unsupported", reason, at: this.now() };
+		if (format) {
+			entry.format = format;
+		}
+		st.status?.set(key, entry);
+		store.remove(key);
+		summary.unsupported++;
+		if (format && !summary.unsupportedFormats.includes(format)) {
+			summary.unsupportedFormats.push(format);
+		}
 	}
 
 	/** Fingerprint to store for a work item. */
@@ -940,20 +1193,67 @@ export class SemanticIndexService {
 		return listed && matchesUploadFingerprint(provisional, listed) ? fingerprint(listed) : provisional;
 	}
 
+	/** Wait for `work`, but give up on cancel (abort) or after `ms`. */
+	private guard<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+		return raceWithTimeout(work, {
+			timeoutMs: ms,
+			signal: this.abort?.signal,
+			timers: this.deps.timers,
+			onTimeout: () => new Error(`${what} timed out after ${Math.round(ms / 1000)} s`),
+		});
+	}
+
+	private cancelled(): EmbeddingError {
+		return new EmbeddingError("terminated", "Cancelled");
+	}
+
 	private async processBatch(st: ScopeState, items: WorkItem[], summary: RunSummary): Promise<void> {
 		const store = this.getStore(st, true);
 		if (!store) {
 			throw new Error("The index directory is not usable");
 		}
+		// Model first: a load failure must not cost any download.
+		const backend = await this.readyBackend();
+		if (this.cancelRequested) {
+			throw this.cancelled();
+		}
+		// On disk before anything risky: if the app dies during this batch,
+		// these keys count as an attempt on the next start (adoptInterrupted).
+		try {
+			st.status?.markInFlight(items.map((item) => [item.obj.key, this.fingerprintFor(st, item)]), this.now());
+		} catch (error) {
+			console.error("OSS Gallery: writing semantic index status failed", error);
+		}
+		for (const item of items) {
+			st.processing.add(item.obj.key);
+		}
+		try {
+			await this.embedBatch(st, store, backend, items, summary);
+		} finally {
+			for (const item of items) {
+				st.processing.delete(item.obj.key);
+				st.status?.clearInFlight(item.obj.key);
+			}
+		}
+	}
+
+	private async embedBatch(
+		st: ScopeState,
+		store: VectorStore,
+		backend: EmbeddingBackend,
+		items: WorkItem[],
+		summary: RunSummary
+	): Promise<void> {
 		const inputs: ImageInput[] = [];
 		const meta = new Map<string, { item: WorkItem; fp: string; format: string; convertedFrom?: ConvertedFormat }>();
 		const prepare = (bytes: ArrayBuffer, key: string): Promise<PreparedImage> => this.deps.prepare
 			? this.deps.prepare(bytes, key)
 			: prepareImage(bytes, key, { rasterizeSvg: (b) => this.deps.rasterizeSvg(b) });
+		const describeTooLarge = this.deps.describeTooLarge ?? describeTooLargeEn;
 
 		for (const item of items) {
 			if (this.cancelRequested) {
-				throw new EmbeddingError("terminated", "Cancelled");
+				throw this.cancelled();
 			}
 			const key = item.obj.key;
 			const fp = this.fingerprintFor(st, item);
@@ -964,25 +1264,45 @@ export class SemanticIndexService {
 			this.emit();
 			let bytes = item.bytes;
 			if (!bytes) {
+				if (item.obj.size > MAX_INDEX_IMAGE_BYTES) {
+					// Never downloaded or read: requestUrl / readFile buffer it all.
+					this.recordUnsupported(st, store, key, fp, undefined, describeTooLarge(item.obj.size, MAX_INDEX_IMAGE_BYTES), summary);
+					item.handled = true;
+					this.done++;
+					continue;
+				}
 				try {
-					bytes = await this.deps.readBytes(st.scope, item.obj);
+					bytes = await this.guard(this.deps.readBytes(st.scope, item.obj, this.abort?.signal), READ_TIMEOUT_MS, "Download");
 				} catch (error) {
-					// Remote fetch errors carry a user-facing reason already.
-					const reason = error instanceof RemoteFetchError ? error.message : `Download: ${errorText(error)}`;
-					this.recordFailure(st, key, fp, undefined, reason, summary);
+					if (this.cancelRequested || error instanceof FetchAbortedError) {
+						throw this.cancelled();
+					}
+					if (error instanceof RemoteFetchError && error.kind === "too-large") {
+						this.recordUnsupported(st, store, key, fp, undefined, error.message, summary);
+					} else {
+						// Remote fetch errors carry a user-facing reason already.
+						const reason = error instanceof RemoteFetchError ? error.message : `Download: ${errorText(error)}`;
+						this.recordFailure(st, key, fp, undefined, reason, summary);
+					}
 					item.handled = true;
 					this.done++;
 					continue;
 				}
 			}
-			const prepared = await prepare(bytes, key);
-			if (prepared.kind === "unsupported") {
-				st.status?.set(key, { fp, status: "unsupported", format: prepared.format, reason: prepared.reason, at: this.now() });
-				store.remove(key);
-				summary.unsupported++;
-				if (!summary.unsupportedFormats.includes(prepared.format)) {
-					summary.unsupportedFormats.push(prepared.format);
+			let prepared: PreparedImage;
+			try {
+				prepared = await this.guard(prepare(bytes, key), PREPARE_TIMEOUT_MS, "Preparing the image");
+			} catch (error) {
+				if (this.cancelRequested || error instanceof FetchAbortedError) {
+					throw this.cancelled();
 				}
+				this.recordFailure(st, key, fp, undefined, errorText(error), summary);
+				item.handled = true;
+				this.done++;
+				continue;
+			}
+			if (prepared.kind === "unsupported") {
+				this.recordUnsupported(st, store, key, fp, prepared.format, prepared.reason, summary);
 				item.handled = true;
 				this.done++;
 				continue;
@@ -1000,10 +1320,26 @@ export class SemanticIndexService {
 			return;
 		}
 		if (this.cancelRequested) {
-			throw new EmbeddingError("terminated", "Cancelled");
+			throw this.cancelled();
 		}
-		const backend = await this.readyBackend();
-		const results = await backend.embedImages(inputs);
+		let results: Awaited<ReturnType<EmbeddingBackend["embedImages"]>>;
+		try {
+			results = await backend.embedImages(inputs);
+		} catch (error) {
+			if (this.cancelRequested || this.disposed) {
+				throw error;
+			}
+			// The worker crashed or hung with these images: each gets a failed
+			// attempt (backoff, MAX_ATTEMPTS, retried alone), so a poison image
+			// is not downloaded and retried forever.
+			const reason = errorText(error);
+			for (const [key, m] of meta) {
+				this.recordFailure(st, key, m.fp, m.format, reason, summary, true);
+				m.item.handled = true;
+				this.done++;
+			}
+			throw new BatchCrashError(reason);
+		}
 		for (const result of results) {
 			const m = meta.get(result.id);
 			if (!m) {

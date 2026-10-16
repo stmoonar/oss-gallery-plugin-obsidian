@@ -343,7 +343,17 @@ describe("SemanticIndexService traffic safety (§9.4)", () => {
 
 describe("SemanticIndexService image formats", () => {
 	const SVG = toArrayBuffer(new TextEncoder().encode("<?xml version=\"1.0\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\"/>"));
-	const TIFF = toArrayBuffer(new Uint8Array([0x49, 0x49, 0x2a, 0x00, 8, 0, 0, 0, 1, 2, 3]));
+	// 1×1 8-bit gray, uncompressed (prepareImage checks the TIFF structure).
+	const TIFF = toArrayBuffer(new Uint8Array([
+		0x49, 0x49, 0x2a, 0, 8, 0, 0, 0, 6, 0,
+		0x00, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+		0x01, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+		0x02, 0x01, 3, 0, 1, 0, 0, 0, 8, 0, 0, 0,
+		0x06, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+		0x11, 0x01, 4, 0, 1, 0, 0, 0, 86, 0, 0, 0,
+		0x17, 0x01, 4, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+		0, 0, 0, 0, 0x80,
+	]));
 	const HEIC = toArrayBuffer(new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]));
 	const BAD_JPG = toArrayBuffer(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 1, 2]));
 

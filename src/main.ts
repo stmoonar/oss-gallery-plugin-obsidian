@@ -207,11 +207,14 @@ export default class OssGalleryPlugin extends Plugin {
 			id: "semantic-index-now",
 			name: t("Semantic search: index current provider now"),
 			checkCallback: (checking: boolean) => {
-				if (!this.settings.semantic.enabled || !this.supportsActiveProviderCapability("list")) {
+				// `enabled` syncs between devices: also require the model here.
+				if (!this.semantic.isReady() || !this.supportsActiveProviderCapability("list")) {
 					return false;
 				}
 				if (!checking) {
-					void this.semanticIndexing.indexNow();
+					this.semanticIndexing.indexNow().catch((error) => {
+						console.error("OSS Gallery: semantic indexing failed", error);
+					});
 				}
 				return true;
 			},
@@ -369,6 +372,11 @@ export default class OssGalleryPlugin extends Plugin {
 	): Promise<void> {
 		try {
 			const uploadService = this.getUploadService();
+			// Where the semantic index files this upload: the provider and
+			// scope at upload start (settings may change while it runs).
+			const indexTarget = this.semanticIndexing.uploadTarget(
+				this.providerManager.getActiveProvider()
+			);
 			const objectName = this.keyBuilder.generateObjectName(file);
 			const fileType = getFileTypeByMime(file);
 
@@ -389,12 +397,9 @@ export default class OssGalleryPlugin extends Plugin {
 
 			this.uploadProgress.update(id, { percent: 100, status: "done" });
 			// Index the new image from the bytes in hand (no download).
-			const uploadedTo = this.providerManager.getActiveProvider();
-			if (uploadedTo) {
-				this.semanticIndexing.onUploaded(uploadedTo, objectName, file).catch((error) => {
-					console.error("OSS Gallery: semantic upload indexing failed", error);
-				});
-			}
+			this.semanticIndexing.onUploaded(indexTarget, objectName, file).catch((error) => {
+				console.error("OSS Gallery: semantic upload indexing failed", error);
+			});
 			const finalText = this.embedRenderer.render(fileType, url, file.name);
 			await this.replacePlaceholder(target, id, finalText);
 			this.requestGalleryRefresh();

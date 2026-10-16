@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { FakeTimers, flushMicrotasks } from "./helpers";
 import {
 	ByteRequest,
 	ByteResponse,
+	FetchAbortedError,
 	fetchRemoteImageBytes,
+	MAX_INDEX_IMAGE_BYTES,
 	RemoteFetchError,
 	SignedGet,
 } from "../../src/semantic/remoteBytes";
@@ -136,5 +139,58 @@ describe("fetchRemoteImageBytes (requestUrl, §4.5)", () => {
 			describe: (kind, status) => `${kind}:${status}`,
 		}));
 		expect(error.message).toBe("access-denied:403");
+	});
+});
+
+describe("fetchRemoteImageBytes guards (timeout, cancel, size, 4xx signing)", () => {
+	it("400 with a signer (R2 anonymous GET): retries signed", async () => {
+		const m = mockRequest({ [OBJ.url]: 400, [SIGNED.url]: 200 });
+		const bytes = await fetchRemoteImageBytes(OBJ, { request: m.request, signedGet: () => SIGNED });
+		expect(text(bytes)).toBe(`body of ${SIGNED.url}`);
+		expect(m.calls.map((c) => c.url)).toEqual([OBJ.url, SIGNED.url]);
+	});
+
+	it("5xx is not retried signed", async () => {
+		const m = mockRequest({ [OBJ.url]: 503, [SIGNED.url]: 200 });
+		const error = await failure(fetchRemoteImageBytes(OBJ, { request: m.request, signedGet: () => SIGNED }));
+		expect(error.status).toBe(503);
+		expect(m.calls).toHaveLength(1);
+	});
+
+	it("times out a hung request", async () => {
+		const timers = new FakeTimers();
+		const hung = (): Promise<ByteResponse> => new Promise(() => undefined);
+		const p = failure(fetchRemoteImageBytes(OBJ, { request: hung, timers, timeoutMs: 1000 }));
+		await flushMicrotasks();
+		expect(timers.delays()).toEqual([1000]);
+		timers.fireAll();
+		const error = await p;
+		expect(error.kind).toBe("network");
+		expect(error.message).toMatch(/timed out after 1 s/);
+	});
+
+	it("an abort signal interrupts an in-flight request", async () => {
+		const timers = new FakeTimers();
+		const controller = new AbortController();
+		const hung = (): Promise<ByteResponse> => new Promise(() => undefined);
+		const p = fetchRemoteImageBytes(OBJ, { request: hung, timers, signal: controller.signal }).then(
+			() => null,
+			(e: unknown) => e
+		);
+		await flushMicrotasks();
+		controller.abort();
+		expect(await p).toBeInstanceOf(FetchAbortedError);
+		expect(timers.size).toBe(0);
+	});
+
+	it("refuses objects above the cap by listed size (no request) and by response size", async () => {
+		const m = mockRequest({ [OBJ.url]: 200 });
+		const big = await failure(fetchRemoteImageBytes({ ...OBJ, size: MAX_INDEX_IMAGE_BYTES + 1 }, { request: m.request }));
+		expect(big.kind).toBe("too-large");
+		expect(big.message).toMatch(/Too large to index/);
+		expect(m.calls).toHaveLength(0);
+		const small = await failure(fetchRemoteImageBytes({ ...OBJ, size: 0 }, { request: m.request, maxBytes: 4 }));
+		expect(small.kind).toBe("too-large");
+		expect(m.calls).toHaveLength(1);
 	});
 });

@@ -16,6 +16,9 @@ interface GithubFileEntry {
     sha?: string;
 }
 
+/** Contents API cap per directory (no truncation flag in the response). */
+const GITHUB_CONTENTS_DIR_LIMIT = 1000;
+
 /** Directory depth limit for the fallback walk (the root is depth 0). */
 const GITHUB_MAX_WALK_DEPTH = 10;
 
@@ -331,6 +334,11 @@ export class GithubProvider implements IOssProvider {
             requests++;
 
             const entries = await this.listDirectoryEntries(repo, next.path);
+            // The Contents API returns at most 1000 entries per directory and
+            // has no truncation flag: a full page may have been cut off.
+            if (entries !== null && entries.length >= GITHUB_CONTENTS_DIR_LIMIT) {
+                images.markIncomplete();
+            }
             if (entries === null) {
                 // The base path not existing yet is an empty listing; a
                 // subdirectory vanishing mid-walk means part of it was missed.

@@ -27,6 +27,19 @@ export interface S3ListObjectsPage {
 export function parseS3ListObjectsPage(xml: string): S3ListObjectsPage {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xml, 'text/xml');
+
+    // A captive portal / proxy / CDN fallback page, an empty body or an S3
+    // <Error> document must fail the listing: parsed as "no Contents" it would
+    // look like a complete, empty bucket and the semantic index would purge.
+    const root = xmlDoc.documentElement as Element | null;
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0 || root?.localName !== 'ListBucketResult') {
+        const code = xmlDoc.getElementsByTagName('Code')[0]?.textContent;
+        const message = xmlDoc.getElementsByTagName('Message')[0]?.textContent;
+        const detail = code
+            ? `${code}${message ? `: ${message}` : ''}`
+            : `unexpected response (${root?.localName ?? 'empty'})`;
+        throw new Error(`Invalid list response: ${detail}`);
+    }
     const contents = xmlDoc.getElementsByTagName('Contents');
     const objects: S3ObjectEntry[] = [];
 

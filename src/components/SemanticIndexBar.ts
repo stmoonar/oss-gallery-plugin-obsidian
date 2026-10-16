@@ -39,6 +39,8 @@ export class SemanticIndexBar {
 	private readonly el: HTMLElement;
 	private readonly statusRow: HTMLElement;
 	private readonly resultRow: HTMLElement;
+	/** Index hook failure (listing/upload/delete); the gallery itself keeps working. */
+	private readonly errorRow: HTMLElement;
 	/** Shape of the status row; it is rebuilt only when this changes (keeps focus). */
 	private shape = "";
 	private progressText: HTMLElement | null = null;
@@ -49,13 +51,19 @@ export class SemanticIndexBar {
 	constructor(parent: HTMLElement, private readonly callbacks: SemanticIndexBarCallbacks) {
 		this.el = parent.createDiv({ cls: "oss-gallery-semantic-bar" });
 		this.statusRow = this.el.createDiv({ cls: "oss-gallery-semantic-bar-row", attr: { "aria-live": "polite" } });
+		this.errorRow = this.el.createDiv({
+			cls: "oss-gallery-semantic-bar-row oss-gallery-semantic-bar-text mod-warning",
+			attr: { role: "status" },
+		});
 		this.resultRow = this.el.createDiv({ cls: "oss-gallery-semantic-bar-row oss-gallery-semantic-result" });
 		this.el.hide();
+		this.errorRow.hide();
 		this.resultRow.hide();
 	}
 
-	/** null = feature off / provider not indexable: hide the status row. */
+	/** null = feature not usable here / provider not indexable: hide the status row. */
 	update(state: GalleryIndexState | null): void {
+		this.updateError(state?.error ?? null);
 		if (!state) {
 			this.shape = "";
 			this.statusRow.empty();
@@ -166,8 +174,18 @@ export class SemanticIndexBar {
 		this.syncVisibility();
 	}
 
+	private updateError(message: string | null): void {
+		if (message === null) {
+			this.errorRow.empty();
+			this.errorRow.hide();
+			return;
+		}
+		this.errorRow.setText(t("Semantic index error").replace("{message}", message));
+		this.errorRow.show();
+	}
+
 	private syncVisibility(): void {
-		const visible = this.statusRow.isShown() || this.resultRow.isShown();
+		const visible = this.statusRow.isShown() || this.errorRow.isShown() || this.resultRow.isShown();
 		if (visible) {
 			this.el.show();
 		} else {

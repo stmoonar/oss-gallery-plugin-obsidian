@@ -632,21 +632,45 @@ export class VectorStore {
 		const tmpVec = this.vecPath + TMP;
 		const prevData = this.data;
 		this.data = next;
+		const tmpMeta = this.metaPath + TMP;
+		const dropTmp = (): void => {
+			this.unlinkQuiet(tmpVec);
+			this.unlinkQuiet(tmpMeta);
+		};
 		try {
 			this.writeVectors(tmpVec, 0, ordered.length, true);
+		} catch (error) {
+			dropTmp();
+			this.rearmFlush();
+			throw error;
 		} finally {
 			this.data = prevData;
 		}
 		const meta = this.buildMeta(nextEntries, ordered.length, []);
-		const tmpMeta = this.metaPath + TMP;
-		this.writeFileDurable(tmpMeta, Buffer.from(JSON.stringify(meta), "utf8"));
+		try {
+			this.writeFileDurable(tmpMeta, Buffer.from(JSON.stringify(meta), "utf8"));
+		} catch (error) {
+			dropTmp();
+			this.rearmFlush();
+			throw error;
+		}
 		try {
 			this.fs.renameSync(tmpVec, this.vecPath);
+		} catch (error) {
+			// Nothing committed changed (e.g. Windows EPERM from a virus
+			// scanner holding vectors.bin): drop the tmp files and keep the
+			// store usable; the next run tries to compact again.
+			dropTmp();
+			this.rearmFlush();
+			throw error;
+		}
+		try {
 			this.fs.renameSync(tmpMeta, this.metaPath);
 		} catch (error) {
-			// The disk may now hold the compacted layout while memory holds the
-			// old one; refuse further writes until reopen (which rolls the
-			// compaction back or forward, see recoverTmpFiles).
+			// vectors.bin now holds the compacted layout while meta.json and
+			// memory hold the old one; refuse further writes until reopen (which
+			// rolls the compaction forward, see recoverTmpFiles). Owners check
+			// `isClosed` and reopen.
 			this.closed = true;
 			this.cancelFlushTimer();
 			throw error;
@@ -657,6 +681,18 @@ export class VectorStore {
 		this.committedSlots = ordered.length;
 		this.free = new Set();
 		this.dirty = false;
+	}
+
+	/** Closed by close() or by a compaction that failed half-way (reopen it). */
+	get isClosed(): boolean {
+		return this.closed;
+	}
+
+	/** Pending changes whose flush timer a failed compaction cancelled get a new one. */
+	private rearmFlush(): void {
+		if (this.dirty && !this.closed) {
+			this.changed();
+		}
 	}
 
 	/** Flush and stop timers. The store must not be used afterwards. */

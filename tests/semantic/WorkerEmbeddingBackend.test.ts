@@ -12,8 +12,10 @@ import {
 import type { VerifiedRuntime } from "../../src/semantic/runtimeFiles";
 import { createWorkerHandler, Engine, EngineLoadResult, RawEmbeddings } from "../../src/semantic/worker/handler";
 import {
+	DEFAULT_REQUEST_TIMEOUTS,
 	INDEX_IDLE_TIMEOUT_MS,
 	QUERY_IDLE_TIMEOUT_MS,
+	RequestTimeouts,
 	TerminateReason,
 	WorkerEmbeddingBackend,
 	WorkerLike,
@@ -107,6 +109,8 @@ class FakeWorker implements WorkerLike {
 
 interface SetupOptions {
 	idleTimeoutMs?: number;
+	/** Watchdog limits; off by default so the idle-timer tests see only their timer. */
+	requestTimeouts?: Partial<RequestTimeouts>;
 	/** Applied to each new worker's engine. */
 	configure?: (engine: FakeEngine, index: number) => void;
 }
@@ -122,6 +126,7 @@ function setup(options: SetupOptions = {}) {
 		modelDir: "/models",
 		pluginVersion: "1.2.3",
 		idleTimeoutMs: options.idleTimeoutMs,
+		requestTimeouts: options.requestTimeouts ?? { initMs: 0, textMs: 0, imageBaseMs: 0, imagePerItemMs: 0 },
 		timers,
 		loadRuntime: (mode) => {
 			runtimeCalls.push(mode);
@@ -469,5 +474,53 @@ describe("WorkerEmbeddingBackend: lifecycle", () => {
 
 		expect(await backend.embedText(["again"])).toHaveLength(1);
 		expect(workers).toHaveLength(2);
+	});
+});
+
+describe("WorkerEmbeddingBackend: request watchdog", () => {
+	const limits = { initMs: 5000, textMs: 2000, imageBaseMs: 1000, imagePerItemMs: 100 };
+
+	it("terminates a worker that never answers an embedImages request; the next request gets a new worker", async () => {
+		const { backend, timers, workers, terminations } = setup({
+			idleTimeoutMs: 0,
+			requestTimeouts: limits,
+			configure: (engine, index) => {
+				if (index === 0) {
+					engine.embedImages = () => new Promise<RawEmbeddings>(() => undefined);
+				}
+			},
+		});
+		await backend.init("index", CFG);
+		// The init watchdog was cleared by the answer.
+		expect(timers.size).toBe(0);
+		const images: ImageInput[] = [
+			{ id: "a", bytes: toArrayBuffer(new Uint8Array([5])), mime: "image/png" },
+			{ id: "b", bytes: toArrayBuffer(new Uint8Array([6])), mime: "image/png" },
+		];
+		const hung = settle(backend.embedImages(images));
+		await flushMicrotasks();
+		// Scaled by image count: 1000 + 2 × 100.
+		expect(timers.delays()).toEqual([1200]);
+		timers.fireAll();
+		const outcome = await hung;
+		expect(codeOf(outcome)).toBe("worker-crashed");
+		expect(String((outcome as { error: Error }).error.message)).toMatch(/did not answer within 1 s/);
+		expect(terminations).toEqual(["timeout"]);
+		expect(workers[0].terminated).toBe(true);
+		expect(backend.isRunning()).toBe(false);
+
+		const ok = await backend.embedImages([{ id: "c", bytes: toArrayBuffer(new Uint8Array([7])), mime: "image/png" }]);
+		expect(ok[0].ok).toBe(true);
+		expect(workers).toHaveLength(2);
+		expect(timers.size).toBe(0);
+	});
+
+	it("uses generous defaults when no limits are given", async () => {
+		const { backend, timers } = setup({ idleTimeoutMs: 0, requestTimeouts: {} });
+		await backend.init("index", CFG);
+		await backend.embedImages([{ id: "a", bytes: toArrayBuffer(new Uint8Array([5])), mime: "image/png" }]);
+		const d = DEFAULT_REQUEST_TIMEOUTS;
+		expect(timers.armed).toEqual([d.initMs, d.imageBaseMs + d.imagePerItemMs]);
+		expect(timers.size).toBe(0);
 	});
 });

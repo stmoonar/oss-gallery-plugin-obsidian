@@ -7,7 +7,7 @@
  */
 import { App, FileSystemAdapter, Notice, requestUrl } from "obsidian";
 import { t } from "../i18n";
-import type { SemanticAvailability } from "../components/searchMode";
+import { semanticBarVisible, shouldStopIndexing, SemanticAvailability } from "../components/searchMode";
 import {
 	SemanticClearIndexModal,
 	SemanticIndexDetailsModal,
@@ -22,7 +22,8 @@ import type { PluginSettings } from "../types/settings";
 import { IndexScope, makeIndexScope } from "./fingerprint";
 import { clearVaultIndex, ClearResult, vaultIdFor } from "./indexFiles";
 import { resolveIndexDir, ResolvedModelDir } from "./modelDir";
-import { fetchRemoteImageBytes, FailureDescriber } from "./remoteBytes";
+import { formatBytes } from "./format";
+import { AbortSignalLike, fetchRemoteImageBytes, FailureDescriber, TooLargeDescriber } from "./remoteBytes";
 import type { SemanticController } from "./SemanticController";
 import { IndexProgress, IndexStats, RunSummary, SemanticIndexService } from "./SemanticIndexService";
 import { SemanticHit, SemanticSearchService } from "./SemanticSearchService";
@@ -38,24 +39,31 @@ export interface GalleryIndexState {
 	stats: IndexStats | null;
 	/** Listed objects not indexed yet (from the last listing). */
 	pending: number;
+	/** Last failure of a listing/upload/delete hook (null = none). Never breaks the gallery. */
+	error: string | null;
 }
 
 /** What OssGalleryView uses: listing hooks plus the semantic UI. */
 export interface GallerySemanticHooks {
-	/** Before listImages; null when the provider can't be indexed / feature off. */
+	/**
+	 * Before listImages; null when the feature isn't usable here (not
+	 * installed / off / no WebGPU / provider not indexable). Never throws.
+	 */
 	beginListing(providerName: string, listPrefix: string): { token: number; scope: IndexScope } | null;
+	/** Never throws: index failures only show in the semantic bar. */
 	reconcile(ticket: { token: number; scope: IndexScope }, listing: ListResult): void;
+	/** Never throws. */
 	onDeleted(providerName: string, listPrefix: string, key: string): void;
 
 	availability(providerName: string, listPrefix: string): SemanticAvailability;
-	/** null = hide the semantic bar (feature off or provider not indexable). */
+	/** null = hide the semantic bar (feature not usable here, see `semanticBarVisible`). */
 	indexState(providerName: string, listPrefix: string): GalleryIndexState | null;
 	summaryText(stats: IndexStats): string;
 	searchText(providerName: string, listPrefix: string, query: string, listed: OssImage[]): Promise<SemanticHit[]>;
 	searchSimilar(providerName: string, listPrefix: string, key: string, listed: OssImage[]): SemanticHit[];
 	isIndexed(providerName: string, listPrefix: string, key: string): boolean;
 	isQueryWarm(): boolean;
-	/** "Build / update index" (traffic dialog for remote providers). */
+	/** "Build / update index" (traffic dialog for remote providers). Never rejects. */
 	startIndexing(providerName: string, listPrefix: string): Promise<void>;
 	pause(): void;
 	resume(): void;
@@ -106,8 +114,22 @@ const describeFetchFailure: FailureDescriber = (kind, status, detail) => {
 	}
 };
 
+/** Localized reason for images over the indexing size limit (status details). */
+const describeTooLarge: TooLargeDescriber = (bytes, limit) =>
+	t("Fetch too large").replace("{size}", formatBytes(bytes)).replace("{limit}", formatBytes(limit));
+
 /** Coalesce change notifications (download progress fires per chunk). */
 const NOTIFY_DELAY_MS = 100;
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/** Provider + index scope captured when an upload starts (see `uploadTarget`). */
+export interface UploadIndexTarget {
+	provider: IOssProvider;
+	scope: IndexScope;
+}
 
 export class SemanticIndexing {
 	readonly index: SemanticIndexService;
@@ -120,6 +142,10 @@ export class SemanticIndexing {
 	private readonly listeners = new Set<() => void>();
 	private notifyTimer: number | null = null;
 	private readonly unsubscribers: Array<() => void> = [];
+	/** Indexing may run (enabled + model usable); false stops a running index. */
+	private indexingAllowed: boolean;
+	/** Last listing/upload/delete hook failure, shown in the gallery's semantic bar. */
+	private hookError: string | null = null;
 
 	constructor(private readonly host: SemanticIndexingHost) {
 		const adapter = host.app.vault.adapter;
@@ -140,7 +166,9 @@ export class SemanticIndexing {
 			isReady: () => host.semantic.isReady(),
 			autoIndex: () => host.settings.semantic.autoIndex,
 			createBackend: () => host.semantic.createBackend("index"),
-			readBytes: (scope, obj) => this.readBytes(scope, obj),
+			readBytes: (scope, obj, signal) => this.readBytes(scope, obj, signal),
+			describeTooLarge,
+			interruptedReason: () => t("Index interrupted"),
 			rasterizeSvg: (bytes) => rasterizeSvg(bytes),
 			confirmTraffic: (scope, estimate, reason) =>
 				SemanticTrafficModal.ask(host.app, providerRegistry.getLabel(scope.providerId, host.app), estimate, reason),
@@ -152,8 +180,56 @@ export class SemanticIndexing {
 			embeddingConfig: () => host.semantic.embeddingConfig(),
 		});
 		this.unsubscribers.push(this.index.onProgress(() => this.notify()));
-		this.unsubscribers.push(host.semantic.manager.subscribe(() => this.notify()));
+		this.unsubscribers.push(host.semantic.manager.subscribe(() => {
+			this.checkIndexingAllowed();
+			this.notify();
+		}));
 		this.lastScopeId = this.currentScope()?.id ?? null;
+		this.indexingAllowed = !this.indexingMustStop();
+	}
+
+	private indexingMustStop(): boolean {
+		return shouldStopIndexing(this.host.settings.semantic.enabled, this.host.semantic.getState().kind);
+	}
+
+	/**
+	 * Feature turned off, model deleted / broken: stop the running index (no
+	 * more downloads) and the query worker. The gallery hides the semantic
+	 * bar then, so nothing else could stop the run.
+	 */
+	private checkIndexingAllowed(): void {
+		const allowed = !this.indexingMustStop();
+		if (allowed === this.indexingAllowed) {
+			return;
+		}
+		this.indexingAllowed = allowed;
+		if (!allowed) {
+			this.index.cancel();
+			this.search.dispose();
+		}
+	}
+
+	/** Run a listing/upload/delete hook; failures are logged and shown in the bar only. */
+	private guardHook<T>(what: string, fn: () => T, fallback: T): T {
+		try {
+			return fn();
+		} catch (error) {
+			this.reportHookError(what, error);
+			return fallback;
+		}
+	}
+
+	private reportHookError(what: string, error: unknown): void {
+		console.error(`OSS Gallery: semantic ${what} failed`, error);
+		this.hookError = errorMessage(error);
+		this.notify();
+	}
+
+	private clearHookError(): void {
+		if (this.hookError !== null) {
+			this.hookError = null;
+			this.notify();
+		}
 	}
 
 	getIndexDir(): ResolvedModelDir {
@@ -179,7 +255,7 @@ export class SemanticIndexing {
 	 * proxy) on the listed URL, then a signed GET where the provider can sign
 	 * (private S3 / R2 / MinIO buckets).
 	 */
-	private async readBytes(scope: IndexScope, obj: OssImage): Promise<ArrayBuffer> {
+	private async readBytes(scope: IndexScope, obj: OssImage, signal?: AbortSignalLike): Promise<ArrayBuffer> {
 		if (scope.local) {
 			const provider = this.host.providerManager.getProvider("local");
 			if (!(provider instanceof LocalProvider)) {
@@ -193,6 +269,8 @@ export class SemanticIndexing {
 			request: (request) => requestUrl(request),
 			signedGet: signer,
 			describe: describeFetchFailure,
+			describeTooLarge,
+			signal,
 		});
 	}
 
@@ -260,25 +338,30 @@ export class SemanticIndexing {
 	galleryHooks(): GallerySemanticHooks {
 		const scopeOrNull = (providerName: string, listPrefix: string) => this.scopeFor(providerName, listPrefix);
 		return {
-			beginListing: (providerName, listPrefix) => {
-				if (!this.host.settings.semantic.enabled) {
+			beginListing: (providerName, listPrefix) => this.guardHook("listing", () => {
+				if (!semanticBarVisible(this.availability(providerName, listPrefix))) {
 					return null;
 				}
 				const scope = scopeOrNull(providerName, listPrefix);
 				return scope ? { token: this.index.beginListing(scope), scope } : null;
-			},
+			}, null),
 			reconcile: (ticket, listing) => {
-				this.index.reconcile(ticket.token, ticket.scope, listing);
+				this.guardHook("reconcile", () => {
+					this.index.reconcile(ticket.token, ticket.scope, listing);
+					this.clearHookError();
+				}, undefined);
 			},
 			onDeleted: (providerName, listPrefix, key) => {
-				const scope = scopeOrNull(providerName, listPrefix);
-				if (scope) {
-					this.index.onDeleted(scope, key);
-				}
+				this.guardHook("delete", () => {
+					const scope = scopeOrNull(providerName, listPrefix);
+					if (scope) {
+						this.index.onDeleted(scope, key);
+					}
+				}, undefined);
 			},
 			availability: (providerName, listPrefix) => this.availability(providerName, listPrefix),
 			indexState: (providerName, listPrefix) => {
-				if (!this.host.settings.semantic.enabled) {
+				if (!semanticBarVisible(this.availability(providerName, listPrefix))) {
 					return null;
 				}
 				const scope = scopeOrNull(providerName, listPrefix);
@@ -288,7 +371,13 @@ export class SemanticIndexing {
 				const progress = this.index.getProgress();
 				const runningHere = progress.state !== "idle" && progress.scopeId === scope.id;
 				const stats = this.index.hasIndex(scope) ? this.index.getStats(scope) : null;
-				return { progress, runningHere, stats, pending: this.index.estimate(scope).pendingCount };
+				return {
+					progress,
+					runningHere,
+					stats,
+					pending: this.index.estimate(scope).pendingCount,
+					error: this.hookError,
+				};
 			},
 			summaryText: (stats) => this.summaryText(stats),
 			searchText: async (providerName, listPrefix, query, listed) => {
@@ -342,18 +431,40 @@ export class SemanticIndexing {
 		};
 	}
 
-	/** An in-plugin upload succeeded: index it from the file in hand. */
-	async onUploaded(provider: IOssProvider, objectName: string, file: File): Promise<void> {
-		if (!this.host.semantic.isReady() || !file.type.startsWith("image/")) {
+	/**
+	 * Capture where an upload goes when it starts (provider instance + index
+	 * scope): the active provider or base path may change before it ends.
+	 * Never throws.
+	 */
+	uploadTarget(provider: IOssProvider | null | undefined): UploadIndexTarget | null {
+		if (!provider) {
+			return null;
+		}
+		return this.guardHook("upload", () => {
+			const scope = this.scopeFor(provider.name, this.host.getGalleryListPrefix());
+			return scope ? { provider, scope } : null;
+		}, null);
+	}
+
+	/**
+	 * An in-plugin upload succeeded: index it from the file in hand, under
+	 * the provider/scope captured at upload start. Never rejects.
+	 */
+	async onUploaded(target: UploadIndexTarget | null, objectName: string, file: File): Promise<void> {
+		if (!target || !this.host.semantic.isReady() || !file.type.startsWith("image/")) {
 			return;
 		}
-		const scope = this.scopeFor(provider.name, this.host.getGalleryListPrefix());
-		const key = provider.listingKeyForUpload?.(objectName) ?? null;
-		if (!scope || !key || !isImageFile(key) || !this.index.hasIndex(scope)) {
-			return;
+		try {
+			const { provider, scope } = target;
+			const key = provider.listingKeyForUpload?.(objectName) ?? null;
+			if (!key || !isImageFile(key) || !this.index.hasIndex(scope)) {
+				return;
+			}
+			const bytes = await file.arrayBuffer();
+			this.index.onUploaded(scope, { key, url: "", size: file.size, lastModified: new Date() }, bytes);
+		} catch (error) {
+			this.reportHookError("upload indexing", error);
 		}
-		const bytes = await file.arrayBuffer();
-		this.index.onUploaded(scope, { key, url: "", size: file.size, lastModified: new Date() }, bytes);
 	}
 
 	/**
@@ -362,6 +473,7 @@ export class SemanticIndexing {
 	 * new place / reset for the new header).
 	 */
 	onSettingsChanged(): void {
+		this.checkIndexingAllowed();
 		const semantic = this.host.settings.semantic;
 		if (semantic.indexDir !== this.lastIndexDir || semantic.imageTokenBudget !== this.lastBudget) {
 			this.lastIndexDir = semantic.indexDir;
@@ -372,6 +484,7 @@ export class SemanticIndexing {
 		const scopeId = this.currentScope()?.id ?? null;
 		if (scopeId !== this.lastScopeId) {
 			this.lastScopeId = scopeId;
+			this.hookError = null;
 			this.index.onScopeChanged(scopeId);
 		}
 		this.notify();
@@ -396,13 +509,28 @@ export class SemanticIndexing {
 		return this.index.reconcile(token, scope, listing);
 	}
 
+	/** `scope` is still the active provider's scope (settings may change during awaits). */
+	private isCurrentScope(scope: IndexScope): boolean {
+		return this.currentScope()?.id === scope.id;
+	}
+
 	/**
 	 * Manual start ("Build / update index", "Retry failed", the command).
 	 * Lists first when asked to (command) or when nothing was listed yet;
-	 * remote providers always show the traffic dialog (§9.4).
+	 * remote providers always show the traffic dialog (§9.4). Never rejects.
 	 */
 	private async startIndexing(provider: IOssProvider, scope: IndexScope, relist: boolean): Promise<void> {
-		if (!(await this.ensureReady())) {
+		try {
+			await this.startIndexingUnchecked(provider, scope, relist);
+		} catch (error) {
+			console.error("OSS Gallery: starting semantic indexing failed", error);
+			new Notice(`${t("Semantic indexing stopped")}: ${errorMessage(error)}`, 10000);
+			this.notify();
+		}
+	}
+
+	private async startIndexingUnchecked(provider: IOssProvider, scope: IndexScope, relist: boolean): Promise<void> {
+		if (!(await this.ensureReady()) || !this.isCurrentScope(scope)) {
 			return;
 		}
 		if (this.index.isRunning()) {
@@ -413,9 +541,14 @@ export class SemanticIndexing {
 			try {
 				await this.listNow(provider, scope);
 			} catch (error) {
-				new Notice(`${t("Load failed")}: ${error instanceof Error ? error.message : String(error)}`);
+				new Notice(`${t("Load failed")}: ${errorMessage(error)}`);
 				return;
 			}
+		}
+		// The active provider / base path changed while we listed: never ask
+		// for (or start) traffic on a provider that is no longer active.
+		if (!this.isCurrentScope(scope)) {
+			return;
 		}
 		const estimate = this.index.estimate(scope);
 		if (estimate.pendingCount === 0) {
@@ -432,9 +565,16 @@ export class SemanticIndexing {
 		this.notify();
 	}
 
-	/** Command "Semantic search: index current provider now". */
+	/** Command "Semantic search: index current provider now". Never rejects. */
 	async indexNow(): Promise<void> {
-		const active = this.activeProvider();
+		let active: { provider: IOssProvider; scope: IndexScope } | null;
+		try {
+			active = this.activeProvider();
+		} catch (error) {
+			console.error("OSS Gallery: semantic index scope failed", error);
+			new Notice(`${t("Semantic indexing stopped")}: ${errorMessage(error)}`, 10000);
+			return;
+		}
 		if (active) {
 			await this.startIndexing(active.provider, active.scope, true);
 		}
@@ -555,9 +695,12 @@ export class SemanticIndexing {
 				.replace("{formats}", formatList(summary.convertedFormats)));
 		}
 		if (summary.unsupported > 0) {
-			parts.push(t("Semantic summary unsupported")
-				.replace("{count}", String(summary.unsupported))
-				.replace("{formats}", formatList(summary.unsupportedFormats)));
+			// Too-large images have no detected format.
+			parts.push(summary.unsupportedFormats.length > 0
+				? t("Semantic summary unsupported")
+					.replace("{count}", String(summary.unsupported))
+					.replace("{formats}", formatList(summary.unsupportedFormats))
+				: t("Semantic summary unsupported plain").replace("{count}", String(summary.unsupported)));
 		}
 		if (summary.failed > 0) {
 			parts.push(t("Semantic summary failed").replace("{count}", String(summary.failed)));

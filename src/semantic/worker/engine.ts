@@ -7,6 +7,7 @@
 import { AutoConfig, AutoModel, AutoProcessor, RawImage, env } from "@huggingface/transformers";
 import { decodePixelCap, decodeSize, InitPayload } from "../protocol";
 import { createFsModelCache, FsModelCache } from "./fsModelCache";
+import { detectImageFormat, isNativeFormat, nativeImageProblem } from "../imageFormat";
 import { decodeTiff } from "./tiff";
 import type { Engine, EngineLoadResult, RawEmbeddings } from "./handler";
 
@@ -176,18 +177,32 @@ export class TransformersEngine implements Engine<RawImage> {
 	}
 
 	/**
-	 * Decode with the browser's image decoder, downscale huge images at decode
-	 * time (decodePixelCap) and composite onto white so transparent pixels
-	 * don't turn black. Part of PREPROCESS_VERSION 1.
+	 * Decode with the browser's image decoder, downscale images above
+	 * decodePixelCap and composite onto white so transparent pixels don't
+	 * turn black. Part of PREPROCESS_VERSION 1.
+	 *
+	 * Chromium decodes a Blob to a full-size bitmap before any resize option
+	 * applies, so passing resizeWidth/Height to the first createImageBitmap
+	 * would not save memory (and could change vectors of indexed images).
+	 * Memory is bounded instead by the header size check (MAX_IMAGE_PIXELS,
+	 * also done by prepareImage on the main thread) before decoding.
 	 */
 	async decodeImage(bytes: ArrayBuffer, mime: string, budget: number): Promise<RawImage> {
 		let bitmap: ImageBitmap;
 		if (mime === "image/tiff") {
 			// No TIFF decoder in Chromium: UTIF.js -> RGBA -> bitmap, then the
 			// same downscale/white-composite path as every other format.
-			const { rgba, width, height } = decodeTiff(bytes);
+			const { rgba, width, height } = await decodeTiff(bytes);
 			bitmap = await createImageBitmap(new ImageData(rgba, width, height));
 		} else {
+			const format = detectImageFormat(bytes);
+			if (!isNativeFormat(format)) {
+				throw new Error(`Unsupported image data (${format})`);
+			}
+			const problem = nativeImageProblem(new Uint8Array(bytes), format);
+			if (problem) {
+				throw new Error(problem.reason);
+			}
 			bitmap = await createImageBitmap(new Blob([bytes], mime ? { type: mime } : undefined));
 		}
 		try {

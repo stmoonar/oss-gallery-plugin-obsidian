@@ -8,7 +8,7 @@ import { SyncService } from '../services/SyncService';
 import { ImageGrid } from '../components/ImageGrid';
 import { SearchComponent } from '../components/SearchComponent';
 import { SemanticIndexBar } from '../components/SemanticIndexBar';
-import { intersectHits, queryFor, SemanticAvailability } from '../components/searchMode';
+import { intersectHits, needsSemanticRerank, queryFor, SemanticAvailability } from '../components/searchMode';
 import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 import { providerRegistry } from '../providers/registry';
@@ -70,6 +70,12 @@ export class OssGalleryView extends ItemView {
     private semanticToken = 0;
     /** Semantic search usable for this provider (hover action, menu). */
     private semanticReady = false;
+    /** A semantic text query is in flight or waits for the first listing. */
+    private semanticPending = false;
+    /** Keys the current text result was ranked against (the listing at query time). */
+    private semanticRankedKeys: ReadonlySet<string> = new Set();
+    /** `remoteObjects` holds a listing of the current provider (not just the initial []). */
+    private listingLoaded = false;
 
     // State
     private state: GalleryState = {
@@ -122,6 +128,7 @@ export class OssGalleryView extends ItemView {
             this.scheduleReload.cancel();
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
+            this.listingLoaded = false;
             void this.loadGallery(true);
         } else {
             // Bucket, credentials or base path edited: wait for typing to settle.
@@ -177,12 +184,14 @@ export class OssGalleryView extends ItemView {
                 semanticPlaceholder: t('Semantic query placeholder'),
                 onToggleSemantic: (enabled: boolean) => {
                     this.state.useSemanticSearch = enabled;
-                    if (!enabled && this.state.semanticResult) {
+                    // Also drops a query still in flight (its late result
+                    // must not replace the grid) and the "Searching" header.
+                    if (!enabled && this.hasSemanticActivity()) {
                         void this.clearSemanticResult(false);
                     }
                 },
                 onEscapeEmpty: () => {
-                    if (this.state.semanticResult) {
+                    if (this.hasSemanticActivity()) {
                         void this.clearSemanticResult(true);
                     }
                 },
@@ -208,7 +217,9 @@ export class OssGalleryView extends ItemView {
         this.semanticBar = new SemanticIndexBar(container, {
             summaryText: (state) => (state.stats ? hooks.summaryText(state.stats) : ''),
             onStart: () => {
-                void hooks.startIndexing(this.provider.name, this.listPrefix);
+                hooks.startIndexing(this.provider.name, this.listPrefix).catch((error) => {
+                    console.error('Semantic indexing failed to start:', error);
+                });
             },
             onPause: () => hooks.pause(),
             onResume: () => hooks.resume(),
@@ -232,8 +243,25 @@ export class OssGalleryView extends ItemView {
         this.semanticReady = availability.ok;
         this.searchComponent?.setSemanticAvailability(availability, semanticToggleLabel(availability));
         this.semanticBar?.update(hooks.indexState(this.provider.name, this.listPrefix));
-        if (!availability.ok && this.state.semanticResult) {
+        if (!availability.ok && this.hasSemanticActivity()) {
             void this.clearSemanticResult(true);
+        }
+    }
+
+    /** A semantic / similar result is shown, or a semantic query is pending. */
+    private hasSemanticActivity(): boolean {
+        return this.state.semanticResult !== null || this.semanticPending;
+    }
+
+    /** Index hooks must never break listing, delete or upload (they report in the semantic bar). */
+    private semanticHook<T>(fn: (hooks: GallerySemanticHooks) => T, fallback: T): T {
+        const hooks = this.semanticHooks;
+        if (!hooks) return fallback;
+        try {
+            return fn(hooks);
+        } catch (error) {
+            console.error('Semantic index hook failed:', error);
+            return fallback;
         }
     }
 
@@ -269,6 +297,7 @@ export class OssGalleryView extends ItemView {
             this.cleanupImageGrid();
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
+            this.listingLoaded = false;
             this.clearStatusMessages();
 
             container.createDiv({
@@ -301,12 +330,13 @@ export class OssGalleryView extends ItemView {
                 loading = container.createDiv({ cls: 'oss-gallery-loading-spinner' });
             }
 
-            const ticket = this.semanticHooks?.beginListing(this.provider.name, this.listPrefix) ?? null;
+            const ticket = this.semanticHook((h) => h.beginListing(this.provider.name, this.listPrefix), null);
             const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
             if (!this.isCurrentLoad(generation)) return;
 
             this.state.remoteObjects = objects;
-            if (ticket) this.semanticHooks?.reconcile(ticket, listing);
+            this.listingLoaded = true;
+            if (ticket) this.semanticHook((h) => h.reconcile(ticket, listing), undefined);
             loading?.remove();
             if (!showCachedFirst || changes.hasChanges) {
                 await this.renderCurrentObjects();
@@ -314,6 +344,10 @@ export class OssGalleryView extends ItemView {
         } catch (err) {
             if (!this.isCurrentLoad(generation)) return;
             console.error(err);
+            // A semantic query typed before the first listing has nothing to rank.
+            if (!this.listingLoaded && this.hasSemanticActivity()) {
+                this.dropSemanticResult();
+            }
             // A failed background refresh keeps the cached grid silently.
             if (loading) {
                 loading.removeClass('oss-gallery-loading-spinner');
@@ -403,12 +437,19 @@ export class OssGalleryView extends ItemView {
     /**
      * Render the current semantic / similar result against the latest
      * listing: deleted images drop out (§7.6), "similar" is re-ranked so
-     * newly indexed images join, text results keep their cached ranking.
+     * newly indexed images join, text results keep their cached ranking
+     * until the listing holds images the query was not ranked against (e.g.
+     * typed while the first listing loaded): then the query runs again.
      */
     private async renderSemanticResult(): Promise<void> {
         const result = this.state.semanticResult;
         const hooks = this.semanticHooks;
         if (!result || !hooks) return;
+        if (result.kind === 'semantic' && needsSemanticRerank(this.semanticRankedKeys, this.state.remoteObjects)) {
+            await this.runSemanticSearch(result.query);
+            return;
+        }
+        this.semanticPending = false;
         if (result.kind === 'similar') {
             result.hits = hooks.searchSimilar(this.provider.name, this.listPrefix, result.key, this.state.remoteObjects)
                 .map((h) => ({ key: h.object.key, score: h.score }));
@@ -428,9 +469,12 @@ export class OssGalleryView extends ItemView {
         const hooks = this.semanticHooks;
         if (!hooks) return;
         const token = ++this.semanticToken;
+        this.semanticPending = true;
         this.semanticBar?.setResult({ kind: 'loading', cold: !hooks.isQueryWarm() });
+        // Ranked against this listing; a newer one with more images re-runs the query.
+        const listed = this.state.remoteObjects;
         try {
-            const hits = await hooks.searchText(this.provider.name, this.listPrefix, query, this.state.remoteObjects);
+            const hits = await hooks.searchText(this.provider.name, this.listPrefix, query, listed);
             if (token !== this.semanticToken) return;
             this.state.isSearching = true;
             this.state.savedSearchTerm = query;
@@ -439,9 +483,14 @@ export class OssGalleryView extends ItemView {
                 query,
                 hits: hits.map((h) => ({ key: h.object.key, score: h.score })),
             };
+            this.semanticRankedKeys = new Set(listed.map((o) => o.key));
+            // First listing still loading: keep "Searching"; the load renders
+            // (and re-ranks) the result when it arrives.
+            if (!this.listingLoaded) return;
             await this.renderSemanticResult();
         } catch (error) {
             if (token !== this.semanticToken) return;
+            this.semanticPending = false;
             this.semanticBar?.setResult(null);
             console.error('Semantic search failed:', error);
             new Notice(`${t('Semantic search failed')}: ${error instanceof Error ? error.message : String(error)}`);
@@ -469,7 +518,10 @@ export class OssGalleryView extends ItemView {
 
     /** Forget the semantic result without rendering (provider changed). */
     private dropSemanticResult(): void {
+        // Unconditional: also discards a query that is still running.
         this.semanticToken++;
+        this.semanticPending = false;
+        this.semanticRankedKeys = new Set();
         if (this.state.semanticResult) {
             this.state.semanticResult = null;
             this.state.isSearching = false;
@@ -484,7 +536,10 @@ export class OssGalleryView extends ItemView {
         if (clearInput) {
             this.searchComponent?.clear();
         }
-        await this.renderObjects(this.state.remoteObjects);
+        // Before the first listing the load spinner stays; the load renders.
+        if (this.listingLoaded) {
+            await this.renderObjects(this.state.remoteObjects);
+        }
     }
 
     /** Details dialog → scroll to an image and select it (leaving any search). */
@@ -698,7 +753,7 @@ export class OssGalleryView extends ItemView {
         }
 
         // The vector goes right away (no tombstone for our own deletes).
-        this.semanticHooks?.onDeleted(this.provider.name, this.listPrefix, objectName);
+        this.semanticHook((h) => h.onDeleted(this.provider.name, this.listPrefix, objectName), undefined);
 
         // Update in-memory state instead of re-listing the whole bucket.
         element.remove();
@@ -730,12 +785,13 @@ export class OssGalleryView extends ItemView {
 
         const generation = this.beginLoad();
         try {
-            const ticket = this.semanticHooks?.beginListing(this.provider.name, this.listPrefix) ?? null;
+            const ticket = this.semanticHook((h) => h.beginListing(this.provider.name, this.listPrefix), null);
             const { objects, changes, listing } = await this.syncService.sync(this.state.remoteObjects);
             if (!this.isCurrentLoad(generation)) return;
             // Reconcile even when the gallery itself has nothing to redraw:
             // the index may still be missing objects or hold deleted ones.
-            if (ticket) this.semanticHooks?.reconcile(ticket, listing);
+            if (ticket) this.semanticHook((h) => h.reconcile(ticket, listing), undefined);
+            this.listingLoaded = true;
             if (!changes.hasChanges) return;
 
             this.state.remoteObjects = objects;

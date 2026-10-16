@@ -292,12 +292,17 @@ export class SemanticIndexService {
 ```
 
 - **串行低优先级 runner**：一次一批（批大小 = `MAX_BATCH_BY_BUDGET`：70→8、140→4、280→1），先处理上传队列，再处理已授权 scope 的待办；批与批之间可暂停 / 取消。取消会终止 worker（D13），未处理项留在待办中，下次 `start` 继续；已处理的不回退。
-- **授权**：一次 `start` 授权一次 run；run 结束后新出现的待办需要再次 `start`（或 `autoIndex` 按 §9.4 规则自动开始）。
-- **取字节**：Local 用 `LocalProvider.readObjectBytes`（零流量）；远程用 `src/semantic/remoteBytes.ts` `fetchRemoteImageBytes`（P4）：Obsidian `requestUrl({ url: obj.url, throw: false })`——不受 `app://obsidian.md` 源的 CORS 限制（`fetch()` 需要存储桶配置 CORS，大多数用户没有配置；`<img>` 不需要），走系统代理；URL 与图库显示的相同，每次取自最新列表（预签名 URL 原样使用），缓存键永远是 key + fingerprint（D15）。401/403 且 provider 实现了 `signedObjectGet(key)`（S3 / R2 / MinIO：SigV4 签名 GET，与列表/删除同一套签名）时再试一次签名请求；仍失败按状态码给出可读原因（本地化）：401/403 → "拒绝访问（HTTP 403）：请检查存储桶权限，或将图片设为公开可读"，404 → "找不到"，其他 → "下载失败（HTTP n）"，网络错误 → "网络错误：…"，记为 `failed`（重试规则见 §12）。上传用手头 `File` 的字节。单元测试：`tests/semantic/remoteBytes.test.ts`（模拟 requestUrl：200、预签名 URL、403 无签名 / 签名重试成功 / 二次 403、404 不尝试签名、500、网络错误、无 URL）。
-- **worker**：index 模式 backend 懒创建并复用，空闲 30 s 后由 `WorkerEmbeddingBackend` 自行回收；backend 级错误（`model-load`、`runtime-verify`、`worker-crashed`…）终止本次 run 并以 Notice 报告，未处理项留在待办；token budget 改变时换新 backend。
+- **授权（Grant）**：`start` 的确认只覆盖确认时估算里的那批待办对象（按 key + fingerprint 记录；Local 不下载，覆盖全部）。之后列表新增或 fingerprint 变化的对象不在授权内，本次 run 不会下载，需要再次 `start`（`autoIndex` 在那次对账时按 §9.4 规则单独评估这些新增对象，包括 run 进行中）。授权绑定到一次 run：`start` 没有启动 run（没有待办）时立即作废；run 结束时只清除它见过的授权对象，run 收尾期间（compaction / flush）新确认的授权保留并由紧接着的新 run 处理；`cancel`、切换 scope、`closeAll` 与 backend 致命错误都会清除授权。上传触发的 run 只处理上传队列与仍有效授权内的对象，绝不会顺带下载未确认的远程待办。确认对话框打开期间若 `cancel` / `onScopeChanged` / `closeAll`，确认后也不再开始（每个 scope 的 `epoch` 计数）。run 进行中重新对账不会把本批正在处理的 key 再次放进待办（不会重复下载）。
+- **取字节**：Local 用 `LocalProvider.readObjectBytes`（零流量）；远程用 `src/semantic/remoteBytes.ts` `fetchRemoteImageBytes`（P4）：Obsidian `requestUrl({ url: obj.url, throw: false })`——不受 `app://obsidian.md` 源的 CORS 限制（`fetch()` 需要存储桶配置 CORS，大多数用户没有配置；`<img>` 不需要），走系统代理；URL 与图库显示的相同，每次取自最新列表（预签名 URL 原样使用），缓存键永远是 key + fingerprint（D15）。除 404 以外的任何 4xx（私有桶的 401/403；R2 等对匿名 GET 可能返回 400）且 provider 实现了 `signedObjectGet(key)`（S3 / R2 / MinIO：SigV4 签名 GET，与列表/删除同一套签名）时再试一次签名请求；仍失败按状态码给出可读原因（本地化）：401/403 → "拒绝访问（HTTP 403）：请检查存储桶权限，或将图片设为公开可读"，404 → "找不到"，其他 → "下载失败（HTTP n）"，网络错误 → "网络错误：…"，记为 `failed`（重试规则见 §12）。上传用手头 `File` 的字节。单元测试：`tests/semantic/remoteBytes.test.ts`（模拟 requestUrl：200、预签名 URL、403 无签名 / 签名重试成功 / 二次 403、400 签名重试、404 与 5xx 不尝试签名、网络错误、超时、取消、超过大小上限、无 URL）。
+- **worker**：index 模式 backend 懒创建并复用，空闲 30 s 后由 `WorkerEmbeddingBackend` 自行回收；token budget 改变时换新 backend。每批**先**初始化 backend 再下载，模型加载失败不浪费流量。
+  - backend 初始化失败（`model-load`、`runtime-verify`…）：终止本次 run 并以 Notice 报告，未处理项留在待办，`autoIndex` 在 `FATAL_BACKOFF_MS = 10 分钟`内不再自动开始（手动开始立即解除）。
+  - 某批 `embedImages` 崩溃或超时（`worker-crashed`）：本批每张图记一次失败（`attempts` + 退避，`crashed: true`），重试时这些图**单独成批**，毒图不会再拖累同批其他图，且最多尝试 `MAX_ATTEMPTS` 次；连续 `MAX_CONSECUTIVE_CRASHES = 2` 批崩溃视为 backend 坏掉，按上一条终止并退避。
+  - **看门狗**：`WorkerEmbeddingBackend` 对每个请求计时（`DEFAULT_REQUEST_TIMEOUTS`：init 10 分钟、文本 2 分钟、图片 2 分钟 + 每张 30 秒；可注入 timers），超时即终止 worker（`TerminateReason` `timeout`）并以 `worker-crashed` 拒绝。
+  - **进行中标记**：每批开始前把本批 key 同步写入 `status.json` 的 `inflight`；正常结束 / 取消 / 卸载时清除。Obsidian 在批处理中崩溃（毒图导致 OOM 等）时标记留在磁盘，下次打开索引按一次失败计入（`crashed`，原因"处理这张图片时索引被中断"）。
+- **下载守护**：每个对象的读取与预处理都与取消信号（`AbortController`，`cancel` / `onScopeChanged` / `closeAll`，暂停中也有效）和超时（`READ_TIMEOUT_MS = 4 分钟`、`PREPARE_TIMEOUT_MS = 2 分钟`）赛跑，挂起的下载不会让 run 永不结束；`readBytes(scope, obj, signal)` 把信号交给 `fetchRemoteImageBytes`（其自身超时 `DOWNLOAD_TIMEOUT_MS = 3 分钟`；`requestUrl` 无法真正中止，只是放弃等待）。大小上限 `MAX_INDEX_IMAGE_BYTES = 50 MB`：列出的 `size` 超限则不读取不下载，大小未知时按响应长度检查（`requestUrl` 会缓冲整个响应）；超限记为 `unsupported`（"文件过大"），fingerprint 不变不再尝试。
 - **变更检测**：只看 `fingerprint()`（§4.2），不依赖 `SyncService.detectChanges`。
 - **视图挂接**：`OssGalleryView` 在 `syncService.sync()` 前 `beginListing`、在 `isCurrentLoad(generation)` 通过后 `reconcile`（手动刷新与 2 分钟自动同步两条路径；自动同步即使图库无变化也对账）；删除成功后 `onDeleted`。上传成功后 `main.ts` 调 `SemanticIndexing.onUploaded`（仅图片、key 可预知、且该 scope 已有索引时）。
-- **run 结束**：每个 store `compactIfNeeded()` + 异步 flush，status 落盘；`onRunFinished(summary)` → Notice（§12）。
+- **run 结束**：每个 store 先异步 flush 再 `compactIfNeeded()`，status 落盘（每一步单独 try/catch，一个 scope 出错不影响其他 scope 与 `onRunFinished`）；`onRunFinished(summary)` → Notice（§12）。compaction 若在两次 rename 之间失败，store 进入 closed 状态，服务丢弃缓存的 store，下次使用时重新打开（恢复流程前滚）；`reconcile` / `onDeleted` 内的索引错误只记日志，绝不作为列表失败抛出。
 
 ### 4.6 Scope id（P3，已实现）
 
@@ -394,7 +399,7 @@ export class SemanticSearchService {
 ### 约束
 
 - header 任一字段与当前配置不同 → 整个 scope 作废并重建（含修改 token budget、`PREPROCESS_VERSION`）。
-- **原子写**：写 `.tmp` → `fsync` → `rename`；compaction 写 `vectors.bin.tmp` + `meta.json.tmp`（均 `fsync`），先 rename vectors 再 rename meta，中断由上面第 1 步回滚或前滚。
+- **原子写**：写 `.tmp` → `fsync` → `rename`；compaction 写 `vectors.bin.tmp` + `meta.json.tmp`（均 `fsync`），先 rename vectors 再 rename meta，中断由上面第 1 步回滚或前滚。写 tmp 或第一次 rename（vectors）失败时（如 Windows 杀毒软件导致的 EPERM）磁盘上已提交的状态未变：删除 tmp、store 保持可用，下次 run 再尝试；只有第二次 rename（meta）失败才置为 closed（`isClosed`），需重新打开。
 - **Compaction**：`freeSlots.length / slotCount > 0.3` 时 `compactIfNeeded()` 执行（P3 在空闲时调用）；按槽位顺序重排，搜索结果不变。
 - 容量：1 万张 ≈ 10 MB vectors + 约 1–2 MB meta。
 
@@ -607,13 +612,13 @@ semantic: {
 
 远程 provider 建索引前（`SemanticIndexService.start` → `deps.confirmTraffic(scope, estimate, reason)`，`SemanticTrafficModal`）：
 
-- 估算 = 所有待办对象（未索引或 fingerprint 已变化，且不是 `unsupported` / 退避中的 `failed`）的 `size` 之和；Local 为 0（直接读盘），不弹框。列表没有给出大小（`size` 为 0）的对象单独计数（`unknownSizeCount`），此时下载量显示为"≥ X"并注明"图床没有报告其中 N 张图片的大小，实际下载量可能更大"。
+- 估算 = 所有待办对象（未索引或 fingerprint 已变化，且不是 `unsupported` / 退避中的 `failed`）的 `size` 之和；Local 为 0（直接读盘），不弹框。列表没有给出大小（`size` 为 0）的对象单独计数（`unknownSizeCount`），此时下载量显示为"≥ X"并注明"图床没有报告其中 N 张图片的大小，实际下载量可能更大"。`auto-large` 判断时每个未知大小的对象按 `ASSUMED_UNKNOWN_SIZE_BYTES = 2 MB` 计入（对话框仍只显示已知部分"≥ X"）。
 - 显示三个大号数字"N 张待索引 / 需下载 X MB|GB / M 张已有索引"（`formatBytes`，≥ 1 GB 用 GB；数量带千分位）、来源 provider 与"可能消耗移动流量或流量额度"的提示；只有点"开始建立索引"才返回 true，关闭或取消都是 false。
 - 自动索引弹框时第一行说明原因：`auto-first`"自动索引在本设备上首次从远程图床下载前会先询问"；`auto-large`"本次需要下载超过 200 MB，自动索引再次询问"。
 - 规则（纯函数 `trafficPromptReason({ local, pendingCount, auto, confirmedBefore, pendingBytes })`，`tests/semantic/trafficPrompt.test.ts`）：
   - Local 或没有待办：不弹框（`null`）。
   - 手动开始（图库"建立 / 更新索引"、"重试失败"、命令"立即为当前图床建立索引"）：远程 scope 有待办时**每次**都弹框（`manual`）。
-  - `autoIndex`：列表对账后若有待办且模型就绪则自动开始；远程 scope 若从未确认过（`status.json` 无 `confirmedAt`）或估算超过 `AUTO_CONFIRM_LIMIT_BYTES = 200 MB` 则弹框，同一会话中被拒绝后不再自动弹出（手动命令仍可）。
+  - `autoIndex`：列表对账后若有待办且模型就绪则自动开始；远程 scope 若从未确认过（`status.json` 无 `confirmedAt`）或估算（尚未授权的待办；未知大小按 2 MB 计）超过 `AUTO_CONFIRM_LIMIT_BYTES = 200 MB` 则弹框，同一会话中被拒绝后不再自动弹出（手动命令仍可）。
   - 确认成功写入 `confirmedAt`；修改 `indexDir` 后新位置没有该记录，所以需要重新确认。
 - 后续若支持 provider 端缩略图，改显示"最多 X GB"。
 
@@ -660,21 +665,25 @@ P3 的调试入口（P4 图库 UI 之前）：命令"语义搜索：立即为当
 
 ## 12. 图片格式与索引状态（P3）
 
-维护者决定：worker 解码器读不了的格式尽量转换，并把"经转换"和"不支持"的文件都告诉用户。实现：`src/semantic/imageFormat.ts`（纯函数，可单测）、`src/semantic/svgRasterizer.ts`（主线程）、`src/semantic/worker/tiff.ts`（worker 内）。
+维护者决定：worker 解码器读不了的格式尽量转换，并把"经转换"和"不支持"的文件都告诉用户。实现：`src/semantic/imageFormat.ts`、`src/semantic/imageHeader.ts`（文件头尺寸）、`src/semantic/tiffStructure.ts`（TIFF 结构与限制）（均为纯函数，可单测，主线程与 worker 共用）、`src/semantic/svgRasterizer.ts`（主线程）、`src/semantic/worker/tiff.ts`（worker 内，受限解压 + UTIF.js）。
 
 **检测**：以字节魔数为准（扩展名只用于区分 TIFF 容器的相机 RAW，如 `.cr2/.nef/.dng`）。JPEG `FF D8 FF`、PNG、`GIF8`、`RIFF…WEBP`、`BM`、ICO/CUR、ISO-BMFF `ftyp`（品牌含 `avif`/`avis` → AVIF，否则 `heic/heix/hevc/mif1/…` → HEIC）、`8BPS`（PSD）、TIFF `II*\0` / `MM\0*`（含 BigTIFF 魔数）、文本开头含 `<svg` → SVG。
 
 | 类别 | 格式 | 处理 | 状态 |
 |---|---|---|---|
-| 原生 | JPEG、PNG、WebP、GIF（第一帧）、BMP、ICO、AVIF | 字节直接交给 worker（`createImageBitmap`） | `ok` |
+| 原生 | JPEG、PNG、WebP、GIF（第一帧）、BMP、ICO、AVIF | 先从文件头读尺寸（`src/semantic/imageHeader.ts`），> 100 MP 记为不支持、读不出尺寸按解码失败处理（不送 worker）；其余字节直接交给 worker（`createImageBitmap`） | `ok` |
 | 转换 | SVG | 主线程：Blob URL + `<img>` 解码（图片上下文不执行脚本、不加载外部资源，Blob URL 随即撤销，不插入 DOM）→ `OffscreenCanvas` 白底绘制，最长边缩放到 [512, 1024] px → PNG。源文件 > 10 MB 视为不支持；画布被污染等错误按 `failed` 处理 | `converted`（`format: svg`） |
-| 转换 | TIFF | worker 内 UTIF.js 3.1.0（MIT，photopea）+ pako 1.x（MIT/Zlib）解码最大的一页（多页 TIFF 常带缩略图）→ RGBA → `ImageData` → 与其他格式相同的缩放与白底合成；> 64 MP 拒绝；支持无压缩、LZW、PackBits、Deflate、TIFF 内嵌 JPEG、CCITT。只打进 worker（main.js 中无 UTIF/pako，构建产物已核对） | `converted`（`format: tiff`） |
-| 不支持 | HEIC/HEIF、PSD、相机 RAW、无法识别的字节 | 不送 worker，记录原因 | `unsupported`（`format`, `reason`），fingerprint 不变就不再尝试 |
-| 失败 | 下载失败、SVG 栅格化失败、受支持格式解码失败（如截断的 JPEG）、推理失败 | 记录原因与次数 | `failed`（`reason`, `attempts`），退避重试：第 1 次失败后 1 分钟、第 2 次后 10 分钟，共 `MAX_ATTEMPTS = 3` 次；之后不再重试，直到 fingerprint 变化 |
+| 转换 | TIFF | 主线程先用 `src/semantic/tiffStructure.ts` 检查结构与尺寸（见下方"解码限制"），不通过记为不支持（BigTIFF、不支持的压缩/颜色布局、超限）；worker 内重复同样的检查，再用 UTIF.js 3.1.0（MIT，photopea）解码可解码的最大一页（多页 TIFF 常带缩略图；最大页超限时退到较小的一页）→ RGBA → `ImageData` → 与其他格式相同的缩放与白底合成。支持无压缩、LZW、PackBits、Deflate（含旧式 32946）、TIFF 内嵌 JPEG（新式，7）；CCITT G3/G4 与旧式 JPEG（6）不支持。只打进 worker（生产构建用 esbuild metafile 检查 main.js 不含 transformers.js / onnxruntime / UTIF / pako / `src/semantic/worker/`） | `converted`（`format: tiff`） |
+| 不支持 | HEIC/HEIF、PSD、相机 RAW、无法识别的字节；超过 50 MB 的对象（§4.5 下载守护） | 不送 worker，记录原因 | `unsupported`（`format`, `reason`），fingerprint 不变就不再尝试 |
+| 失败 | 下载失败或超时、SVG 栅格化失败、受支持格式解码失败（如截断的 JPEG）、推理失败、worker 崩溃 / 超时或应用崩溃时在批中（`crashed`，重试时单独成批，§4.5） | 记录原因与次数 | `failed`（`reason`, `attempts`），退避重试：第 1 次失败后 1 分钟、第 2 次后 10 分钟，共 `MAX_ATTEMPTS = 3` 次；之后不再重试，直到 fingerprint 变化 |
 
 注意：图库列表只包含 `IMAGE_EXTENSIONS`（jpg/jpeg/png/gif/bmp/webp/svg/ico/tiff/tif，P4 起加 **avif**：Chromium 原生解码，图库缩略图、预览与 worker 的 `createImageBitmap` 都可用；上传路径、embed 渲染不依赖该列表，不受影响），所以 HEIC 等扩展名的文件不会出现在列表与索引中；`unsupported` 主要来自扩展名与内容不符的文件（如实为 HEIC 的 `.png`）。
 
 不新增 `PREPROCESS_VERSION`：已有格式的解码路径不变，TIFF / SVG 之前都是失败，不存在旧向量。
+
+**解码限制（不可信输入）**：图片来自 bucket，可能是恶意构造的文件。
+- 原生格式：Chromium 对 Blob 先按原尺寸完整解码，`createImageBitmap` 的 resize 选项之后才生效，所以 30000×30000 的 1-bit PNG（约 100 KB）也会分配数 GB。尺寸只能从文件头判断：PNG IHDR、GIF 逻辑屏幕与第一帧（Blink 会按第一帧放大）、BMP、WebP VP8/VP8L/VP8X、JPEG 首个扫描前的 SOFn（按段长度跳过 APP 段，内嵌缩略图不影响）、ICO 最大的条目（PNG 条目读其 IHDR）、AVIF `meta/iprp/ipco/ispe` 中最大的一个。上限 `MAX_IMAGE_PIXELS = 100 MP`，worker 内再查一次。解码路径本身不变（> `decodePixelCap` 时仍是先解码再缩小），所以已索引图片的向量不变。
+- TIFF：不调用 `UTIF.decode`（自引用的 IFD 链会死循环，且无上限地递归 SubIFD/EXIF/MakerNote 指针、按文件给出的 count 循环）。自己读主 IFD 链：visited 集合、最多 32 页、IFD 表与每个标签的值必须在文件内（越界的标签丢弃）、数值总量上限。所选页：≤ 50 MP，解码缓冲（height × 行字节，含所有 tile）≤ 200 MB，strip/tile ≤ 65536 个，tile 缓冲总量同样受 200 MB 限制，BitsPerSample 数量必须等于 SamplesPerPixel，颜色布局限于 `UTIF.toRGBA8` 能转换的组合，PlanarConfiguration 2、Predictor 3 拒绝；内嵌 JPEG 的每个 SOF（含扫描之后的）不得大于其 strip/tile。LZW、Deflate、PackBits 由我们自己解压，输出按每个 strip/tile 的预期大小截断（Deflate 用 `DecompressionStream` 分 4 KB 输入喂入，压缩炸弹最多多出一块的输出），Predictor 2 与 16-bit 大端字节序也在此处理（tile 按 tile 行宽，修正了 UTIF 按整图行宽处理 tile 的错误）；之后 UTIF.decodeImage 只复制无压缩数据或解码已检查过尺寸的 JPEG。有效文件的解码结果与原 UTIF 路径逐字节相同（单测对照）。
 
 **状态存储**：`status.json`（`IndexStatusStore`），只记录非 `ok` 条目 `{ fp, status, format?, reason?, attempts?, nextRetryAt?, at }` 与 `confirmedAt`（§9.4）；`ok` = 有向量且无旁注。向量库 `reset`（header 变化）时只保留 `unsupported`。原子写（tmp + rename），2 s 防抖。
 

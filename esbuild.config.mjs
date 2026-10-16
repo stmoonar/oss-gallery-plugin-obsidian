@@ -179,14 +179,30 @@ const context = await esbuild.context({
 	minify: prod,
 	// Keep CJK locale strings as UTF-8 instead of 6-byte \uXXXX escapes.
 	charset: "utf8",
+	// Lets the production build check which modules went into main.js.
+	metafile: prod,
 });
 
+/**
+ * Worker-only code and dependencies (transformers.js, onnxruntime, UTIF.js,
+ * pako, src/semantic/worker/) must never be bundled into main.js. Returns the
+ * offending input paths from the esbuild metafile.
+ */
+function workerOnlyInputs(metafile) {
+	const workerOnly = /(^|\/)node_modules\/(\.pnpm\/[^/]+\/node_modules\/)?(@huggingface\/transformers|onnxruntime-[^/]+|utif|pako)\/|(^|\/)src\/semantic\/worker\//;
+	return Object.keys(metafile.inputs).filter((path) => workerOnly.test(path.replace(/\\/g, "/")));
+}
+
 if (prod) {
-	await context.rebuild();
+	const result = await context.rebuild();
 	await copyReleaseAssets();
+	const leaked = workerOnlyInputs(result.metafile);
+	if (leaked.length > 0) {
+		throw new Error(`main.js must not bundle worker-only code: ${leaked.join(", ")}`);
+	}
 	const mainJs = await readFile(outfile, "utf8");
-	if (/@huggingface\/transformers|onnxruntime/.test(mainJs)) {
-		throw new Error("main.js must not bundle transformers.js / onnxruntime");
+	if (/@huggingface\/transformers|onnxruntime|PlanarConfiguration 2 should not be used|incorrect header check/.test(mainJs)) {
+		throw new Error("main.js must not bundle transformers.js / onnxruntime / UTIF.js / pako");
 	}
 	process.exit(0);
 } else {
