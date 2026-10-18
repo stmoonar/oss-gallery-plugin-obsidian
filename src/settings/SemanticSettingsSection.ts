@@ -13,7 +13,11 @@ import { formatCount } from "../semantic/statusText";
 import type { WebGpuFailureReason, WebGpuProbeResult } from "../semantic/webGpuProbe";
 import type { ImageTokenBudget, PluginSettings } from "../types/settings";
 import { setDestructiveButton } from "../utils/buttonStyle";
+import { addInputHint, createSettingsGroup, createSettingsSection } from "./settingGroups";
 import { estimateRebuild, semanticDownloadSize } from "./settingsUx";
+
+/** Counts and size of the index refresh this often while indexing runs. */
+const INDEX_STATUS_REFRESH_MS = 3000;
 
 type MirrorKey = "hfEndpoint" | "githubMirror";
 
@@ -83,6 +87,8 @@ export class SemanticSettingsSection {
 	/** Set while the toggle is updated from code, so onChange ignores it. */
 	private syncingToggle = false;
 	private indexStatusEl: HTMLElement | null = null;
+	private indexStatsEl: HTMLElement | null = null;
+	private indexSizeEl: HTMLElement | null = null;
 	private unsubscribeIndex: (() => void) | null = null;
 	/** The "Advanced" area stays open across re-renders once opened. */
 	private advancedOpen = false;
@@ -128,6 +134,8 @@ export class SemanticSettingsSection {
 		this.unsubscribeIndex?.();
 		this.unsubscribeIndex = null;
 		this.indexStatusEl = null;
+		this.indexStatsEl = null;
+		this.indexSizeEl = null;
 	}
 
 	/** (Re)build the block for the current phase. */
@@ -143,29 +151,29 @@ export class SemanticSettingsSection {
 		this.enableToggle = null;
 		this.renderedKey = null;
 
-		new Setting(el)
-			.setName(t("Semantic search"))
-			.setDesc(t("Semantic search description")
-				.replace("{size}", semanticDownloadSize(this.controller.getAssets())))
-			.setHeading();
+		const group = createSettingsSection(el, {
+			heading: t("Semantic search"),
+			intro: t("Semantic search description")
+				.replace("{size}", semanticDownloadSize(this.controller.getAssets())),
+		});
 
-		this.probeSetting = new Setting(el)
+		this.probeSetting = new Setting(group)
 			.setName(t("WebGPU"))
 			.setDesc(t("Checking..."));
 		this.renderProbe();
 
 		if (this.phase === "setup") {
-			// Mirrors first: they decide whether the download below works.
+			this.statusSetting = new Setting(group).setName(t("Model files"));
+			// Mirrors right under the download: they decide whether it works.
 			this.renderMirrorSettings(el);
-			this.statusSetting = new Setting(el).setName(t("Model files"));
 			const advanced = this.renderAdvanced(el);
-			this.renderModelDirSetting(advanced);
-			this.renderIndexDirSetting(advanced);
+			this.renderModelDirSetting(advanced.group);
+			this.renderIndexDirSetting(advanced.group);
 		} else {
-			this.statusSetting = new Setting(el).setName(t("Model files"));
-			this.renderEnableToggle(el);
-			this.renderBudgetSetting(el);
-			new Setting(el)
+			this.statusSetting = new Setting(group).setName(t("Model files"));
+			this.renderEnableToggle(group);
+			this.renderBudgetSetting(group);
+			new Setting(group)
 				.setName(t("Index automatically"))
 				.setDesc(t("Index automatically description"))
 				.addToggle((toggle) => toggle
@@ -174,25 +182,25 @@ export class SemanticSettingsSection {
 						this.settings.autoIndex = value;
 						await this.host.saveSettings();
 					}));
-			this.renderIndexStatus(el);
+			this.renderIndexStatus(group);
 			const advanced = this.renderAdvanced(el);
-			this.renderModelDirSetting(advanced);
-			this.renderIndexDirSetting(advanced);
-			this.renderMirrorSettings(advanced);
+			this.renderModelDirSetting(advanced.group);
+			this.renderIndexDirSetting(advanced.group);
+			this.renderMirrorSettings(advanced.details);
 		}
 
 		this.update(this.controller.getState());
 	}
 
-	/** Collapsible "Advanced" area; returns the element to render into. */
-	private renderAdvanced(el: HTMLElement): HTMLElement {
+	/** Collapsible "Advanced" area with its own group of rows. */
+	private renderAdvanced(el: HTMLElement): { details: HTMLElement; group: HTMLElement } {
 		const details = el.createEl("details", { cls: "oss-gallery-settings-advanced" });
 		details.open = this.advancedOpen;
 		details.createEl("summary", { text: t("Semantic advanced") });
 		details.addEventListener("toggle", () => {
 			this.advancedOpen = details.open;
 		});
-		return details;
+		return { details, group: createSettingsGroup(details) };
 	}
 
 	private renderEnableToggle(el: HTMLElement): void {
@@ -285,7 +293,7 @@ export class SemanticSettingsSection {
 	private renderModelDirSetting(el: HTMLElement): void {
 		const setting = new Setting(el)
 			.setName(t("Model directory"))
-			.setDesc(t("Model directory description").replace("{dir}", defaultModelDir()));
+			.setDesc(t("Model directory description"));
 		const errorEl = setting.descEl.createDiv({ cls: "oss-gallery-setting-error" });
 		errorEl.hide();
 		const saveModelDir = debounce(async () => {
@@ -294,20 +302,23 @@ export class SemanticSettingsSection {
 			this.update(this.controller.getState());
 		}, 600, true);
 
-		setting.addText((text) => text
-			.setPlaceholder(defaultModelDir())
-			.setValue(this.settings.modelDir)
-			.onChange((value) => {
-				if (this.controller.manager.isBusy()) {
-					text.setValue(this.settings.modelDir);
-					errorEl.setText(t("Model directory busy"));
-					errorEl.show();
-					return;
-				}
-				errorEl.hide();
-				this.settings.modelDir = value.trim();
-				saveModelDir();
-			}));
+		setting.addText((text) => {
+			addInputHint(text.inputEl, t("Default directory hint").replace("{dir}", defaultModelDir()));
+			text
+				.setPlaceholder(defaultModelDir())
+				.setValue(this.settings.modelDir)
+				.onChange((value) => {
+					if (this.controller.manager.isBusy()) {
+						text.setValue(this.settings.modelDir);
+						errorEl.setText(t("Model directory busy"));
+						errorEl.show();
+						return;
+					}
+					errorEl.hide();
+					this.settings.modelDir = value.trim();
+					saveModelDir();
+				});
+		});
 	}
 
 	/**
@@ -318,96 +329,127 @@ export class SemanticSettingsSection {
 	private renderIndexDirSetting(el: HTMLElement): void {
 		const setting = new Setting(el)
 			.setName(t("Index directory"))
-			.setDesc(t("Index directory description").replace("{dir}", defaultIndexDir()));
+			.setDesc(t("Index directory description"));
 		const errorEl = setting.descEl.createDiv({ cls: "oss-gallery-setting-error" });
 		errorEl.hide();
 		const save = debounce(async () => {
 			await this.host.saveSettings();
 			this.renderIndexStatusContent();
 		}, 600, true);
-		setting.addText((text) => text
-			.setPlaceholder(defaultIndexDir())
-			.setValue(this.settings.indexDir)
-			.onChange((value) => {
-				const trimmed = value.trim();
-				if (!resolveIndexDir(trimmed).ok) {
-					errorEl.setText(t("Index directory must be an absolute path"));
-					errorEl.show();
-					return;
-				}
-				errorEl.hide();
-				if (trimmed !== this.settings.indexDir) {
-					this.settings.indexDir = trimmed;
-					save();
-				}
-			}));
+		setting.addText((text) => {
+			addInputHint(text.inputEl, t("Default directory hint").replace("{dir}", defaultIndexDir()));
+			text
+				.setPlaceholder(defaultIndexDir())
+				.setValue(this.settings.indexDir)
+				.onChange((value) => {
+					const trimmed = value.trim();
+					if (!resolveIndexDir(trimmed).ok) {
+						errorEl.setText(t("Index directory must be an absolute path"));
+						errorEl.show();
+						return;
+					}
+					errorEl.hide();
+					if (trimmed !== this.settings.indexDir) {
+						this.settings.indexDir = trimmed;
+						save();
+					}
+				});
+		});
 	}
 
-	/** Index statistics of the active provider, clear button, problem files. */
+	/**
+	 * "Index for this vault" row: counts and on-disk size as its description,
+	 * the problem / converted file lists under it, the clear button.
+	 */
 	private renderIndexStatus(el: HTMLElement): void {
 		const indexing = this.controller.indexing;
 		if (!indexing) {
 			return;
 		}
-		new Setting(el)
+		const setting = new Setting(el)
 			.setName(t("Index for this vault"))
-			.setDesc(t("Index for this vault description"))
 			.addButton((btn) => {
 				setDestructiveButton(btn
 					.setButtonText(t("Clear index for this vault"))
+					.setTooltip(t("Index for this vault description"))
 					.onClick(() => indexing.confirmClearIndex(() => this.renderIndexStatusContent())));
 			});
-		this.indexStatusEl = el.createDiv({ cls: "oss-gallery-semantic-index-status" });
+		setting.settingEl.addClass("oss-gallery-semantic-index-row");
+		this.indexStatsEl = setting.descEl.createDiv({ cls: "oss-gallery-index-stats" });
+		this.indexSizeEl = setting.descEl.createDiv({ cls: "oss-gallery-index-size" });
+		this.indexStatusEl = setting.infoEl.createDiv({ cls: "oss-gallery-semantic-index-status" });
 		this.renderIndexStatusContent();
-		let pending = false;
+		let pending: number | null = null;
 		this.unsubscribeIndex = indexing.index.onProgress((p) => {
-			// Refresh when a run ends; progress itself is in the status bar.
-			if (p.state === "idle" && !pending) {
-				pending = true;
-				window.setTimeout(() => {
-					pending = false;
+			if (p.state === "idle") {
+				// A run ended: everything, lists included.
+				if (pending !== null) window.clearTimeout(pending);
+				pending = window.setTimeout(() => {
+					pending = null;
 					this.renderIndexStatusContent();
 				}, 200);
+			} else if (pending === null) {
+				// While indexing: counts and size every few seconds (the open
+				// lists stay as they are; they are rebuilt when the run ends).
+				pending = window.setTimeout(() => {
+					pending = null;
+					this.renderIndexStatusLines();
+				}, INDEX_STATUS_REFRESH_MS);
 			}
 		});
 	}
 
+	/** Counts, size and the file lists. */
 	private renderIndexStatusContent(): void {
+		this.renderIndexStatusLines();
 		const el = this.indexStatusEl;
-		const indexing = this.controller.indexing;
-		if (!el || !indexing) {
+		const stats = this.controller.indexing?.statsForCurrentScope() ?? null;
+		if (!el) {
 			return;
 		}
 		el.empty();
-		const stats = indexing.statsForCurrentScope();
-		if (!stats) {
-			el.createDiv({ cls: "setting-item-description", text: t("No index for the current provider") });
-			return;
+		if (stats) {
+			// Same lists as the gallery's details dialog (without "show in gallery").
+			renderIndexStatusDetails(el, stats);
 		}
-		el.createDiv({
-			cls: "setting-item-description",
-			text: t("Index stats")
-				.replace("{indexed}", String(stats.indexed))
-				.replace("{converted}", String(stats.converted))
-				.replace("{unsupported}", String(stats.unsupported))
-				.replace("{failed}", String(stats.failed))
-				.replace("{pending}", String(stats.pending)),
-		});
-		// Same lists as the gallery's details dialog (without "show in gallery").
-		renderIndexStatusDetails(el, stats);
 	}
 
-	private renderMirrorSettings(el: HTMLElement): void {
-		new Setting(el)
-			.setName(t("Download sources"))
-			.setDesc(t("Download sources description"))
-			.setClass("oss-gallery-setting-subheading");
+	/** The two description lines: counts of the current provider, size on disk. */
+	private renderIndexStatusLines(): void {
+		const indexing = this.controller.indexing;
+		const statsEl = this.indexStatsEl;
+		const sizeEl = this.indexSizeEl;
+		if (!indexing || !statsEl || !sizeEl) {
+			return;
+		}
+		const stats = indexing.statsForCurrentScope();
+		statsEl.setText(stats
+			? t("Index stats")
+				.replace("{indexed}", formatCount(stats.indexed))
+				.replace("{converted}", formatCount(stats.converted))
+				.replace("{unsupported}", formatCount(stats.unsupported))
+				.replace("{failed}", formatCount(stats.failed))
+				.replace("{pending}", formatCount(stats.pending))
+			: t("No index for the current provider"));
+		const size = indexing.indexSizeText(indexing.currentScope()?.id ?? null);
+		sizeEl.setText(size);
+		sizeEl.toggle(size !== "");
+	}
+
+	/** "Download sources": a small sub-section with its own group. */
+	private renderMirrorSettings(parentEl: HTMLElement): void {
+		const el = createSettingsSection(parentEl, {
+			heading: t("Download sources"),
+			intro: t("Download sources description"),
+			cls: "oss-gallery-settings-subsection",
+		});
 
 		this.renderMirrorSetting(
 			el,
 			"hfEndpoint",
 			t("Hugging Face endpoint"),
 			t("Hugging Face endpoint description"),
+			t("Hugging Face endpoint hint"),
 			"https://hf-mirror.com"
 		);
 		this.renderMirrorSetting(
@@ -415,6 +457,7 @@ export class SemanticSettingsSection {
 			"githubMirror",
 			t("GitHub mirror"),
 			t("GitHub mirror description"),
+			t("GitHub mirror hint"),
 			"https://gh-proxy.com"
 		);
 	}
@@ -430,6 +473,7 @@ export class SemanticSettingsSection {
 		key: MirrorKey,
 		name: string,
 		desc: string,
+		hint: string,
 		placeholder: string
 	): void {
 		const setting = new Setting(containerEl).setName(name).setDesc(desc);
@@ -441,22 +485,25 @@ export class SemanticSettingsSection {
 			this.update(this.controller.getState());
 		}, 600, true);
 
-		setting.addText((text) => text
-			.setPlaceholder(placeholder)
-			.setValue(this.settings[key])
-			.onChange((value) => {
-				const normalized = normalizeMirrorUrl(value);
-				if (!normalized.ok) {
-					errorEl.setText(t(MIRROR_ERROR_KEYS[normalized.error]));
-					errorEl.show();
-					return;
-				}
-				errorEl.hide();
-				if (normalized.value !== this.settings[key]) {
-					this.settings[key] = normalized.value;
-					save();
-				}
-			}));
+		setting.addText((text) => {
+			addInputHint(text.inputEl, hint);
+			text
+				.setPlaceholder(placeholder)
+				.setValue(this.settings[key])
+				.onChange((value) => {
+					const normalized = normalizeMirrorUrl(value);
+					if (!normalized.ok) {
+						errorEl.setText(t(MIRROR_ERROR_KEYS[normalized.error]));
+						errorEl.show();
+						return;
+					}
+					errorEl.hide();
+					if (normalized.value !== this.settings[key]) {
+						this.settings[key] = normalized.value;
+						save();
+					}
+				});
+		});
 	}
 
 	private renderProbe(): void {

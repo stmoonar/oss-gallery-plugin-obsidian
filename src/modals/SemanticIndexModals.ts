@@ -109,6 +109,8 @@ export interface IndexDetailsOptions {
 	/** Current stats; re-read when the dialog re-renders (after a retry). */
 	getStats(): IndexStats | null;
 	summary(stats: IndexStats): string;
+	/** On-disk size of the index ('' = none / unknown). */
+	sizeText?: () => string;
 	/** Scroll the gallery to an image and select it. */
 	onReveal(key: string): void;
 	/** Reset failed files and start indexing again (null = not possible now). */
@@ -136,6 +138,10 @@ export class SemanticIndexDetailsModal extends Modal {
 			return;
 		}
 		contentEl.createEl("p", { cls: "oss-gallery-semantic-details-summary", text: this.options.summary(stats) });
+		const size = this.options.sizeText?.() ?? "";
+		if (size) {
+			contentEl.createEl("p", { cls: "setting-item-description oss-gallery-semantic-details-size", text: size });
+		}
 		contentEl.createEl("p", {
 			cls: "setting-item-description",
 			text: t("Semantic index details description").replace("{provider}", this.options.providerLabel),

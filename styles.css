@@ -587,9 +587,14 @@ If your plugin does not need CSS, delete this file.
     font-weight: var(--font-semibold);
 }
 
-/* Settings: index statistics and problem files */
+/* Settings: problem / converted files under the "Index for this vault" row */
 .oss-gallery-semantic-index-status {
-    padding: 0 0 var(--oss-gallery-spacing-md);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-index-status:empty {
+    display: none;
 }
 
 .oss-gallery-semantic-index-status details {
@@ -648,9 +653,7 @@ If your plugin does not need CSS, delete this file.
     display: flex;
     flex-direction: column;
     gap: var(--size-4-1);
-    padding: var(--size-4-1) var(--size-4-2);
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
+    padding: var(--size-4-1) var(--oss-gallery-spacing-md) 0;
     font-size: var(--font-ui-small);
     color: var(--text-muted);
 }
@@ -950,20 +953,39 @@ If your plugin does not need CSS, delete this file.
     color: var(--text-normal);
 }
 
-/* Image count / selection actions (stays at the top while scrolling) */
+/* Count caption ("12 of 552 images", only while a text search filters):
+   plain muted text, no strip. */
 .oss-gallery-meta-row {
-    position: sticky;
-    top: 0;
-    z-index: 5;
     display: flex;
     align-items: center;
     gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--oss-gallery-spacing-md) 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Selection actions: stay at the top while scrolling, over the tiles. */
+.oss-gallery-meta-row.oss-gallery-has-selection {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     min-height: 32px;
     padding: var(--size-2-1) var(--size-4-2);
     background: var(--background-primary);
     border-bottom: 1px solid var(--background-modifier-border);
     font-size: var(--font-ui-small);
-    color: var(--text-muted);
+}
+
+/* "Show more (N less similar)" under a semantic result */
+.oss-gallery-show-more {
+    display: flex;
+    justify-content: center;
+    padding: var(--size-4-2) var(--size-4-4) var(--size-4-8);
+}
+
+.oss-gallery-show-more button {
+    font-size: var(--font-ui-small);
     font-variant-numeric: tabular-nums;
 }
 
@@ -1415,9 +1437,9 @@ If your plugin does not need CSS, delete this file.
     color: var(--text-error);
 }
 
+/* "Missing: ..." in the description of the "Test connection" row */
 .oss-gallery-provider-status {
-    padding: var(--oss-gallery-spacing-xs) 0 var(--oss-gallery-spacing-sm);
-    font-size: var(--font-ui-small);
+    margin-top: var(--oss-gallery-spacing-xs);
     color: var(--text-muted);
 }
 
@@ -1442,21 +1464,90 @@ If your plugin does not need CSS, delete this file.
     color: var(--text-error);
 }
 
-.oss-gallery-setting-indented {
-    padding-left: var(--size-4-6, 24px);
+/* Sections (src/settings/settingGroups.ts): a strong heading with more
+   space above it than between rows, then one group of rows. On 1.11+ the
+   group is Obsidian's SettingGroup (rows with thin dividers); older versions
+   get the fallback container below. */
+.oss-gallery-settings-tab .oss-gallery-settings-section {
+    margin-top: var(--size-4-8);
+}
+
+.oss-gallery-settings-tab > .oss-gallery-settings-section:first-child {
+    margin-top: 0;
+}
+
+.oss-gallery-settings-tab .oss-gallery-settings-section.oss-gallery-settings-subsection {
+    margin-top: var(--size-4-5);
+}
+
+.oss-gallery-settings-tab .oss-gallery-section-heading .setting-item-name {
+    color: var(--text-normal);
+    font-size: calc(var(--font-ui-medium) * 1.15);
+    font-weight: var(--font-bold);
+}
+
+.oss-gallery-settings-tab .oss-gallery-section-heading .setting-item-description {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-normal);
+}
+
+.oss-gallery-settings-tab .oss-gallery-settings-subsection .oss-gallery-section-heading .setting-item-name {
+    font-size: var(--font-ui-medium);
+    font-weight: var(--font-semibold);
+}
+
+/* Fallback group before Obsidian 1.11 (no SettingGroup): rows already have
+   divider lines there, so only the frame is added. */
+.oss-gallery-setting-group-fallback {
+    padding: 0 var(--size-4-4);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+}
+
+.oss-gallery-setting-group-fallback .setting-item:first-child {
+    border-top: none;
+}
+
+/* A row that belongs to the row above it ("Image embed format" under
+   "Embed images"): indented, no divider in between. */
+.oss-gallery-setting-group .setting-item.oss-gallery-setting-child {
+    padding-top: 0;
+    padding-inline-start: calc(var(--setting-items-padding-x, var(--size-4-4)) + var(--size-4-6));
+}
+
+.oss-gallery-setting-group .setting-item.oss-gallery-setting-child::before {
+    content: none;
+}
+
+.oss-gallery-setting-group-fallback .setting-item.oss-gallery-setting-child {
+    padding-top: 0;
+    padding-inline-start: var(--size-4-6);
+    border-top: none;
+}
+
+/* Non-setting rows inside a group (Imgur's note) */
+.oss-gallery-provider-settings > .oss-gallery-imgur-note {
+    margin: 0;
+    padding: var(--size-4-3) var(--setting-items-padding-x, 0);
+    border-top: 1px solid var(--setting-items-divider-color, var(--background-modifier-border));
 }
 
 .oss-gallery-settings-advanced {
-    margin: var(--oss-gallery-spacing-sm) 0;
+    margin-top: var(--size-4-5);
 }
 
 .oss-gallery-settings-advanced > summary {
     cursor: pointer;
-    padding: var(--oss-gallery-spacing-xs) 0;
+    padding: var(--size-4-1) var(--size-4-4);
     font-weight: var(--font-semibold);
     color: var(--text-muted);
 }
 
-.oss-gallery-setting-subheading .setting-item-name {
-    font-weight: var(--font-semibold);
+.oss-gallery-settings-advanced > summary:hover {
+    color: var(--text-normal);
+}
+
+.oss-gallery-settings-advanced[open] > summary {
+    margin-bottom: var(--size-4-3);
 }

@@ -104,6 +104,78 @@ export function clearVaultIndex(indexRoot: string, vaultId: string, fs: ClearFs 
 	return result;
 }
 
+/** The fs calls used by vaultIndexSize (Node's fs satisfies it). */
+export interface SizeFs {
+	existsSync(p: string): boolean;
+	lstatSync(p: string): { isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean; size: number };
+	readdirSync(p: string): string[];
+}
+
+export interface VaultIndexSize {
+	/** Bytes of all index files of this vault (every scope). */
+	total: number;
+	/** Bytes per scope id (only scopes with index files). */
+	byScope: Record<string, number>;
+}
+
+/**
+ * On-disk size of this vault's semantic indexes: the same files "Clear
+ * index for this vault" would delete (INDEX_FILE_NAMES in scope-id
+ * directories under <indexDir>/<vaultId>/, regular files only, no
+ * symlinks), so the number shown is exactly what clearing frees.
+ */
+export function vaultIndexSize(indexRoot: string, vaultId: string, fs: SizeFs = nodeFs): VaultIndexSize {
+	if (!SAFE_ID.test(vaultId)) {
+		throw new Error(`Invalid vault id: ${vaultId}`);
+	}
+	const result: VaultIndexSize = { total: 0, byScope: {} };
+	const vaultDir = path.join(indexRoot, vaultId);
+	if (!fs.existsSync(vaultDir)) {
+		return result;
+	}
+	const vaultStat = fs.lstatSync(vaultDir);
+	if (vaultStat.isSymbolicLink() || !vaultStat.isDirectory()) {
+		return result;
+	}
+	for (const scopeName of fs.readdirSync(vaultDir)) {
+		if (!SAFE_ID.test(scopeName)) {
+			continue;
+		}
+		const scopeDir = path.join(vaultDir, scopeName);
+		let names: string[];
+		try {
+			const st = fs.lstatSync(scopeDir);
+			if (st.isSymbolicLink() || !st.isDirectory()) {
+				continue;
+			}
+			names = fs.readdirSync(scopeDir);
+		} catch {
+			continue;
+		}
+		let bytes = 0;
+		let files = 0;
+		for (const name of names) {
+			if (!isIndexFileName(name)) {
+				continue;
+			}
+			try {
+				const fst = fs.lstatSync(path.join(scopeDir, name));
+				if (fst.isFile()) {
+					bytes += fst.size;
+					files++;
+				}
+			} catch {
+				// Removed meanwhile (e.g. a temp file renamed into place).
+			}
+		}
+		if (files > 0) {
+			result.byScope[scopeName] = bytes;
+			result.total += bytes;
+		}
+	}
+	return result;
+}
+
 function removeIfEmpty(fs: ClearFs, dir: string, result: ClearResult, label: string): void {
 	try {
 		if (fs.readdirSync(dir).length === 0) {

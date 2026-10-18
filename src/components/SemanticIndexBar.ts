@@ -13,7 +13,10 @@ export interface SemanticIndexBarCallbacks {
 	onClearResult(): void;
 }
 
-/** Header of the current semantic result (or the query in flight). */
+/**
+ * Header of the current semantic result (or the query in flight); `count` =
+ * best matches shown first (semanticCutoff.ts), the rest are behind "Show more".
+ */
 export type SemanticResultInfo =
 	| { kind: "loading"; cold: boolean }
 	| { kind: "semantic"; query: string; count: number }
@@ -71,9 +74,18 @@ export class SemanticIndexBar {
 			this.syncVisibility();
 			return;
 		}
-		this.statusRow.show();
 		const p = state.progress;
 		const running = state.runningHere && p.state !== "idle";
+		// Up to date, idle and nothing failed: nothing to do here, so no row
+		// (details stay in settings). Failures keep the chip: it leads to Retry.
+		if (!running && state.stats && state.pending === 0 && state.stats.failed === 0) {
+			this.shape = "";
+			this.statusRow.empty();
+			this.statusRow.hide();
+			this.syncVisibility();
+			return;
+		}
+		this.statusRow.show();
 		const shape = running
 			? `run:${p.state}`
 			: state.stats
@@ -167,7 +179,9 @@ export class SemanticIndexBar {
 			chip.createSpan({ text: label });
 			chip.createSpan({
 				cls: "oss-gallery-semantic-result-count",
-				text: info.count === 0 ? t("No semantic results") : t("Ranked by similarity").replace("{count}", formatCount(info.count)),
+				text: info.count === 0
+					? t("No semantic results")
+					: t(info.kind === "semantic" ? "Best matches count" : "Most similar count").replace("{count}", formatCount(info.count)),
 			});
 			iconButton(chip, "x", t("Back to all images"), () => this.callbacks.onClearResult(), "oss-gallery-semantic-result-close");
 		}
@@ -185,7 +199,10 @@ export class SemanticIndexBar {
 	}
 
 	private syncVisibility(): void {
-		const visible = this.statusRow.isShown() || this.errorRow.isShown() || this.resultRow.isShown();
+		// Not isShown(): it is false for every row while `el` itself is hidden,
+		// so the bar would never appear again.
+		const own = (row: HTMLElement) => row.style.display !== "none";
+		const visible = own(this.statusRow) || own(this.errorRow) || own(this.resultRow);
 		if (visible) {
 			this.el.show();
 		} else {

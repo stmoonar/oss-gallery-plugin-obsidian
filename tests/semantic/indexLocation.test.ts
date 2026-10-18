@@ -3,7 +3,7 @@ import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getIndexIdentity, INDEX_IDENTITY } from "../../src/providers/indexIdentity";
 import { computeScopeId, fingerprint, makeIndexScope } from "../../src/semantic/fingerprint";
-import { clearVaultIndex, vaultIdFor } from "../../src/semantic/indexFiles";
+import { clearVaultIndex, SizeFs, vaultIdFor, vaultIndexSize } from "../../src/semantic/indexFiles";
 import { defaultIndexDir, defaultModelDir, PlatformEnv, resolveIndexDir } from "../../src/semantic/modelDir";
 import { SAFE_ID } from "../../src/semantic/VectorStore";
 import { DEFAULT_SETTINGS, ProviderSettingsMap } from "../../src/types/settings";
@@ -100,6 +100,76 @@ describe("clearVaultIndex", () => {
 		expect(clearVaultIndex(root, "nothing")).toEqual({ deleted: 0, failed: [], kept: 0 });
 		expect(() => clearVaultIndex(root, "..")).toThrow(/Invalid vault id/);
 		expect(() => clearVaultIndex(root, "")).toThrow(/Invalid vault id/);
+	});
+});
+
+describe("vaultIndexSize", () => {
+	let root: string;
+	beforeEach(() => {
+		root = makeTempDir("idx-size-");
+	});
+	afterEach(() => {
+		removeDir(root);
+	});
+
+	function write(rel: string, bytes: number): void {
+		const file = path.join(root, rel);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, Buffer.alloc(bytes));
+	}
+
+	it("counts exactly the files that clearing would delete", () => {
+		write("vaultA/scope1/meta.json", 100);
+		write("vaultA/scope1/vectors.bin", 4000);
+		write("vaultA/scope1/status.json", 50);
+		write("vaultA/scope1/meta.json.a3.tmp", 7);
+		write("vaultA/scope1/notes.txt", 999);
+		write("vaultA/scope2/vectors.bin", 300);
+		write("vaultA/readme.md", 999);
+		write("vaultA/not a scope/meta.json", 999);
+		write("vaultA/other/notes.txt", 999);
+		write("vaultB/scope1/vectors.bin", 999);
+
+		const size = vaultIndexSize(root, "vaultA");
+		expect(size.byScope).toEqual({ scope1: 4157, scope2: 300 });
+		expect(size.total).toBe(4457);
+
+		// Clearing frees what was counted, and the count drops to zero.
+		const cleared = clearVaultIndex(root, "vaultA");
+		expect(cleared.deleted).toBe(5);
+		expect(vaultIndexSize(root, "vaultA")).toEqual({ total: 0, byScope: {} });
+	});
+
+	it("is empty for a missing vault folder and rejects unsafe vault ids", () => {
+		expect(vaultIndexSize(root, "nothing")).toEqual({ total: 0, byScope: {} });
+		expect(() => vaultIndexSize(root, "..")).toThrow(/Invalid vault id/);
+	});
+
+	it("skips symlinks and entries that vanish while counting (injected fs)", () => {
+		const p = (...parts: string[]) => path.join("r", ...parts);
+		const entries: Record<string, { dir?: string[]; size?: number; link?: boolean }> = {
+			[p("v")]: { dir: ["s1", "s2"] },
+			[p("v", "s1")]: { dir: ["vectors.bin", "meta.json", "status.json"] },
+			[p("v", "s1", "vectors.bin")]: { size: 10 },
+			[p("v", "s1", "meta.json")]: { size: 5, link: true },
+			// status.json is listed but gone by the time it is stat'ed.
+			[p("v", "s2")]: { dir: [], link: true },
+		};
+		const fake: SizeFs = {
+			existsSync: (q) => q in entries,
+			lstatSync: (q) => {
+				const e = entries[q];
+				if (!e) throw new Error("ENOENT");
+				return {
+					isDirectory: () => e.dir !== undefined && !e.link,
+					isFile: () => e.size !== undefined && !e.link,
+					isSymbolicLink: () => e.link === true,
+					size: e.size ?? 0,
+				};
+			},
+			readdirSync: (q) => entries[q]?.dir ?? [],
+		};
+		expect(vaultIndexSize("r", "v", fake)).toEqual({ total: 10, byScope: { s1: 10 } });
 	});
 });
 

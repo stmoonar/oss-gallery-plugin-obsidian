@@ -60,3 +60,34 @@ export function fileNameOf(key: string): string {
 	const slash = trimmed.lastIndexOf("/");
 	return slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
 }
+
+/** Templates for the on-disk index size; `{size}`, `{scope}` and `{vault}` are sizes. */
+export interface IndexSizeTemplates {
+	/** Only the current provider's index exists: "{size} on disk". */
+	single: string;
+	/** Other providers of the vault have indexes too: "{scope} on disk; {vault} for this vault". */
+	split: string;
+	/** No index for the current provider, others exist: "{vault} on disk for other providers". */
+	othersOnly: string;
+}
+
+/**
+ * Index size line for the settings tab and the details dialog: the current
+ * scope's size, and the vault total when other scopes add to it. '' when
+ * this vault has no index files at all.
+ */
+export function formatIndexSize(
+	size: { total: number; byScope: Readonly<Record<string, number>> },
+	scopeId: string | null,
+	tpl: IndexSizeTemplates,
+	formatSize: (bytes: number) => string
+): string {
+	const scopeBytes = scopeId !== null ? size.byScope[scopeId] : undefined;
+	if (scopeBytes === undefined) {
+		return size.total > 0 ? tpl.othersOnly.replace("{vault}", formatSize(size.total)) : "";
+	}
+	if (size.total <= scopeBytes) {
+		return tpl.single.replace("{size}", formatSize(scopeBytes));
+	}
+	return tpl.split.replace("{scope}", formatSize(scopeBytes)).replace("{vault}", formatSize(size.total));
+}

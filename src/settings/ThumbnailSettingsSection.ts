@@ -7,6 +7,7 @@ import type { PluginSettings } from "../types/settings";
 import { THUMBNAIL_CACHE_MAX_MB, THUMBNAIL_CACHE_MIN_MB } from "../types/settings";
 import { setDestructiveButton } from "../utils/buttonStyle";
 import { parseThumbnailCacheMB } from "./loadStoredSettings";
+import { createSettingsSection } from "./settingGroups";
 
 interface ThumbnailSettingsHost {
 	settings: PluginSettings;
@@ -26,11 +27,9 @@ export class ThumbnailSettingsSection {
 
 	constructor(private readonly host: ThumbnailSettingsHost, private readonly thumbnails: GalleryThumbnails) {}
 
-	render(containerEl: HTMLElement): void {
+	render(parentEl: HTMLElement): void {
 		const settings = this.host.settings.thumbnails;
-		new Setting(containerEl)
-			.setName(t("Gallery thumbnails"))
-			.setHeading();
+		const containerEl = createSettingsSection(parentEl, { heading: t("Gallery thumbnails") });
 
 		new Setting(containerEl)
 			.setName(t("Local thumbnails"))

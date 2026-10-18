@@ -11,12 +11,13 @@ import { SemanticIndexBar } from '../components/SemanticIndexBar';
 import { intersectHits, needsSemanticRerank, queryFor, SemanticAvailability } from '../components/searchMode';
 import { EMPTY_SELECTION, retainKeys, SelectionState } from '../components/tileSelection';
 import { emptyStateKind, nextFocusAfterRemoval, previewNames, summarizeBatchDelete } from '../components/galleryUx';
+import { bestMatchCount, revealMore } from '../components/semanticCutoff';
 import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 import { providerRegistry } from '../providers/registry';
 import type { GallerySemanticHooks } from '../semantic/SemanticIndexing';
 import type { GalleryThumbnailHooks } from '../thumbnails/GalleryThumbnails';
-import { fileNameOf } from '../semantic/statusText';
+import { fileNameOf, formatCount } from '../semantic/statusText';
 import { openPluginSettings } from '../utils/openPluginSettings';
 
 /** Tooltip of the semantic toggle: what it does, or why it is unavailable. */
@@ -102,6 +103,17 @@ export class OssGalleryView extends ItemView {
     private objectUrlCache: { source: OssImage[]; urls: Map<string, string> } | null = null;
     /** Multi-selection; survives re-renders for keys still shown. */
     private selection: SelectionState = EMPTY_SELECTION;
+    /**
+     * Semantic / similar result: hits after the shown ones (best matches
+     * first, see semanticCutoff.ts), in similarity order, for "Show more".
+     */
+    private semanticRest: { object: OssImage; score: number }[] = [];
+    /** Scores of the current semantic result (tile badges, also for revealed tiles). */
+    private semanticScores: Map<string, number> | null = null;
+    /** Results the user revealed with "Show more" for this result (null = best matches only). */
+    private semanticRevealed: number | null = null;
+    private showMoreEl: HTMLElement | null = null;
+    private showMoreBtn: HTMLButtonElement | null = null;
 
     // State
     private state: GalleryState = {
@@ -252,7 +264,11 @@ export class OssGalleryView extends ItemView {
         };
     }
 
-    /** Image count, or the selection with its batch actions. */
+    /**
+     * Small muted caption under the toolbar ("12 of 552 images", only while a
+     * text / regex search filters the gallery), or the selection with its
+     * batch actions. Semantic results have their own header (best matches).
+     */
     private createMetaRow(container: HTMLElement): void {
         const row = container.createDiv({ cls: 'oss-gallery-meta-row oss-gallery-is-hidden' });
         this.metaRow = row;
@@ -285,16 +301,19 @@ export class OssGalleryView extends ItemView {
         if (!row) return;
         const selected = this.selection.keys.size;
         const canList = providerRegistry.supports(this.provider.name, 'list');
-        row.toggleClass('oss-gallery-is-hidden', !canList || (!this.listingLoaded && selected === 0));
+        // The count only when it says something: a text / regex filter. No
+        // filter: no count (calmer); semantic results: their own header.
+        const textFilter = canList && this.listingLoaded && this.state.isSearching
+            && this.state.semanticResult === null && !this.semanticPending;
+        row.toggleClass('oss-gallery-is-hidden', !canList || (selected === 0 && !textFilter));
+        row.toggleClass('oss-gallery-has-selection', selected > 0);
 
-        const total = this.state.remoteObjects.length;
-        const shown = this.state.visibleImages.length;
-        const filtered = this.state.isSearching || this.state.semanticResult !== null;
-        const count = (n: number) => (n === 1 ? t('Gallery image count one') : t('Gallery image count').replace('{count}', String(n)));
-        this.countEl?.setText(filtered
-            ? t('Gallery filtered count').replace('{count}', String(shown)).replace('{total}', String(total))
-            : count(total));
-        this.countEl?.toggleClass('oss-gallery-is-hidden', selected > 0);
+        this.countEl?.setText(textFilter
+            ? t('Gallery filtered count')
+                .replace('{count}', formatCount(this.state.visibleImages.length))
+                .replace('{total}', formatCount(this.state.remoteObjects.length))
+            : '');
+        this.countEl?.toggleClass('oss-gallery-is-hidden', !textFilter || selected > 0);
 
         this.selectionEl?.toggleClass('oss-gallery-is-hidden', selected === 0);
         this.selectionCountEl?.setText(t('Selected count').replace('{count}', String(selected)));
@@ -653,8 +672,17 @@ export class OssGalleryView extends ItemView {
         await this.renderObjects(objects);
     }
 
-    private async renderObjects(objects: OssImage[], scores?: Map<string, number>): Promise<void> {
+    /**
+     * Replace the grid. `semantic` (semantic / similar results only): the
+     * scores for the tile badges and the hits held back for "Show more".
+     */
+    private async renderObjects(
+        objects: OssImage[],
+        semantic?: { scores: Map<string, number>; rest: { object: OssImage; score: number }[] }
+    ): Promise<void> {
         this.state.visibleImages = objects;
+        this.semanticScores = semantic?.scores ?? null;
+        this.semanticRest = semantic?.rest ?? [];
         // Keys no longer shown leave the selection (the grid keeps the rest).
         this.selection = retainKeys(this.selection, objects.map((o) => o.key));
         this.clearStatusMessages();
@@ -665,7 +693,47 @@ export class OssGalleryView extends ItemView {
             return;
         }
         const grid = this.createImageGrid();
-        await grid?.renderImages(objects, undefined, scores);
+        // Right after the grid container (outside the listbox), before tiles load.
+        this.renderShowMore();
+        await grid?.renderImages(objects, undefined, semantic?.scores);
+    }
+
+    /** "Show more (N less similar)" under a semantic result; removed when nothing is held back. */
+    private renderShowMore(): void {
+        const rest = this.semanticRest.length;
+        if (rest === 0 || !this.bodyEl || !this.imageGrid) {
+            this.showMoreEl?.remove();
+            this.showMoreEl = null;
+            this.showMoreBtn = null;
+            return;
+        }
+        if (!this.showMoreEl || !this.showMoreBtn) {
+            this.showMoreEl = this.bodyEl.createDiv({ cls: 'oss-gallery-show-more' });
+            this.showMoreBtn = this.showMoreEl.createEl('button', { attr: { type: 'button' } });
+            this.showMoreBtn.addEventListener('click', () => void this.showMoreResults());
+        }
+        this.showMoreBtn.setText(t('Show more less similar').replace('{count}', formatCount(rest)));
+    }
+
+    /** Reveal the next page of a semantic result, keeping the similarity order. */
+    private async showMoreResults(): Promise<void> {
+        const grid = this.imageGrid;
+        if (!grid || this.semanticRest.length === 0) return;
+        const shown = this.state.visibleImages.length;
+        const target = revealMore(shown, shown + this.semanticRest.length);
+        const next = this.semanticRest.slice(0, target - shown);
+        this.semanticRest = this.semanticRest.slice(next.length);
+        this.semanticRevealed = target;
+        const objects = next.map((h) => h.object);
+        this.state.visibleImages = [...this.state.visibleImages, ...objects];
+        // Keyboard users continue at the first new tile (the button may go away).
+        const hadFocus = !!this.showMoreEl?.contains(document.activeElement);
+        this.renderShowMore();
+        await grid.appendImages(objects, this.semanticScores ?? undefined);
+        const first = objects[0];
+        if (hadFocus && first && this.imageGrid === grid) {
+            grid.focusKey(first.key, false);
+        }
     }
 
     /**
@@ -689,13 +757,17 @@ export class OssGalleryView extends ItemView {
                 .map((h) => ({ key: h.object.key, score: h.score }));
         }
         const hits = intersectHits(this.state.remoteObjects, result.hits);
+        // Best matches first; what the user already revealed stays revealed
+        // (re-listings render the result again).
+        const best = bestMatchCount(hits.map((h) => h.score));
+        const shown = Math.min(hits.length, Math.max(best, this.semanticRevealed ?? 0));
         this.semanticBar?.setResult(result.kind === 'semantic'
-            ? { kind: 'semantic', query: result.query, count: hits.length }
-            : { kind: 'similar', name: fileNameOf(result.key), count: hits.length });
-        await this.renderObjects(
-            hits.map((h) => h.object),
-            new Map(hits.map((h) => [h.object.key, h.score]))
-        );
+            ? { kind: 'semantic', query: result.query, count: best }
+            : { kind: 'similar', name: fileNameOf(result.key), count: best });
+        await this.renderObjects(hits.slice(0, shown).map((h) => h.object), {
+            scores: new Map(hits.map((h) => [h.object.key, h.score])),
+            rest: hits.slice(shown),
+        });
     }
 
     /** Semantic mode, Enter: rank the listed images by the query (query worker). */
@@ -710,6 +782,11 @@ export class OssGalleryView extends ItemView {
         try {
             const hits = await hooks.searchText(this.provider.name, this.listPrefix, query, listed);
             if (token !== this.semanticToken) return;
+            const previous = this.state.semanticResult;
+            if (previous?.kind !== 'semantic' || previous.query !== query) {
+                // A new query starts again at its best matches.
+                this.semanticRevealed = null;
+            }
             this.state.isSearching = true;
             this.state.savedSearchTerm = query;
             this.state.semanticResult = {
@@ -750,6 +827,7 @@ export class OssGalleryView extends ItemView {
         this.searchComponent?.clear();
         this.state.isSearching = true;
         this.state.savedSearchTerm = '';
+        this.semanticRevealed = null;
         this.state.semanticResult = { kind: 'similar', key, hits: [] };
         await this.renderSemanticResult();
         this.container?.scrollTo({ top: 0 });
@@ -761,6 +839,7 @@ export class OssGalleryView extends ItemView {
         this.semanticToken++;
         this.semanticPending = false;
         this.semanticRankedKeys = new Set();
+        this.semanticRevealed = null;
         if (this.state.semanticResult) {
             this.state.semanticResult = null;
             this.state.isSearching = false;
@@ -989,6 +1068,9 @@ export class OssGalleryView extends ItemView {
     private cleanupImageGrid(): void {
         const existingContainer = this.container?.querySelector('.oss-gallery-container');
         existingContainer?.remove();
+        this.showMoreEl?.remove();
+        this.showMoreEl = null;
+        this.showMoreBtn = null;
 
         if (this.imageGrid) {
             this.imageGrid.destroy();
@@ -1201,6 +1283,7 @@ export class OssGalleryView extends ItemView {
         const nextKey = nextFocusAfterRemoval(before, removed);
         this.state.remoteObjects = this.state.remoteObjects.filter(obj => !removed.has(obj.key));
         this.state.visibleImages = this.state.visibleImages.filter(obj => !removed.has(obj.key));
+        this.semanticRest = this.semanticRest.filter((h) => !removed.has(h.object.key));
         this.selection = retainKeys(this.selection, this.state.visibleImages.map((o) => o.key));
 
         const modal = this.previewModal;
@@ -1214,12 +1297,18 @@ export class OssGalleryView extends ItemView {
             }
         }
 
+        if (this.state.visibleImages.length === 0 && this.semanticRest.length > 0) {
+            // Every shown result was deleted: show the next best ones.
+            void this.renderSemanticResult();
+            return;
+        }
         if (this.state.visibleImages.length === 0) {
             this.cleanupImageGrid();
             this.clearStatusMessages();
             this.renderEmptyState();
         } else {
             this.imageGrid?.removeItems([...removed], !this.previewModal);
+            this.renderShowMore();
         }
         this.updateMeta();
     }
@@ -1328,6 +1417,8 @@ export class OssGalleryView extends ItemView {
 
         this.backToTopBtn = null;
         this.metaRow = null;
+        this.showMoreEl = null;
+        this.showMoreBtn = null;
         this.bodyEl = null;
 
         this.previewModal?.close();

@@ -21,14 +21,14 @@ import type { IOssProvider, ListResult, OssImage } from "../types/oss";
 import type { PluginSettings } from "../types/settings";
 import type { ThumbnailWriter } from "../thumbnails/ThumbnailCache";
 import { IndexScope, makeIndexScope } from "./fingerprint";
-import { clearVaultIndex, ClearResult, vaultIdFor } from "./indexFiles";
+import { clearVaultIndex, ClearResult, vaultIdFor, vaultIndexSize } from "./indexFiles";
 import { resolveIndexDir, ResolvedModelDir } from "./modelDir";
-import { formatBytes, formatPercent } from "./format";
+import { formatBytes, formatMegabytes, formatPercent } from "./format";
 import { AbortSignalLike, fetchRemoteImageBytes, FailureDescriber, TooLargeDescriber } from "../services/remoteBytes";
 import type { SemanticController } from "./SemanticController";
 import { IndexProgress, IndexStats, RunSummary, SemanticIndexService } from "./SemanticIndexService";
 import { SemanticHit, SemanticSearchService } from "./SemanticSearchService";
-import { formatCount, formatIndexSummary } from "./statusText";
+import { formatCount, formatIndexSize, formatIndexSummary } from "./statusText";
 import { rasterizeSvg } from "./svgRasterizer";
 import { openPluginSettings } from "../utils/openPluginSettings";
 
@@ -423,6 +423,7 @@ export class SemanticIndexing {
 				new SemanticIndexDetailsModal(this.host.app, {
 					providerLabel: providerRegistry.getLabel(providerName, this.host.app),
 					getStats: () => (this.index.hasIndex(scope) ? this.index.getStats(scope) : null),
+					sizeText: () => this.indexSizeText(scope.id),
 					summary: (stats) => this.summaryText(stats),
 					onReveal,
 					onRetryFailed: this.index.isRunning()
@@ -640,6 +641,29 @@ export class SemanticIndexing {
 		}
 		const indexed = this.index.hasIndex(scope) ? this.index.getStats(scope).indexed : 0;
 		return { indexed, listed: this.index.getRemote(scope), local: scope.local };
+	}
+
+	/**
+	 * On-disk size of this vault's index files ("5.19 MB on disk; 7.40 MB
+	 * for this vault"): the files "Clear index" would delete, for the scope
+	 * `scopeId` and for all scopes of the vault. '' when there are none or
+	 * the index directory can't be read.
+	 */
+	indexSizeText(scopeId: string | null): string {
+		const dir = this.getIndexDir();
+		if (!dir.ok) {
+			return "";
+		}
+		try {
+			return formatIndexSize(vaultIndexSize(dir.dir, this.vaultId), scopeId, {
+				single: t("Index size single"),
+				split: t("Index size split"),
+				othersOnly: t("Index size others only"),
+			}, formatMegabytes);
+		} catch (error) {
+			console.warn("Semantic index size could not be read:", error);
+			return "";
+		}
 	}
 
 	/** Ask, then delete this vault's index files under the index directory. */

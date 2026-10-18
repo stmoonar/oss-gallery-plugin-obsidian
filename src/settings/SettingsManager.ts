@@ -7,6 +7,7 @@ import { providerSecrets } from '../providers/requiredFields';
 import { SemanticController } from '../semantic/SemanticController';
 import { SemanticSettingsSection } from './SemanticSettingsSection';
 import { ThumbnailSettingsSection } from './ThumbnailSettingsSection';
+import { addInputHint, createSettingsGroup, createSettingsSection, markChildSetting } from './settingGroups';
 import {
     formatMissingSummary,
     providerOptionLabel,
@@ -66,21 +67,21 @@ export class SettingsManager extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+        containerEl.addClass('oss-gallery-settings-tab');
         this.connectionToken++;
         this.requiredRows.clear();
         this.providerStatusEl = null;
 
-        this.renderProviderSelect(containerEl);
+        // First group without a heading (Obsidian's convention): the provider choice.
+        this.renderProviderSelect(createSettingsGroup(containerEl.createDiv({ cls: 'oss-gallery-settings-section' })));
 
-        // Active Provider Settings
+        // Active provider: its fields, then the connection test (with the
+        // "Missing: ..." line) as the last row of the same group.
         const activeProvider = this.providerManager.getActiveProvider();
         const registryEntry = providerRegistry.get(this.plugin.settings.activeProvider, this.app);
         if (activeProvider && registryEntry) {
-            new Setting(containerEl)
-                .setName(registryEntry.label)
-                .setHeading();
-
-            const providerEl = containerEl.createDiv({ cls: 'oss-gallery-provider-settings' });
+            const providerEl = createSettingsSection(containerEl, { heading: registryEntry.label });
+            providerEl.addClass('oss-gallery-provider-settings');
             activeProvider.renderSettings(
                 providerEl,
                 this.plugin.settings,
@@ -90,8 +91,7 @@ export class SettingsManager extends PluginSettingTab {
                 }
             );
             this.markRequiredFields(providerEl, registryEntry);
-            this.providerStatusEl = containerEl.createDiv({ cls: 'oss-gallery-provider-status' });
-            this.renderConnectionTest(containerEl, registryEntry);
+            this.renderConnectionTest(providerEl, registryEntry);
             this.refreshProviderStatus();
         }
 
@@ -203,20 +203,15 @@ export class SettingsManager extends PluginSettingTab {
         for (const [field, row] of this.requiredRows) {
             row.toggleClass('is-missing', missingFields.has(field));
         }
+        // Only a problem is worth a line; the "Required" markers show the rest.
         const el = this.providerStatusEl;
         if (el) {
-            el.empty();
-            if (missing.length > 0) {
-                el.addClass('is-missing');
-                el.setText(formatMissingSummary(
-                    missing.map((spec) => t(spec.label)),
-                    t('Missing required fields'),
-                    t('List separator')
-                ));
-            } else {
-                el.removeClass('is-missing');
-                el.setText(t('Required fields complete'));
-            }
+            el.setText(formatMissingSummary(
+                missing.map((spec) => t(spec.label)),
+                t('Missing required fields'),
+                t('List separator')
+            ));
+            el.toggle(missing.length > 0);
         }
         const option = Array.from(this.providerDropdown?.selectEl.options ?? []).find((o) => o.value === id);
         if (option) {
@@ -232,11 +227,13 @@ export class SettingsManager extends PluginSettingTab {
     private renderConnectionTest(containerEl: HTMLElement, entry: ProviderRegistryEntry): void {
         const provider = this.providerManager.getActiveProvider();
         const setting = new Setting(containerEl).setName(t('Test connection'));
-        if (!entry.capabilities.list || !provider?.testConnection) {
-            setting.setDesc(t('Test connection upload only'));
+        const canTest = entry.capabilities.list && !!provider?.testConnection;
+        setting.setDesc(t(canTest ? 'Test connection description' : 'Test connection upload only'));
+        this.providerStatusEl = setting.descEl.createDiv({ cls: 'oss-gallery-provider-status is-missing' });
+        this.providerStatusEl.hide();
+        if (!canTest) {
             return;
         }
-        setting.setDesc(t('Test connection description'));
         const resultEl = setting.descEl.createDiv({ cls: 'oss-gallery-connection-result' });
         resultEl.hide();
         setting.addButton((btn) => btn
@@ -300,10 +297,8 @@ export class SettingsManager extends PluginSettingTab {
     /**
      * Create object rules settings
      */
-    private createObjectRulesSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl)
-            .setName(t('Object rules'))
-            .setHeading();
+    private createObjectRulesSettings(parentEl: HTMLElement): void {
+        const containerEl = createSettingsSection(parentEl, { heading: t('Object rules') });
 
         new Setting(containerEl)
             .setName(t('Base path'))
@@ -350,11 +345,11 @@ export class SettingsManager extends PluginSettingTab {
      * What gets inserted into the note after an upload (EmbedRenderer):
      * an embed / player / viewer, or a plain link.
      */
-    private createLinkSettings(containerEl: HTMLElement): void {
-        new Setting(containerEl)
-            .setName(t('Inserted links'))
-            .setDesc(t('Inserted links description'))
-            .setHeading();
+    private createLinkSettings(parentEl: HTMLElement): void {
+        const containerEl = createSettingsSection(parentEl, {
+            heading: t('Inserted links'),
+            intro: t('Inserted links description'),
+        });
 
         // Embed format (only used while images are embedded)
         let embedFormatSetting: Setting | null = null;
@@ -371,17 +366,19 @@ export class SettingsManager extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        embedFormatSetting = new Setting(containerEl)
+        embedFormatSetting = markChildSetting(new Setting(containerEl)
             .setName(t('Embed format'))
             .setDesc(t('Embed format description'))
-            .addText(text => text
-                .setPlaceholder('![]($URL)')
-                .setValue(this.plugin.settings.embedFormat || '![]($URL)')
-                .onChange(async value => {
-                    this.plugin.settings.embedFormat = value || '![]($URL)';
-                    await this.plugin.saveSettings();
-                }));
-        embedFormatSetting.settingEl.addClass('oss-gallery-setting-indented');
+            .addText(text => {
+                addInputHint(text.inputEl, t('Embed format hint'));
+                return text
+                    .setPlaceholder('![]($URL)')
+                    .setValue(this.plugin.settings.embedFormat || '![]($URL)')
+                    .onChange(async value => {
+                        this.plugin.settings.embedFormat = value || '![]($URL)';
+                        await this.plugin.saveSettings();
+                    });
+            }));
         embedFormatSetting.settingEl.toggle(this.plugin.settings.imgPreview);
 
         // Video preview

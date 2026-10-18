@@ -65,6 +65,10 @@ export class ImageGrid {
 	private renderToken = 0;
 	/** Batched rendering still in progress (reveal waits for it). */
 	private rendering = false;
+	/** Batch runs of the current render still going (initial render + "show more"). */
+	private pendingBatches = 0;
+	/** Tail of the batch runs: appended tiles render after the earlier ones. */
+	private renderQueue: Promise<void> = Promise.resolve();
 	/** Tiles by object key, in render order. */
 	private readonly items = new Map<string, Tile>();
 	private readonly tileByImg = new Map<HTMLImageElement, Tile>();
@@ -107,11 +111,35 @@ export class ImageGrid {
 	async renderImages(objects: OssImage[], batchSize = 10, scores?: Map<string, number>): Promise<void> {
 		this.cleanup();
 		const token = ++this.renderToken;
-		this.rendering = true;
 		this.order = objects.map((o) => o.key);
 		this.setSelectionState(retainKeys(this.selection, this.order), true);
 		this.activeKey = this.order[0] ?? null;
+		this.renderQueue = this.renderBatches(objects, batchSize, scores, token);
+		await this.renderQueue;
+	}
 
+	/**
+	 * Add tiles after the current ones ("Show more" of a semantic result),
+	 * keeping selection, focus and the tab stop. Keys already in the grid
+	 * are skipped; tiles appear after any batch still being rendered.
+	 */
+	async appendImages(objects: OssImage[], scores?: Map<string, number>, batchSize = 10): Promise<void> {
+		const token = this.renderToken;
+		const known = new Set(this.order);
+		const fresh = objects.filter((o) => !known.has(o.key));
+		if (fresh.length === 0) return;
+		this.order = [...this.order, ...fresh.map((o) => o.key)];
+		if (this.activeKey === null) this.activeKey = fresh[0]?.key ?? null;
+		const previous = this.renderQueue;
+		this.renderQueue = previous
+			.catch(() => undefined)
+			.then(() => this.renderBatches(fresh, batchSize, scores, token));
+		await this.renderQueue;
+	}
+
+	private async renderBatches(objects: OssImage[], batchSize: number, scores: Map<string, number> | undefined, token: number): Promise<void> {
+		this.pendingBatches++;
+		this.rendering = true;
 		try {
 			for (let i = 0; i < objects.length; i += batchSize) {
 				// 渲染期间发生了新一轮渲染或 destroy：停止向已失效的容器继续渲染
@@ -127,7 +155,8 @@ export class ImageGrid {
 			}
 		} finally {
 			if (token === this.renderToken) {
-				this.rendering = false;
+				this.pendingBatches--;
+				this.rendering = this.pendingBatches > 0;
 			}
 		}
 	}
@@ -596,6 +625,8 @@ export class ImageGrid {
 	private cleanup(): void {
 		this.renderToken++;
 		this.rendering = false;
+		this.pendingBatches = 0;
+		this.renderQueue = Promise.resolve();
 		this.items.clear();
 		this.tileByImg.clear();
 		this.container.empty();

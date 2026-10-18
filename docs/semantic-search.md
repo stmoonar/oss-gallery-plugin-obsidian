@@ -408,7 +408,7 @@ export class SemanticSearchService {
 - 文本：`"task: search result | query: " + q`；图片：无前缀。
 - 图片：`max_soft_tokens = imageTokenBudget`；批量一次一个样本一张图。
 - 输出：取前 256 维 → L2 归一化 → float32。查询向量同样处理，相似度 = 点积。
-- 结果按分数降序取 top-k（默认 k = 当前远程对象数，即对整库排序而非截断；UI 可分页）。
+- 结果按分数降序取 top-k（默认 k = 当前远程对象数，即对整库排序而非截断；UI 先显示最佳匹配，其余分页显示，见 §9.1）。
 
 ## 7. 删除同步协议
 
@@ -569,7 +569,7 @@ limits 下限 = 最大单个权重张量：`model_embed_tokens_weight_quant` [26
 - **语义开关**（✨ `sparkles` 图标，`aria-pressed`）放在输入框**外**、搜索按钮之前：输入框内右侧已有正则开关与原生清除按钮，二者由 Obsidian 的 `input-right-decorator` / `search-input-clear-button` 定位，再塞第三个按钮需要猜测 Obsidian 的内部偏移，容易重叠。
 - **始终显示**，不可用时为禁用外观（`aria-disabled="true"`，仍可聚焦，tooltip 说明原因，而不是用 `disabled`——禁用按钮收不到悬停，tooltip 不出现）。可用性由 `SemanticIndexing.availability(provider, prefix)` 给出：`checking`（启动检查中）、`not-installed`、`webgpu`、`disabled`（已安装但关闭）、`no-list`（provider 不可列表/不可建索引）、`no-index`（尚无索引）；可用且该 scope 正在索引时 tooltip 为"索引进行中，结果可能不完整"。
 - 语义与正则互斥：打开语义自动关闭正则；语义模式下正则开关禁用。可用性丢失（清除索引、关闭功能）时自动退出语义模式并回到全部图片。
-- 语义模式下 placeholder 变为"例如：沙发上的猫"，输入框边框带强调色。Enter / 搜索按钮 → `SemanticSearchService.searchByTextScored`（query worker），结果替换网格，按分数降序，每张图左下角一个淡色小分数（两位小数）。结果区显示"语义：“查询” · N 张，最相关的在前 ×"。
+- 语义模式下 placeholder 变为"例如：沙发上的猫"，输入框边框带强调色。Enter / 搜索按钮 → `SemanticSearchService.searchByTextScored`（query worker），结果替换网格，按分数降序，每张图左下角一个淡色小分数（两位小数）。结果区显示"语义：“查询” · 最佳匹配：N 张 ×"：网格先只显示最佳匹配（`bestMatchCount`，`src/components/semanticCutoff.ts`：中位数作背景，保留"最高分 − 0.5 ×（最高分 − 中位数）"以上的结果，限定 12–60 张，区间内有明显断层时在最大断层处截断；只看分布形状，不设绝对阈值，符合 D9），网格末尾"显示更多（还有 N 张相似度较低）"按相似度顺序每次追加 60 张（`ImageGrid.appendImages`，保留选择与键盘焦点）。"找相似"同理。
 - 首次查询（query worker 冷启动约 1.5 s）时结果区显示"正在加载搜索模型…"（`SemanticSearchService.isWarm()` 为 false），否则"正在搜索…"；较新的请求使旧请求的结果作废（`semanticToken`）。
 - 清除按钮、有内容时 Esc、或结果区 × → 回到全部图片；空输入框时 Esc 也退出语义/相似结果（`onEscapeEmpty`）。
 - 模式按视图会话记住（`GalleryState.useSemanticSearch`，不持久化）；结果缓存在 `GalleryState.semanticResult`（§7.6）。

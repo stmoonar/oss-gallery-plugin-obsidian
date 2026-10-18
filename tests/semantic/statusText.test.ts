@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { formatMegabytes } from "../../src/semantic/format";
 import {
 	fileNameOf,
 	formatCount,
+	formatIndexSize,
 	formatIndexSummary,
 	formatProgressCount,
 	progressPercent,
@@ -53,5 +55,31 @@ describe("index status texts (§9.2)", () => {
 		expect(fileNameOf("2025/10/cat.png")).toBe("cat.png");
 		expect(fileNameOf("cat.png")).toBe("cat.png");
 		expect(fileNameOf("dir/")).toBe("dir");
+	});
+});
+
+describe("formatIndexSize", () => {
+	const tpl = {
+		single: "{size} on disk",
+		split: "{scope} on disk; {vault} for this vault",
+		othersOnly: "{vault} on disk for other providers",
+	};
+
+	it("shows only the scope when it is the whole vault", () => {
+		expect(formatIndexSize({ total: 5_190_000, byScope: { a: 5_190_000 } }, "a", tpl, formatMegabytes))
+			.toBe("5.19 MB on disk");
+	});
+
+	it("adds the vault total when other scopes have indexes", () => {
+		expect(formatIndexSize({ total: 12_000_000, byScope: { a: 2_000_000, b: 10_000_000 } }, "a", tpl, formatMegabytes))
+			.toBe("2.00 MB on disk; 12.0 MB for this vault");
+	});
+
+	it("reports other scopes when the current one has no index, nothing when the vault has none", () => {
+		expect(formatIndexSize({ total: 300_000, byScope: { b: 300_000 } }, "a", tpl, formatMegabytes))
+			.toBe("300.0 KB on disk for other providers");
+		expect(formatIndexSize({ total: 300_000, byScope: { b: 300_000 } }, null, tpl, formatMegabytes))
+			.toBe("300.0 KB on disk for other providers");
+		expect(formatIndexSize({ total: 0, byScope: {} }, "a", tpl, formatMegabytes)).toBe("");
 	});
 });
