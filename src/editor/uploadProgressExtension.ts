@@ -11,6 +11,7 @@ import {
 import {
 	createUploadProgressCard,
 	getUploadProgressCardId,
+	UploadCardActionHandler,
 	updateUploadProgressCard,
 } from "../components/UploadProgressCard";
 import { findUploadPlaceholders } from "../services/uploadPlaceholder";
@@ -20,7 +21,10 @@ import { UploadEntry, UploadProgressStore } from "../services/UploadProgressStor
 const uploadProgressChanged = StateEffect.define<null>();
 
 class UploadProgressWidget extends WidgetType {
-	constructor(private readonly entry: UploadEntry) {
+	constructor(
+		private readonly entry: UploadEntry,
+		private readonly onAction: UploadCardActionHandler
+	) {
 		super();
 	}
 
@@ -28,18 +32,25 @@ class UploadProgressWidget extends WidgetType {
 		return (
 			other.entry.id === this.entry.id &&
 			other.entry.percent === this.entry.percent &&
-			other.entry.status === this.entry.status
+			other.entry.status === this.entry.status &&
+			other.entry.error === this.entry.error &&
+			other.entry.busy === this.entry.busy
 		);
 	}
 
 	toDOM(): HTMLElement {
-		return createUploadProgressCard(this.entry);
+		return createUploadProgressCard(this.entry, this.onAction);
+	}
+
+	/** Card buttons handle their own clicks; the editor must not. */
+	ignoreEvent(): boolean {
+		return true;
 	}
 
 	/** Reuse the existing DOM so the progress bar width transitions smoothly. */
 	updateDOM(dom: HTMLElement): boolean {
 		if (getUploadProgressCardId(dom) !== this.entry.id) return false;
-		updateUploadProgressCard(dom, this.entry);
+		updateUploadProgressCard(dom, this.entry, this.onAction);
 		return true;
 	}
 }
@@ -50,6 +61,7 @@ class UploadProgressWidget extends WidgetType {
  * (e.g. stale ones left over from a previous session) stay plain text.
  */
 function buildDecorations(view: EditorView, store: UploadProgressStore): DecorationSet {
+	const onAction: UploadCardActionHandler = (id, action) => store.requestAction(id, action);
 	const builder = new RangeSetBuilder<Decoration>();
 	const { doc } = view.state;
 	let scannedTo = -1;
@@ -68,7 +80,7 @@ function buildDecorations(view: EditorView, store: UploadProgressStore): Decorat
 			builder.add(
 				match.from,
 				match.to,
-				Decoration.replace({ widget: new UploadProgressWidget(entry) })
+				Decoration.replace({ widget: new UploadProgressWidget(entry, onAction) })
 			);
 		}
 	}

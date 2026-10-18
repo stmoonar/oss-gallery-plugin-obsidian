@@ -1,11 +1,11 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { SmMsSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
 import { simulateProgress } from './shared/progress';
 import { isImageFile } from './shared/image';
-import { warnListingCapped } from './shared/listing';
+import { ListingCollector } from './shared/listing';
 import { getArray, getBoolean, getNumber, getNumberLike, getRecord, getString } from '../utils/typeGuards';
 
 const SEE_API_BASE_URL = 'https://s.ee/api/v1';
@@ -114,20 +114,24 @@ export class SmMsProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    /**
+     * S.EE has no folders: the whole upload history is listed and the
+     * prefix is ignored, so the listing covers every key ('').
+     */
+    async listImages(prefix?: string): Promise<ListResult> {
         if (!this.settings.token) {
-            return [];
+            return { items: [], complete: false, prefix: '' };
         }
 
         try {
-            const images: OssImage[] = [];
+            const images = new ListingCollector(this.name, '');
             const seenPages = new Set<string>();
             let page = 1;
 
             while (true) {
                 if (page > SEE_MAX_PAGES) {
-                    warnListingCapped(this.name, SEE_MAX_PAGES);
-                    return images;
+                    images.capped(SEE_MAX_PAGES);
+                    return images.result();
                 }
 
                 const response = await requestUrl({
@@ -160,7 +164,10 @@ export class SmMsProvider implements IOssProvider {
                         ?? '';
                 }).join('\n');
                 if (items.length > 0 && seenPages.has(pageFingerprint)) {
-                    return images;
+                    // The API repeated a page: it ignores paging, so the
+                    // rest of the history is unknown.
+                    images.markIncomplete();
+                    return images.result();
                 }
                 seenPages.add(pageFingerprint);
 
@@ -186,13 +193,36 @@ export class SmMsProvider implements IOssProvider {
                     ? page >= totalPages
                     : items.length < SEE_HISTORY_PAGE_SIZE;
                 if (items.length === 0 || isLastPage) {
-                    return images;
+                    return images.result();
                 }
                 page++;
             }
         } catch (e) {
             console.error('Failed to list SM.MS images', e);
             throw new Error(`List failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    /** One page of the upload history (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.token) {
+            throw new Error(t('Please configure OSS settings first'));
+        }
+        const response = await requestUrl({
+            url: `${SEE_API_BASE_URL}/files?page=1`,
+            method: 'GET',
+            headers: {
+                'Authorization': this.settings.token,
+                'Accept': 'application/json'
+            },
+            throw: false
+        });
+        const data = parseJsonResponse(response.text);
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(getString(data?.message) || `Request failed with status ${response.status}`);
+        }
+        if (!data || getBoolean(data.success) !== true) {
+            throw new Error(getString(data?.message) || 'S.EE returned an invalid JSON response');
         }
     }
 
@@ -225,12 +255,12 @@ export class SmMsProvider implements IOssProvider {
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
-            .setName(t('Token'))
+            .setName(t('S.EE API key'))
             .setDesc(t('SM.MS Secret Token'))
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder(t('Enter your token'))
+                .setPlaceholder(t('Enter your S.EE API key'))
                 .setValue(settings.providers.smms.token)
                 .onChange(async (value) => {
                     settings.providers.smms.token = value;

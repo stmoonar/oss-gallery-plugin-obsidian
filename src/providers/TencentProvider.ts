@@ -1,12 +1,11 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { TencentSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { simulateProgress } from './shared/progress';
 import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
-import { MAX_LIST_PAGES, warnListingCapped } from './shared/listing';
-import { parseS3ListObjectsPage } from './shared/s3xml';
-import { isImageFile } from './shared/image';
+import { collectPages, ListingCollector, MAX_LIST_PAGES } from './shared/listing';
+import { parseS3ListObjectsPage, s3EntriesToImages } from './shared/s3xml';
 import { createTencentCosAuthorization } from './shared/tencentcos';
 
 export class TencentProvider implements IOssProvider {
@@ -105,69 +104,74 @@ export class TencentProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         // Tencent COS ListObjects API
+        const listPrefix = buildListPrefix(this.settings.path, prefix);
         if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
-            return [];
+            return { items: [], complete: false, prefix: listPrefix };
         }
 
         try {
-            const host = this.getHost();
-            const images: OssImage[] = [];
-            const listPrefix = buildListPrefix(this.settings.path, prefix);
-            let marker = '';
+            const collector = new ListingCollector(this.name, listPrefix);
 
-            for (let pages = 0; ; pages++) {
-                if (pages >= MAX_LIST_PAGES) {
-                    warnListingCapped(this.name, MAX_LIST_PAGES);
-                    return images;
-                }
-
-                const query: Record<string, string> = { 'max-keys': '1000' };
-                if (listPrefix) {
-                    query.prefix = listPrefix;
-                }
-                if (marker) {
-                    query.marker = marker;
-                }
-
-                const authorization = this.generateAuthorization('GET', '/', query, { host });
-                const queryString = new URLSearchParams(query).toString();
-                const response = await requestUrl({
-                    url: `https://${host}/?${queryString}`,
-                    method: 'GET',
-                    headers: {
-                        'Authorization': authorization,
-                    },
-                });
-
-                if (response.status !== 200) {
-                    throw new Error(`List failed with status: ${response.status}`);
-                }
-
-                const page = parseS3ListObjectsPage(response.text);
-                images.push(
-                    ...page.objects
-                        .filter((item) => isImageFile(item.key))
-                        .map((item) => ({
-                            key: item.key,
-                            url: this.buildPublicUrl(item.key),
-                            lastModified: item.lastModified,
-                            size: item.size,
-                        }))
-                );
-
+            return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
+                const page = await this.fetchListPage(listPrefix, marker, 1000);
+                // V1 ListObjects: NextMarker is only sent with a delimiter;
+                // otherwise continue after the last key of the page.
                 const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
-                if (!page.isTruncated || !nextMarker || nextMarker === marker) {
-                    return images;
-                }
-
-                marker = nextMarker;
-            }
+                return {
+                    items: s3EntriesToImages(page.objects, (key) => this.buildPublicUrl(key)),
+                    more: page.isTruncated,
+                    next: nextMarker,
+                };
+            });
         } catch (error) {
             console.error('Failed to list Tencent COS images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    /** One signed ListObjects request with at most one key (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
+            throw new Error(t('Please configure Tencent COS settings first'));
+        }
+        try {
+            await this.fetchListPage(buildListPrefix(this.settings.path, undefined), '', 1);
+        } catch (error) {
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async fetchListPage(listPrefix: string, marker: string, maxKeys: number) {
+        const host = this.getHost();
+        const query: Record<string, string> = { 'max-keys': String(maxKeys) };
+        if (listPrefix) {
+            query.prefix = listPrefix;
+        }
+        if (marker) {
+            query.marker = marker;
+        }
+
+        const authorization = this.generateAuthorization('GET', '/', query, { host });
+        const queryString = new URLSearchParams(query).toString();
+        const response = await requestUrl({
+            url: `https://${host}/?${queryString}`,
+            method: 'GET',
+            headers: {
+                'Authorization': authorization,
+            },
+        });
+
+        if (response.status !== 200) {
+            throw new Error(`List failed with status: ${response.status}`);
+        }
+
+        return parseS3ListObjectsPage(response.text);
+    }
+
+    listingKeyForUpload(path: string): string {
+        return buildObjectKey(this.settings.path, path);
     }
 
     async deleteImage(key: string): Promise<void> {

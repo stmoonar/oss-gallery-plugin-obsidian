@@ -1,15 +1,25 @@
 import { providerRegistry } from "../providers/registry";
+import { normalizeMirrorUrl } from "../semantic/mirrors";
 import {
+	DEFAULT_SEMANTIC_SETTINGS,
 	DEFAULT_SETTINGS,
+	DEFAULT_THUMBNAIL_SETTINGS,
+	IMAGE_TOKEN_BUDGETS,
+	ImageTokenBudget,
 	NameRule,
 	PathRule,
 	PluginSettings,
 	ProviderName,
 	ProviderSettingsMap,
+	SemanticSettings,
+	THUMBNAIL_CACHE_MAX_MB,
+	THUMBNAIL_CACHE_MIN_MB,
+	ThumbnailSettings,
 } from "../types/settings";
 import {
 	getBoolean,
 	getNumber,
+	getNumberLike,
 	getRecord,
 	getString,
 	mergeWithDefaults,
@@ -64,10 +74,73 @@ function isPathRule(value: unknown): value is PathRule {
 	);
 }
 
+function isImageTokenBudget(value: unknown): value is ImageTokenBudget {
+	return IMAGE_TOKEN_BUDGETS.includes(value as ImageTokenBudget);
+}
+
+function loadMirror(value: unknown, fallback: string): string {
+	const raw = getString(value);
+	if (raw === undefined) {
+		return fallback;
+	}
+	const normalized = normalizeMirrorUrl(raw);
+	return normalized.ok ? normalized.value : fallback;
+}
+
+/**
+ * Normalize stored semantic search settings. Missing or malformed fields fall
+ * back to defaults (older data.json files have no `semantic` key at all).
+ */
+function loadSemanticSettings(storedValue: unknown): SemanticSettings {
+	const stored = getRecord(storedValue);
+	const defaults = DEFAULT_SEMANTIC_SETTINGS;
+	if (!stored) {
+		return { ...defaults };
+	}
+	const budget = getNumber(stored.imageTokenBudget);
+	return {
+		enabled: getBoolean(stored.enabled) ?? defaults.enabled,
+		modelDir: getString(stored.modelDir)?.trim() ?? defaults.modelDir,
+		indexDir: getString(stored.indexDir)?.trim() ?? defaults.indexDir,
+		imageTokenBudget: isImageTokenBudget(budget)
+			? budget
+			: defaults.imageTokenBudget,
+		autoIndex: getBoolean(stored.autoIndex) ?? defaults.autoIndex,
+		// Invalid mirror URLs (http, garbage) fall back to the official source.
+		hfEndpoint: loadMirror(stored.hfEndpoint, defaults.hfEndpoint),
+		githubMirror: loadMirror(stored.githubMirror, defaults.githubMirror),
+	};
+}
+
+/** A whole number of MB within the allowed range, or undefined. */
+export function parseThumbnailCacheMB(value: unknown): number | undefined {
+	const n = getNumberLike(value);
+	if (n === undefined) {
+		return undefined;
+	}
+	const mb = Math.round(n);
+	return mb >= THUMBNAIL_CACHE_MIN_MB && mb <= THUMBNAIL_CACHE_MAX_MB ? mb : undefined;
+}
+
+/** Normalize stored thumbnail settings (missing or malformed fields: defaults). */
+function loadThumbnailSettings(storedValue: unknown): ThumbnailSettings {
+	const stored = getRecord(storedValue);
+	const defaults = DEFAULT_THUMBNAIL_SETTINGS;
+	if (!stored) {
+		return { ...defaults };
+	}
+	return {
+		enabled: getBoolean(stored.enabled) ?? defaults.enabled,
+		maxSizeMB: parseThumbnailCacheMB(stored.maxSizeMB) ?? defaults.maxSizeMB,
+	};
+}
+
 function createDefaultSettings(): PluginSettings {
 	return {
 		...DEFAULT_SETTINGS,
 		providers: providerRegistry.buildDefaultProviderSettings(),
+		semantic: { ...DEFAULT_SEMANTIC_SETTINGS },
+		thumbnails: { ...DEFAULT_THUMBNAIL_SETTINGS },
 	};
 }
 
@@ -191,5 +264,7 @@ export function loadStoredSettings(storedValue: unknown): PluginSettings {
 			? stored.pathRule
 			: defaults.pathRule,
 		providers: mergeStoredProviders(stored.providers),
+		semantic: loadSemanticSettings(stored.semantic),
+		thumbnails: loadThumbnailSettings(stored.thumbnails),
 	};
 }

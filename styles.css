@@ -112,10 +112,18 @@ If your plugin does not need CSS, delete this file.
     backface-visibility: hidden;
 }
 
-.oss-gallery-item:hover {
-    transform: scale(1.03);
-    box-shadow: var(--shadow-s);
-    filter: brightness(1.05);
+/* Hover lift only with a real hover (touch screens would leave it stuck). */
+@media (hover: hover) and (pointer: fine) {
+    .oss-gallery-item:hover {
+        transform: scale(1.03);
+        box-shadow: var(--shadow-s);
+        filter: brightness(1.05);
+    }
+}
+
+.oss-gallery-item {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .oss-gallery-item img {
@@ -145,9 +153,57 @@ If your plugin does not need CSS, delete this file.
     transform: scale(1);
 }
 
-.oss-gallery-item img.oss-gallery-img-error {
-    opacity: 0.3;
-    filter: grayscale(100%) blur(1px);
+/* Tile placeholder: under the image until it loads (theme colors). */
+.oss-gallery-tile-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-2-2);
+    padding: var(--size-4-2);
+    background-color: var(--background-secondary);
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    text-align: center;
+    line-height: var(--line-height-tight);
+    pointer-events: none;
+}
+
+.oss-gallery-tile-placeholder-icon {
+    display: inline-flex;
+    --icon-size: var(--icon-l);
+}
+
+.oss-gallery-tile-placeholder-text,
+.oss-gallery-tile-placeholder-hint {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.oss-gallery-item img.oss-gallery-img-loaded + .oss-gallery-tile-placeholder {
+    display: none;
+}
+
+/* Failed: readable message (no fading or blur), click / Enter retries. */
+.oss-gallery-item.oss-gallery-is-failed .oss-gallery-tile-placeholder {
+    color: var(--text-muted);
+    background-color: var(--background-secondary-alt);
+}
+
+.oss-gallery-item.oss-gallery-is-failed .oss-gallery-tile-placeholder-icon {
+    color: var(--text-error);
+}
+
+.oss-gallery-tile-placeholder-hint {
+    color: var(--text-accent);
+}
+
+.oss-gallery-item img {
+    position: relative;
+    z-index: 1;
 }
 
 /* Gallery Item Buttons */
@@ -155,7 +211,10 @@ If your plugin does not need CSS, delete this file.
     position: absolute;
     top: var(--oss-gallery-spacing-xs);
     right: var(--oss-gallery-spacing-xs);
+    z-index: 2;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: var(--oss-gallery-spacing-xs);
     opacity: 0;
     transition: opacity var(--oss-gallery-transition-duration) ease;
@@ -193,8 +252,13 @@ If your plugin does not need CSS, delete this file.
     outline: none;
 }
 
+/* Fixed colors: themes whose accent is near-white made the hover invisible. */
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-copy-btn {
+    color: var(--color-blue);
+}
+
 .oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-copy-btn:hover {
-    background: var(--oss-gallery-primary);
+    background: var(--color-blue);
     color: var(--text-on-accent);
 }
 
@@ -224,111 +288,6 @@ If your plugin does not need CSS, delete this file.
     }
 }
 
-/* Image Preview Modal - 优化动画 */
-.oss-gallery-image-preview-container {
-    /* The lightbox has its own dark/light switch, independent of the app theme */
-    --oss-gallery-lightbox-bg: color-mix(in srgb, black 90%, transparent);
-    --oss-gallery-lightbox-fg: white;
-    --oss-gallery-lightbox-scrim: color-mix(in srgb, black 50%, transparent);
-    position: fixed;
-    inset: 0;
-    background: var(--oss-gallery-lightbox-bg);
-    color: var(--oss-gallery-lightbox-fg);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.15s ease-out, visibility 0.15s ease-out;
-    z-index: 1001;
-    /* 启用硬件加速 */
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    /* 移除边框 */
-    border: none;
-    box-shadow: none;
-}
-
-.oss-gallery-image-preview-container.oss-gallery-show {
-    opacity: 1;
-    visibility: visible;
-}
-
-.oss-gallery-image-preview {
-    width: auto;
-    height: auto;
-    max-width: 95vw;
-    max-height: 95vh;
-    object-fit: contain;
-    transform: scale(0.85) translateZ(0);
-    transition: transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    border-radius: var(--oss-gallery-border-radius);
-    box-shadow: none;
-    backface-visibility: hidden;
-    will-change: transform;
-    opacity: 1;
-}
-
-.oss-gallery-image-preview-container.oss-gallery-show .oss-gallery-image-preview {
-    transform: scale(1) translateZ(0);
-    box-shadow: var(--oss-gallery-shadow-lg);
-    transition-delay: 0.05s;
-}
-
-/* Preview Control Bar */
-.oss-gallery-preview-control-bar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    /* 稍微增加高度 */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 60px;
-    /* 增加左右 padding，避开右侧按钮 */
-    pointer-events: none;
-    z-index: 2000;
-    /* 提高层级 */
-}
-
-/* Background Toggle Button */
-.oss-gallery-preview-toggle-bg-btn {
-    position: absolute;
-    top: 12px;
-    right: 15px;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--oss-gallery-lightbox-scrim);
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--oss-gallery-lightbox-fg);
-    pointer-events: auto;
-    transition: all 0.2s ease;
-    z-index: 2002;
-    /* 最高层级 */
-}
-
-.oss-gallery-preview-toggle-bg-btn:hover {
-    background: color-mix(in srgb, var(--oss-gallery-lightbox-fg) 30%, var(--oss-gallery-lightbox-scrim));
-    transform: scale(1.1);
-    box-shadow: var(--shadow-s);
-}
-
-.oss-gallery-preview-toggle-bg-btn:active {
-    transform: scale(0.95);
-}
-
-.oss-gallery-preview-toggle-bg-btn svg {
-    width: 20px;
-    height: 20px;
-}
-
 /* Confirmation Modal */
 .oss-gallery-confirm-message {
     margin: 0 0 1em;
@@ -344,23 +303,6 @@ If your plugin does not need CSS, delete this file.
 
 .oss-gallery-confirm-modal .setting-item-control {
     gap: var(--oss-gallery-spacing-sm);
-}
-
-.oss-gallery-image-preview-modal-content {
-    padding: 0;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 1000;
-}
-
-.oss-gallery-image-preview-modal-shell {
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    padding: 0;
 }
 
 /* Search Toolbar */
@@ -441,96 +383,6 @@ If your plugin does not need CSS, delete this file.
     }
 }
 
-/* Back to Top Button */
-.oss-gallery-back-to-top {
-    position: fixed;
-    bottom: var(--oss-gallery-spacing-lg);
-    right: var(--oss-gallery-spacing-lg);
-    width: 48px;
-    height: 48px;
-    background: var(--oss-gallery-primary);
-    color: var(--oss-gallery-text-on-primary);
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    box-shadow: var(--oss-gallery-shadow);
-    opacity: 0;
-    visibility: hidden;
-    transition: all var(--oss-gallery-transition-duration) ease;
-    z-index: 1000;
-    pointer-events: none;
-}
-
-.oss-gallery-back-to-top.oss-gallery-visible {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: all;
-}
-
-.oss-gallery-back-to-top:hover {
-    background: var(--oss-gallery-primary-hover);
-    transform: translateY(-2px);
-    box-shadow: var(--oss-gallery-shadow-lg);
-}
-
-.oss-gallery-back-to-top:active {
-    transform: translateY(0);
-    transition: transform 0.1s ease;
-}
-
-/* Error State */
-.oss-gallery-error {
-    color: var(--text-error);
-    text-align: center;
-    padding: var(--oss-gallery-spacing-md);
-    margin: var(--oss-gallery-spacing-md) auto;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: var(--oss-gallery-spacing-sm);
-}
-
-/* Preview Modal Error */
-.oss-gallery-preview-error {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: var(--background-modifier-error);
-    color: var(--text-on-accent);
-    padding: 20px 30px;
-    border-radius: 8px;
-    font-size: 14px;
-    text-align: center;
-    max-width: 80%;
-    box-shadow: var(--shadow-l);
-    animation: oss-gallery-fade-in 0.3s ease;
-    z-index: 1005;
-}
-
-.oss-gallery-preview-error-icon {
-    font-size: 32px;
-    margin-bottom: 8px;
-}
-
-.oss-gallery-preview-error-message {
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-
-.oss-gallery-preview-error-url {
-    font-size: 12px;
-    opacity: 0.9;
-    word-break: break-all;
-    font-family: monospace;
-}
-
 .oss-gallery-imgur-note {
     margin-top: 20px;
     font-size: 0.9em;
@@ -544,109 +396,6 @@ If your plugin does not need CSS, delete this file.
 .oss-gallery-imgur-note ul {
     margin: 0;
     padding-left: 20px;
-}
-
-@keyframes oss-gallery-fade-in {
-    from {
-        opacity: 0;
-        transform: translate(-50%, -50%) scale(0.9);
-    }
-
-    to {
-        opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
-    }
-}
-
-/* Path Display */
-.oss-gallery-preview-path {
-    color: var(--oss-gallery-lightbox-fg);
-    font-size: 16px;
-    font-family: var(--font-interface);
-    text-align: center;
-    max-width: 60%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    pointer-events: auto;
-    text-shadow: 0 1px 2px var(--oss-gallery-lightbox-scrim);
-    z-index: 1001;
-    padding: 0;
-    background: none;
-}
-
-.oss-gallery-image-preview-container.oss-gallery-light {
-    --oss-gallery-lightbox-bg: color-mix(in srgb, white 95%, transparent);
-    --oss-gallery-lightbox-fg: black;
-    --oss-gallery-lightbox-scrim: color-mix(in srgb, white 85%, transparent);
-}
-
-/* Loading Spinner */
-.oss-gallery-preview-loading {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    pointer-events: none;
-    z-index: 1004;
-}
-
-.oss-gallery-image-preview.oss-gallery-is-hidden,
-.oss-gallery-preview-placeholder.oss-gallery-is-hidden,
-.oss-gallery-preview-loading.oss-gallery-is-hidden {
-    display: none;
-}
-
-.oss-gallery-preview-spinner {
-    width: 56px;
-    height: 56px;
-    border: 5px solid color-mix(in srgb, var(--oss-gallery-lightbox-fg) 15%, transparent);
-    border-top-color: var(--oss-gallery-lightbox-fg);
-    border-radius: 50%;
-    animation: oss-gallery-spin 1.2s linear infinite;
-    box-shadow: var(--shadow-l);
-}
-
-.oss-gallery-preview-loading-text {
-    color: var(--oss-gallery-lightbox-fg);
-    font-size: 18px;
-    font-weight: 600;
-    background: var(--oss-gallery-lightbox-scrim);
-    padding: 8px 20px;
-    border-radius: 20px;
-    backdrop-filter: blur(10px);
-}
-
-/* 图片加载时的背景样式 */
-.oss-gallery-image-preview {
-    transition: opacity 0.3s ease;
-}
-
-/* Placeholder */
-.oss-gallery-preview-placeholder {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.5;
-    pointer-events: none;
-    z-index: 1000;
-}
-
-.oss-gallery-preview-placeholder-icon svg {
-    width: 120px;
-    height: 120px;
-    color: var(--oss-gallery-lightbox-fg);
-    opacity: 0.2;
-    transition: opacity 0.3s ease;
 }
 
 /* Upload progress card: drawn over the upload placeholder in the editor and
@@ -739,4 +488,1066 @@ If your plugin does not need CSS, delete this file.
 
 .oss-gallery-upload-widget.oss-gallery-is-failed .oss-gallery-upload-bar {
     background-color: var(--text-error);
+}
+
+.oss-gallery-upload-widget.oss-gallery-is-queued .oss-gallery-upload-status {
+    font-style: italic;
+}
+
+.oss-gallery-upload-widget .oss-gallery-hidden {
+    display: none;
+}
+
+/* Failure reason under the file name (full text in the tooltip). */
+.oss-gallery-upload-error {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    user-select: text;
+    white-space: normal;
+}
+
+.oss-gallery-upload-actions {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--size-4-1);
+}
+
+.oss-gallery-upload-actions:empty {
+    display: none;
+}
+
+.oss-gallery-upload-widget.oss-gallery-is-failed {
+    flex-wrap: wrap;
+}
+
+.oss-gallery-upload-action {
+    font-size: var(--font-ui-smaller);
+}
+
+.oss-gallery-upload-action.clickable-icon {
+    padding: var(--size-2-2);
+}
+
+.oss-gallery-upload-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Buttons in notices (Copy URL / Open settings). */
+.oss-gallery-notice-button {
+    margin-top: var(--size-4-2);
+}
+
+/* Screen-reader-only live region for upload results. */
+.oss-gallery-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Semantic search download / delete dialogs */
+.oss-gallery-semantic-files {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1em;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-files th,
+.oss-gallery-semantic-files td {
+    padding: var(--oss-gallery-spacing-xs) var(--oss-gallery-spacing-sm);
+    border-bottom: 1px solid var(--background-modifier-border);
+    text-align: left;
+}
+
+.oss-gallery-semantic-files td:nth-child(2) {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-modal code {
+    word-break: break-all;
+}
+
+/* Self-test: best query per image (theme accent, readable in light and dark) */
+.oss-gallery-semantic-files td.oss-gallery-semantic-best {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: var(--font-semibold);
+}
+
+/* Settings: problem / converted files under the "Index for this vault" row */
+.oss-gallery-semantic-index-status {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-index-status:empty {
+    display: none;
+}
+
+.oss-gallery-semantic-index-status details {
+    margin-top: var(--oss-gallery-spacing-sm);
+}
+
+.oss-gallery-semantic-index-status summary {
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-index-status td {
+    word-break: break-all;
+}
+
+.oss-gallery-semantic-status {
+    cursor: pointer;
+}
+
+.oss-gallery-semantic-warning {
+    padding: var(--oss-gallery-spacing-sm) var(--oss-gallery-spacing-md);
+    border-left: 3px solid var(--text-warning);
+    background-color: var(--background-secondary);
+    border-radius: var(--oss-gallery-border-radius);
+}
+
+.oss-gallery-setting-error {
+    margin-top: var(--oss-gallery-spacing-xs);
+    color: var(--text-error);
+}
+
+/* ---- Semantic search in the gallery (P4) ---- */
+
+/* Semantic toggle (toolbar) and regex toggle while semantic mode is on */
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-active {
+    color: var(--interactive-accent);
+    background-color: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+}
+
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-active:hover {
+    background-color: color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+}
+
+.oss-gallery-toolbar .clickable-icon.oss-gallery-semantic-btn.is-disabled,
+.oss-gallery-search-input-wrapper .clickable-icon.oss-gallery-regex-btn.is-disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.oss-gallery-search-container.oss-gallery-is-semantic .oss-gallery-search-input-wrapper input {
+    border-color: color-mix(in srgb, var(--interactive-accent) 60%, var(--background-modifier-border));
+}
+
+/* Strip under the toolbar: index progress / status and the result header */
+.oss-gallery-semantic-bar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+    padding: var(--size-4-1) var(--oss-gallery-spacing-md) 0;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-bar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+}
+
+.oss-gallery-semantic-bar-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.oss-gallery-semantic-progress {
+    flex: 1 1 80px;
+    min-width: 60px;
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--background-modifier-border);
+    overflow: hidden;
+}
+
+.oss-gallery-semantic-progress-fill {
+    width: 0;
+    height: 100%;
+    background-color: var(--interactive-accent);
+    transition: width var(--oss-gallery-transition-duration-fast) ease;
+}
+
+.oss-gallery-semantic-bar .clickable-icon.oss-gallery-semantic-bar-btn {
+    --icon-size: var(--icon-xs);
+    padding: var(--size-2-1);
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    height: auto;
+    min-width: 0;
+    padding: var(--size-2-1) var(--size-4-2);
+    border-radius: var(--radius-l);
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-chip:hover {
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
+}
+
+.oss-gallery-semantic-chip-icon {
+    display: inline-flex;
+    --icon-size: var(--icon-xs);
+    color: var(--interactive-accent);
+}
+
+.oss-gallery-semantic-bar button.oss-gallery-semantic-start-btn,
+.oss-gallery-semantic-bar button.oss-gallery-semantic-update-btn {
+    height: auto;
+    padding: var(--size-2-1) var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-result-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-width: 0;
+    max-width: 100%;
+    padding-inline-start: var(--size-4-2);
+    border-radius: var(--radius-l);
+    background-color: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    color: var(--text-normal);
+}
+
+.oss-gallery-semantic-result-chip > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-result-count {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.oss-gallery-semantic-loading::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-inline-end: var(--size-4-1);
+    vertical-align: -1px;
+    border: 2px solid var(--background-modifier-border);
+    border-top-color: var(--interactive-accent);
+    border-radius: 50%;
+    animation: oss-gallery-spin 1s linear infinite;
+}
+
+/* Tiles: keyboard focus, "show in gallery" selection, score badge */
+.oss-gallery-item:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: -2px;
+}
+
+.oss-gallery-item.is-selected {
+    outline: 3px solid var(--interactive-accent);
+    outline-offset: -3px;
+}
+
+.oss-gallery-item:focus-within .oss-gallery-buttons {
+    opacity: 1;
+}
+
+.oss-gallery-score-badge {
+    position: absolute;
+    left: var(--oss-gallery-spacing-xs);
+    bottom: var(--oss-gallery-spacing-xs);
+    padding: 0 var(--size-4-1);
+    border-radius: var(--radius-s);
+    background-color: color-mix(in srgb, var(--background-primary) 75%, transparent);
+    color: var(--text-muted);
+    font-size: var(--font-smallest);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-similar-btn {
+    color: var(--color-purple);
+}
+
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-similar-btn:hover {
+    background: var(--color-purple);
+    color: var(--text-on-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .oss-gallery-semantic-loading::before {
+        animation: none;
+    }
+
+    .oss-gallery-semantic-progress-fill {
+        transition: none;
+    }
+}
+
+/* Traffic dialog figures, details dialog */
+.oss-gallery-semantic-figures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-4-4);
+    margin: var(--size-4-2) 0 var(--size-4-3);
+}
+
+.oss-gallery-semantic-figure-value {
+    font-size: var(--font-ui-large);
+    font-weight: var(--font-semibold);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-normal);
+}
+
+.oss-gallery-semantic-figure-label {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.oss-gallery-semantic-details-summary {
+    font-weight: var(--font-semibold);
+}
+
+.oss-gallery-semantic-details {
+    margin-top: var(--size-4-2);
+}
+
+.oss-gallery-semantic-details summary {
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-semantic-modal .oss-gallery-semantic-files td {
+    word-break: break-all;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn {
+    height: auto;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+    color: var(--text-accent);
+    font-size: inherit;
+    text-align: start;
+    white-space: normal;
+    word-break: break-all;
+    cursor: pointer;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn:hover {
+    text-decoration: underline;
+}
+
+.oss-gallery-semantic-file button.oss-gallery-link-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 1px;
+}
+
+/* ---- Gallery UX: selection, states, lightbox ---- */
+
+/* Selection check mark (empty circles while selecting) */
+.oss-gallery-check {
+    position: absolute;
+    top: var(--oss-gallery-spacing-xs);
+    left: var(--oss-gallery-spacing-xs);
+    z-index: 2;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    box-shadow: var(--shadow-s);
+    --icon-size: 14px;
+    pointer-events: none;
+}
+
+.oss-gallery-item.is-checked .oss-gallery-check,
+.oss-gallery-container.oss-gallery-is-selecting .oss-gallery-check {
+    display: flex;
+}
+
+.oss-gallery-container.oss-gallery-is-selecting .oss-gallery-item:not(.is-checked) .oss-gallery-check {
+    background-color: color-mix(in srgb, var(--background-primary) 70%, transparent);
+    border: 2px solid var(--text-muted);
+    color: transparent;
+}
+
+.oss-gallery-item.is-checked {
+    outline: 3px solid var(--interactive-accent);
+    outline-offset: -3px;
+}
+
+/* Raw scores only rank: shown on hover / focus, not all the time */
+.oss-gallery-score-badge {
+    z-index: 2;
+    opacity: 0;
+    transition: opacity var(--oss-gallery-transition-duration-fast) ease;
+}
+
+.oss-gallery-item:hover .oss-gallery-score-badge,
+.oss-gallery-item:focus-visible .oss-gallery-score-badge,
+.oss-gallery-item:focus-within .oss-gallery-score-badge {
+    opacity: 1;
+}
+
+/* Touch screens (no hover): tile actions always visible and finger-sized */
+@media (hover: none), (any-pointer: coarse) {
+    .oss-gallery-buttons {
+        opacity: 1;
+    }
+
+    .oss-gallery-icon-btn {
+        min-width: 36px;
+        min-height: 36px;
+    }
+
+    .oss-gallery-container {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+
+    .oss-gallery-check {
+        width: 28px;
+        height: 28px;
+    }
+
+    .oss-gallery-image-preview-container button.oss-gallery-preview-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
+.oss-gallery-item .oss-gallery-buttons .oss-gallery-icon-btn.oss-gallery-more-btn {
+    color: var(--text-normal);
+}
+
+/* Count caption ("12 of 552 images", only while a text search filters):
+   plain muted text, no strip. */
+.oss-gallery-meta-row {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--oss-gallery-spacing-md) 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Selection actions: stay at the top while scrolling, over the tiles. */
+.oss-gallery-meta-row.oss-gallery-has-selection {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    min-height: 32px;
+    padding: var(--size-2-1) var(--size-4-2);
+    background: var(--background-primary);
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-small);
+}
+
+/* "Show more (N less similar)" under a semantic result */
+.oss-gallery-show-more {
+    display: flex;
+    justify-content: center;
+    padding: var(--size-4-2) var(--size-4-4) var(--size-4-8);
+}
+
+.oss-gallery-show-more button {
+    font-size: var(--font-ui-small);
+    font-variant-numeric: tabular-nums;
+}
+
+.oss-gallery-meta-row.oss-gallery-is-hidden,
+.oss-gallery-count.oss-gallery-is-hidden,
+.oss-gallery-selection-bar.oss-gallery-is-hidden,
+.oss-gallery-selection-btn.oss-gallery-is-hidden,
+.oss-gallery-search-container.oss-gallery-is-hidden {
+    display: none;
+}
+
+.oss-gallery-selection-bar {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--size-2-2);
+    min-width: 0;
+}
+
+.oss-gallery-selection-count {
+    margin-inline-end: auto;
+    color: var(--text-normal);
+    font-weight: var(--font-semibold);
+    white-space: nowrap;
+}
+
+.oss-gallery-meta-row .clickable-icon.oss-gallery-selection-delete {
+    color: var(--text-error);
+}
+
+/* Loading / error / empty states in the gallery body */
+.oss-gallery-status-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--size-4-2);
+    max-width: 420px;
+    margin: var(--size-4-8) auto;
+    padding: var(--size-4-4);
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.oss-gallery-status-icon {
+    display: inline-flex;
+    color: var(--text-faint);
+    --icon-size: var(--icon-xl);
+}
+
+.oss-gallery-status-block.oss-gallery-error .oss-gallery-status-icon {
+    color: var(--text-error);
+}
+
+.oss-gallery-status-block.oss-gallery-is-unsupported .oss-gallery-status-icon {
+    color: var(--text-faint);
+}
+
+.oss-gallery-status-message {
+    color: var(--text-normal);
+    font-weight: var(--font-semibold);
+    overflow-wrap: anywhere;
+}
+
+.oss-gallery-status-detail {
+    font-size: var(--font-ui-small);
+    overflow-wrap: anywhere;
+}
+
+.oss-gallery-status-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--size-4-2);
+    margin-top: var(--size-4-1);
+}
+
+/* Back to top: sticky at the bottom of the view, not fixed to the window */
+.oss-gallery-back-to-top-wrap {
+    position: sticky;
+    bottom: var(--size-4-4);
+    z-index: 5;
+    display: flex;
+    justify-content: flex-end;
+    height: 0;
+    padding-inline-end: var(--size-4-2);
+    pointer-events: none;
+}
+
+.oss-gallery-back-to-top {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    transform: translateY(-100%);
+    border: none;
+    border-radius: 50%;
+    background: var(--oss-gallery-primary);
+    color: var(--oss-gallery-text-on-primary);
+    box-shadow: var(--oss-gallery-shadow);
+    cursor: pointer;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--oss-gallery-transition-duration-fast) ease, visibility var(--oss-gallery-transition-duration-fast) ease;
+}
+
+.oss-gallery-back-to-top.oss-gallery-visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.oss-gallery-back-to-top:hover {
+    background: var(--oss-gallery-primary-hover);
+}
+
+.oss-gallery-back-to-top:focus-visible {
+    outline: 2px solid var(--text-normal);
+    outline-offset: 2px;
+}
+
+/* Delete confirmation: names of a batch */
+.oss-gallery-confirm-names {
+    max-height: 10em;
+    margin: 0 0 1em;
+    padding-inline-start: 1.5em;
+    overflow: auto;
+    font-size: var(--font-ui-small);
+    overflow-wrap: anywhere;
+}
+
+.oss-gallery-confirm-more {
+    list-style: none;
+    color: var(--text-muted);
+}
+
+/* ---- Lightbox ---- */
+.oss-gallery-image-preview-modal-shell {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+}
+
+.oss-gallery-image-preview-modal-content {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    padding: 0;
+}
+
+.oss-gallery-image-preview-container {
+    /* The lightbox has its own dark/light switch, independent of the app theme */
+    --oss-gallery-lightbox-bg: color-mix(in srgb, black 90%, transparent);
+    --oss-gallery-lightbox-fg: white;
+    --oss-gallery-lightbox-scrim: color-mix(in srgb, black 50%, transparent);
+    position: fixed;
+    inset: 0;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    background: var(--oss-gallery-lightbox-bg);
+    color: var(--oss-gallery-lightbox-fg);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease-out, visibility 0.15s ease-out;
+}
+
+.oss-gallery-image-preview-container.oss-gallery-light {
+    --oss-gallery-lightbox-bg: color-mix(in srgb, white 95%, transparent);
+    --oss-gallery-lightbox-fg: black;
+    --oss-gallery-lightbox-scrim: color-mix(in srgb, white 85%, transparent);
+}
+
+.oss-gallery-image-preview-container.oss-gallery-show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.oss-gallery-preview-control-bar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--size-4-2);
+    min-height: 52px;
+    padding: var(--size-4-2) var(--size-4-3);
+}
+
+.oss-gallery-preview-counter {
+    flex: 0 0 auto;
+    min-width: 4em;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+}
+
+.oss-gallery-preview-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    font-family: var(--font-interface);
+    text-shadow: 0 1px 2px var(--oss-gallery-lightbox-scrim);
+}
+
+.oss-gallery-preview-tools {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--size-2-2);
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--size-2-3);
+    min-width: 36px;
+    min-height: 36px;
+    height: auto;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: var(--oss-gallery-lightbox-scrim);
+    color: var(--oss-gallery-lightbox-fg);
+    box-shadow: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-btn:hover {
+    background: color-mix(in srgb, var(--oss-gallery-lightbox-fg) 25%, var(--oss-gallery-lightbox-scrim));
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-btn:focus-visible {
+    outline: 2px solid var(--oss-gallery-lightbox-fg);
+    outline-offset: 2px;
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.oss-gallery-preview-stage {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    touch-action: none;
+}
+
+.oss-gallery-preview-stage.oss-gallery-is-pannable {
+    cursor: grab;
+}
+
+.oss-gallery-preview-stage.oss-gallery-is-dragging {
+    cursor: grabbing;
+}
+
+/* Natural size, placed and scaled by transform (zoomMath.ts) */
+.oss-gallery-image-preview {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: var(--oss-preview-w, auto);
+    height: var(--oss-preview-h, auto);
+    max-width: none;
+    max-height: none;
+    transform-origin: 0 0;
+    transform: translate(var(--oss-preview-x, 0), var(--oss-preview-y, 0)) scale(var(--oss-preview-scale, 1));
+    will-change: transform;
+    box-shadow: var(--oss-gallery-shadow-lg);
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.oss-gallery-image-preview.oss-gallery-zoom-animate {
+    transition: transform 0.2s ease-out;
+}
+
+.oss-gallery-image-preview.oss-gallery-is-hidden,
+.oss-gallery-preview-placeholder.oss-gallery-is-hidden,
+.oss-gallery-preview-loading.oss-gallery-is-hidden,
+.oss-gallery-preview-actions.oss-gallery-is-hidden,
+.oss-gallery-image-preview-container .oss-gallery-preview-nav.oss-gallery-is-hidden {
+    display: none;
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-nav {
+    position: absolute;
+    top: 50%;
+    z-index: 3;
+    min-width: 44px;
+    min-height: 44px;
+    transform: translateY(-50%);
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-prev {
+    left: var(--size-4-3);
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-next {
+    right: var(--size-4-3);
+}
+
+.oss-gallery-preview-zoom-badge {
+    position: absolute;
+    bottom: var(--size-4-4);
+    left: 50%;
+    z-index: 3;
+    padding: var(--size-2-2) var(--size-4-3);
+    border-radius: var(--radius-l);
+    background: var(--oss-gallery-lightbox-scrim);
+    font-variant-numeric: tabular-nums;
+    transform: translateX(-50%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.oss-gallery-preview-zoom-badge.oss-gallery-show {
+    opacity: 1;
+}
+
+.oss-gallery-preview-actions {
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--size-4-3) var(--size-4-3);
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-action {
+    padding: 0 var(--size-4-3);
+    border-radius: var(--radius-l);
+    font-size: var(--font-ui-small);
+}
+
+.oss-gallery-image-preview-container button.oss-gallery-preview-action.mod-warning:hover {
+    background: var(--background-modifier-error);
+    color: var(--text-on-accent);
+}
+
+.oss-gallery-preview-placeholder,
+.oss-gallery-preview-loading,
+.oss-gallery-preview-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.oss-gallery-preview-placeholder {
+    opacity: 0.2;
+    pointer-events: none;
+    --icon-size: 120px;
+}
+
+.oss-gallery-preview-loading {
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--size-4-4);
+    pointer-events: none;
+}
+
+.oss-gallery-preview-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid color-mix(in srgb, var(--oss-gallery-lightbox-fg) 15%, transparent);
+    border-top-color: var(--oss-gallery-lightbox-fg);
+    border-radius: 50%;
+    animation: oss-gallery-spin 1.2s linear infinite;
+}
+
+.oss-gallery-preview-loading-text {
+    padding: var(--size-2-3) var(--size-4-4);
+    border-radius: var(--radius-l);
+    background: var(--oss-gallery-lightbox-scrim);
+}
+
+.oss-gallery-preview-error {
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--size-4-2);
+    max-width: min(80%, 520px);
+    padding: var(--size-4-5) var(--size-4-6);
+    border-radius: var(--radius-l);
+    background: var(--oss-gallery-lightbox-scrim);
+    text-align: center;
+}
+
+.oss-gallery-preview-error-icon {
+    display: inline-flex;
+    color: var(--text-error);
+    --icon-size: 40px;
+}
+
+.oss-gallery-preview-error-message {
+    font-weight: var(--font-semibold);
+}
+
+.oss-gallery-preview-error-url {
+    max-width: 100%;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    opacity: 0.85;
+    overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .oss-gallery-image-preview.oss-gallery-zoom-animate,
+    .oss-gallery-image-preview-container,
+    .oss-gallery-preview-zoom-badge,
+    .oss-gallery-back-to-top,
+    .oss-gallery-score-badge {
+        transition: none;
+    }
+
+    .oss-gallery-preview-spinner {
+        animation: none;
+    }
+
+    .oss-gallery-item,
+    .oss-gallery-item:hover {
+        transform: none;
+        transition: none;
+    }
+}
+
+/* ---- Settings tab (provider setup, semantic setup) ---- */
+
+.oss-gallery-required-marker {
+    margin-left: var(--oss-gallery-spacing-sm);
+    padding: 0 var(--oss-gallery-spacing-xs);
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-normal);
+    color: var(--text-muted);
+    background-color: var(--background-modifier-hover);
+    vertical-align: middle;
+}
+
+.oss-gallery-required-field.is-missing .oss-gallery-required-marker {
+    color: var(--text-error);
+}
+
+/* "Missing: ..." in the description of the "Test connection" row */
+.oss-gallery-provider-status {
+    margin-top: var(--oss-gallery-spacing-xs);
+    color: var(--text-muted);
+}
+
+.oss-gallery-provider-status.is-missing {
+    color: var(--text-error);
+}
+
+.oss-gallery-provider-capability {
+    margin-top: var(--oss-gallery-spacing-xs);
+}
+
+.oss-gallery-connection-result {
+    margin-top: var(--oss-gallery-spacing-xs);
+    user-select: text;
+}
+
+.oss-gallery-connection-result.is-success {
+    color: var(--text-success);
+}
+
+.oss-gallery-connection-result.is-error {
+    color: var(--text-error);
+}
+
+/* Sections (src/settings/settingGroups.ts): a strong heading with more
+   space above it than between rows, then one group of rows. On 1.11+ the
+   group is Obsidian's SettingGroup (rows with thin dividers); older versions
+   get the fallback container below. */
+.oss-gallery-settings-tab .oss-gallery-settings-section {
+    margin-top: var(--size-4-8);
+}
+
+.oss-gallery-settings-tab > .oss-gallery-settings-section:first-child {
+    margin-top: 0;
+}
+
+.oss-gallery-settings-tab .oss-gallery-settings-section.oss-gallery-settings-subsection {
+    margin-top: var(--size-4-5);
+}
+
+.oss-gallery-settings-tab .oss-gallery-section-heading .setting-item-name {
+    color: var(--text-normal);
+    font-size: calc(var(--font-ui-medium) * 1.15);
+    font-weight: var(--font-bold);
+}
+
+.oss-gallery-settings-tab .oss-gallery-section-heading .setting-item-description {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-normal);
+}
+
+.oss-gallery-settings-tab .oss-gallery-settings-subsection .oss-gallery-section-heading .setting-item-name {
+    font-size: var(--font-ui-medium);
+    font-weight: var(--font-semibold);
+}
+
+/* Fallback group before Obsidian 1.11 (no SettingGroup): rows already have
+   divider lines there, so only the frame is added. */
+.oss-gallery-setting-group-fallback {
+    padding: 0 var(--size-4-4);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+}
+
+.oss-gallery-setting-group-fallback .setting-item:first-child {
+    border-top: none;
+}
+
+/* A row that belongs to the row above it ("Image embed format" under
+   "Embed images"): indented, no divider in between. */
+.oss-gallery-setting-group .setting-item.oss-gallery-setting-child {
+    padding-top: 0;
+    padding-inline-start: calc(var(--setting-items-padding-x, var(--size-4-4)) + var(--size-4-6));
+}
+
+.oss-gallery-setting-group .setting-item.oss-gallery-setting-child::before {
+    content: none;
+}
+
+.oss-gallery-setting-group-fallback .setting-item.oss-gallery-setting-child {
+    padding-top: 0;
+    padding-inline-start: var(--size-4-6);
+    border-top: none;
+}
+
+/* Non-setting rows inside a group (Imgur's note) */
+.oss-gallery-provider-settings > .oss-gallery-imgur-note {
+    margin: 0;
+    padding: var(--size-4-3) var(--setting-items-padding-x, 0);
+    border-top: 1px solid var(--setting-items-divider-color, var(--background-modifier-border));
+}
+
+.oss-gallery-settings-advanced {
+    margin-top: var(--size-4-5);
+}
+
+.oss-gallery-settings-advanced > summary {
+    cursor: pointer;
+    padding: var(--size-4-1) var(--size-4-4);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+}
+
+.oss-gallery-settings-advanced > summary:hover {
+    color: var(--text-normal);
+}
+
+.oss-gallery-settings-advanced[open] > summary {
+    margin-bottom: var(--size-4-3);
 }

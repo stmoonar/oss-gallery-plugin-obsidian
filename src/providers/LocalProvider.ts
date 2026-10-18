@@ -1,8 +1,9 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { LocalSettings, PluginSettings } from '../types/settings';
 import { App, FileSystemAdapter, Setting, normalizePath } from 'obsidian';
 import { t } from '../i18n';
 import { isImageFile } from './shared/image';
+import { ListingCollector } from './shared/listing';
 import { buildListPrefix } from './shared/path';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -91,22 +92,80 @@ export class LocalProvider implements IOssProvider {
         return this.toFileUrl(destAbsolute);
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
-        if (!this.settings.storagePath) return [];
+    async listImages(prefix?: string): Promise<ListResult> {
+        const listPrefix = buildListPrefix(undefined, prefix);
+        const collector = new ListingCollector(this.name, listPrefix);
+        if (!this.settings.storagePath) {
+            collector.markIncomplete();
+            return collector.result();
+        }
 
         const baseDir = this.getAbsoluteStoragePath();
         try {
             await fs.promises.access(baseDir);
         } catch {
-            return [];
+            // Unreachable storage (unmounted drive, typo): show nothing, but
+            // never let it count as "every file was deleted".
+            collector.markIncomplete();
+            return collector.result();
         }
 
-        const images: OssImage[] = [];
-        await this.scanDirectory(baseDir, '', images, buildListPrefix(undefined, prefix));
+        await this.scanDirectory(baseDir, '', collector, listPrefix);
 
         // Sort by lastModified descending
-        images.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
-        return images;
+        collector.items.sort((a, b) => (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0));
+        return collector.result();
+    }
+
+    listingKeyForUpload(path: string): string {
+        return path;
+    }
+
+    /**
+     * Settings check without writing anything: the storage directory (or,
+     * before the first upload, its nearest existing parent, since uploads
+     * create it) must be a writable directory.
+     */
+    async testConnection(): Promise<void> {
+        if (!this.settings.storagePath) {
+            throw new Error(t('Please configure local storage path first'));
+        }
+        let dir = path.resolve(this.getAbsoluteStoragePath());
+        for (;;) {
+            let stat: fs.Stats | null = null;
+            try {
+                stat = await fs.promises.stat(dir);
+            } catch {
+                stat = null;
+            }
+            if (stat) {
+                if (!stat.isDirectory()) {
+                    throw new Error(`${t('Local storage is not a directory')}: ${dir}`);
+                }
+                try {
+                    await fs.promises.access(dir, fs.constants.W_OK);
+                } catch {
+                    throw new Error(`${t('Local storage is not writable')}: ${dir}`);
+                }
+                return;
+            }
+            const parent = path.dirname(dir);
+            if (parent === dir) {
+                throw new Error(`${t('Local storage is not writable')}: ${dir}`);
+            }
+            dir = parent;
+        }
+    }
+
+    /**
+     * Read a stored object's bytes from disk (semantic indexing: zero network
+     * traffic). The key is resolved inside the storage directory; keys that
+     * escape it (e.g. containing "..") are rejected.
+     */
+    async readObjectBytes(key: string): Promise<ArrayBuffer> {
+        const fullPath = this.resolveWithinStorage(key);
+        const buffer = await fs.promises.readFile(fullPath);
+        return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     }
 
     /**
@@ -121,13 +180,15 @@ export class LocalProvider implements IOssProvider {
         return this.toFileUrl(absolutePath);
     }
 
-    private async scanDirectory(baseDir: string, relativePath: string, images: OssImage[], prefix?: string): Promise<void> {
+    private async scanDirectory(baseDir: string, relativePath: string, images: ListingCollector, prefix?: string): Promise<void> {
         const currentDir = relativePath ? path.join(baseDir, relativePath) : baseDir;
 
         let entries: fs.Dirent[];
         try {
             entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
         } catch {
+            // Unreadable directory: its files were not seen.
+            images.markIncomplete();
             return;
         }
 
@@ -146,7 +207,14 @@ export class LocalProvider implements IOssProvider {
                 if (prefix && !entryRelative.startsWith(prefix)) continue;
 
                 const fullPath = path.join(currentDir, entry.name);
-                const stat = await fs.promises.stat(fullPath);
+                let stat: fs.Stats;
+                try {
+                    stat = await fs.promises.stat(fullPath);
+                } catch {
+                    // Deleted between readdir and stat, or unreadable.
+                    images.markIncomplete();
+                    continue;
+                }
 
                 // For gallery display, use a URL the <img> tag can load
                 const vaultRelative = this.settings.useRelativePath

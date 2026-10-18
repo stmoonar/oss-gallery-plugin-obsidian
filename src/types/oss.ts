@@ -5,6 +5,31 @@ export interface OssImage {
     url: string;
     lastModified?: Date;
     size: number;
+    /**
+     * Content identity reported by the listing API: S3-style ETag, Qiniu
+     * hash, GitHub blob sha. Used for the semantic index fingerprint; when
+     * absent the fingerprint falls back to size + lastModified.
+     */
+    etag?: string;
+}
+
+/**
+ * Result of IStorageProvider.listImages (docs/semantic-search.md §4.1).
+ */
+export interface ListResult {
+    items: OssImage[];
+    /**
+     * false = the listing was cut short (page/request/depth cap) or part of
+     * it failed. An incomplete listing must never be used to conclude that
+     * an object was deleted.
+     */
+    complete: boolean;
+    /**
+     * Key prefix the listing covers ('' = the whole store). Keys outside it
+     * were not looked at. Providers that ignore the requested prefix (S.EE)
+     * report ''.
+     */
+    prefix: string;
 }
 
 export interface SearchResult {
@@ -36,9 +61,32 @@ export interface IStorageProvider {
      * to scope the listing to the configured base path. Providers without
      * folders (e.g. S.EE) ignore it.
      */
-    listImages(prefix?: string): Promise<OssImage[]>;
+    listImages(prefix?: string): Promise<ListResult>;
+
+    /**
+     * Key a listing reports for an object uploaded with `upload(file, path)`,
+     * or null when it cannot be known up front (e.g. S.EE assigns its own
+     * ids). Used to index uploads without downloading them again.
+     */
+    listingKeyForUpload?(path: string): string | null;
+
+    /**
+     * A signed GET (URL + headers for requestUrl) of an object key, for
+     * providers that sign requests themselves (S3 / R2 / MinIO). Lets the
+     * semantic index read private buckets whose public URL is refused.
+     * null when the provider is not configured.
+     */
+    signedObjectGet?(key: string): { url: string; headers: Record<string, string> } | null;
 
     deleteImage(key: string): Promise<void>;
+
+    /**
+     * Check the settings with one cheap read-only request (e.g. a one-key
+     * listing page, or reading the storage directory). Throws a descriptive
+     * error on failure. Never uploads, writes or deletes anything. Providers
+     * that can only be checked by uploading (Imgur) do not implement it.
+     */
+    testConnection?(): Promise<void>;
 }
 
 /**

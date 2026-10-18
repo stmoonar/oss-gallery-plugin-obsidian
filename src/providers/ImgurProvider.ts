@@ -1,4 +1,4 @@
-import { IOssProvider, OssImage, UploadProgressInfo } from '../types/oss';
+import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { ImgurSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
@@ -80,12 +80,12 @@ export class ImgurProvider implements IOssProvider {
         }
     }
 
-    async listImages(prefix?: string): Promise<OssImage[]> {
+    async listImages(prefix?: string): Promise<ListResult> {
         // Imgur doesn't provide a public API for listing all user images without authentication
         // We can implement account images listing if needed, but it would require OAuth
-        // For now, return empty array
+        // For now, return an empty listing (the registry marks Imgur as upload-only).
         console.warn('Imgur image listing is not supported');
-        return [];
+        return { items: [], complete: true, prefix: '' };
     }
 
     async deleteImage(key: string): Promise<void> {

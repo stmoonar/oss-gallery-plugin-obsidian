@@ -103,6 +103,49 @@ export interface ProviderSettingsMap {
 export type ProviderName = keyof ProviderSettingsMap;
 export type NameRule = 'local' | 'time' | 'timeAndLocal';
 export type PathRule = 'root' | 'type' | 'date' | 'typeAndDate';
+export type ImageTokenBudget = 70 | 140 | 280;
+export const IMAGE_TOKEN_BUDGETS: readonly ImageTokenBudget[] = [70, 140, 280];
+
+/** Semantic image search (docs/semantic-search.md §9.3). Global, not per provider. */
+export interface SemanticSettings {
+    /** True only after the runtime and model were downloaded and verified. */
+    enabled: boolean;
+    /** Directory for runtime + model files; '' = platform default (outside the vault). */
+    modelDir: string;
+    /**
+     * Root of the per-device index files, '' = platform default
+     * (<appDir>/indexes, next to the models). Outside the vault, never
+     * synced: every device builds its own index.
+     */
+    indexDir: string;
+    /** Image tokens per picture; changing it rebuilds every index. */
+    imageTokenBudget: ImageTokenBudget;
+    autoIndex: boolean;
+    /**
+     * Base URL replacing `https://huggingface.co` for model downloads
+     * (e.g. `https://hf-mirror.com`); '' = official. Normalized https URL.
+     */
+    hfEndpoint: string;
+    /**
+     * Prefix put before the full GitHub release URL
+     * (`<prefix>/https://github.com/...`); '' = official. Normalized https URL.
+     */
+    githubMirror: string;
+}
+
+/**
+ * Local gallery thumbnails (src/thumbnails). Global, per device on disk,
+ * independent of semantic search.
+ */
+export interface ThumbnailSettings {
+    /** Make, keep and show small local thumbnails of gallery images (default on). */
+    enabled: boolean;
+    /** Cache size cap for this vault on this device; least recently viewed go first. */
+    maxSizeMB: number;
+}
+
+export const THUMBNAIL_CACHE_MIN_MB = 10;
+export const THUMBNAIL_CACHE_MAX_MB = 100_000;
 
 export interface PluginSettings {
     activeProvider: ProviderName;
@@ -116,6 +159,8 @@ export interface PluginSettings {
     nameRule: NameRule;
     pathRule: PathRule;
     embedFormat: string;
+    semantic: SemanticSettings;
+    thumbnails: ThumbnailSettings;
 }
 
 export const DEFAULT_MINIO_SETTINGS: MinioSettings = {
@@ -206,6 +251,21 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     deleteToTrash: true,
 };
 
+export const DEFAULT_SEMANTIC_SETTINGS: SemanticSettings = {
+    enabled: false,
+    modelDir: '',
+    indexDir: '',
+    imageTokenBudget: 70,
+    autoIndex: false,
+    hfEndpoint: '',
+    githubMirror: '',
+};
+
+export const DEFAULT_THUMBNAIL_SETTINGS: ThumbnailSettings = {
+    enabled: true,
+    maxSizeMB: 500,
+};
+
 export const DEFAULT_SETTINGS: PluginSettings = {
     activeProvider: 'smms',
     providers: {
@@ -231,4 +291,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     nameRule: 'timeAndLocal',
     pathRule: 'root',
     embedFormat: '![]($URL)',
+    semantic: DEFAULT_SEMANTIC_SETTINGS,
+    thumbnails: DEFAULT_THUMBNAIL_SETTINGS,
 };
