@@ -118,6 +118,57 @@ export class SemanticDownloadModal extends Modal {
 	}
 }
 
+export interface SemanticConfirmOptions {
+	title: string;
+	paragraphs: string[];
+	/** Highlighted last paragraph (optional). */
+	warning?: string;
+	confirmText: string;
+	onConfirm: () => void;
+	/** Called when the dialog closes without confirming (Cancel, Esc, click outside). */
+	onCancel: () => void;
+}
+
+/** Generic two-button confirmation (e.g. changing the image detail). */
+export class SemanticConfirmModal extends Modal {
+	private confirmed = false;
+
+	constructor(app: App, private readonly options: SemanticConfirmOptions) {
+		super(app);
+		this.containerEl.addClass("oss-gallery-semantic-modal");
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		this.setTitle(this.options.title);
+		for (const text of this.options.paragraphs) {
+			contentEl.createEl("p", { text });
+		}
+		if (this.options.warning) {
+			contentEl.createEl("p", { text: this.options.warning, cls: "oss-gallery-semantic-warning" });
+		}
+		renderButtons(
+			contentEl,
+			this.options.confirmText,
+			false,
+			() => this.close(),
+			() => {
+				this.confirmed = true;
+				this.close();
+				this.options.onConfirm();
+			}
+		);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		if (!this.confirmed) {
+			this.options.onCancel();
+		}
+	}
+}
+
 /** Confirmation for deleting the model; it is shared by every vault. */
 export class SemanticDeleteModal extends Modal {
 	constructor(

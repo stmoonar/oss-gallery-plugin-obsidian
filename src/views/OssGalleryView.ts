@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon, debounce, Menu } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, setIcon, debounce, Menu, MarkdownView } from 'obsidian';
 import { t } from '../i18n';
 import { IOssProvider, OssImage } from '../types/oss';
 import { ImagePreviewModal } from '../modals/ImagePreviewModal';
@@ -9,12 +9,15 @@ import { ImageGrid } from '../components/ImageGrid';
 import { SearchComponent } from '../components/SearchComponent';
 import { SemanticIndexBar } from '../components/SemanticIndexBar';
 import { intersectHits, needsSemanticRerank, queryFor, SemanticAvailability } from '../components/searchMode';
+import { EMPTY_SELECTION, retainKeys, SelectionState } from '../components/tileSelection';
+import { emptyStateKind, nextFocusAfterRemoval, previewNames, summarizeBatchDelete } from '../components/galleryUx';
 import { GalleryState } from '../types/gallery';
 import { handleError } from '../utils/ErrorHandler';
 import { providerRegistry } from '../providers/registry';
 import type { GallerySemanticHooks } from '../semantic/SemanticIndexing';
 import type { GalleryThumbnailHooks } from '../thumbnails/GalleryThumbnails';
 import { fileNameOf } from '../semantic/statusText';
+import { openPluginSettings } from '../utils/openPluginSettings';
 
 /** Tooltip of the semantic toggle: what it does, or why it is unavailable. */
 function semanticToggleLabel(availability: SemanticAvailability): string {
@@ -35,14 +38,31 @@ export const GALLERY_VIEW_TYPE = 'oss-gallery-view';
 
 /** Delay before re-listing after the active provider's settings were edited. */
 const SETTINGS_RELOAD_DELAY = 1000;
+/** Names listed in a batch delete confirmation. */
+const CONFIRM_NAMES_SHOWN = 5;
+
+/** Optional plugin services for the gallery (main.ts). */
+export interface GalleryViewExtras {
+    /** Embed text for an image, as uploads insert it (embedFormat setting). */
+    renderEmbed?: (url: string, name: string) => string;
+    /** Plugin id: "Open settings" opens this plugin's tab. */
+    pluginId?: string;
+}
 
 export class OssGalleryView extends ItemView {
     private provider: IOssProvider;
     /** Directory listings are scoped to (the global base path), '' for all. */
     private listPrefix: string;
     private container: HTMLElement | null = null;
+    /** Grid, loading, error and empty states (the toolbar rows stay). */
+    private bodyEl: HTMLElement | null = null;
     private refreshBtn: HTMLButtonElement;
     private backToTopBtn: HTMLButtonElement | null = null;
+    private metaRow: HTMLElement | null = null;
+    private countEl: HTMLElement | null = null;
+    private selectionEl: HTMLElement | null = null;
+    private selectionCountEl: HTMLElement | null = null;
+    private selectionDeleteBtn: HTMLButtonElement | null = null;
     private scrollTimeout: number | null = null;
     private lastLoadTime: number = 0;
     /**
@@ -66,6 +86,7 @@ export class OssGalleryView extends ItemView {
     private imageGrid: ImageGrid | null = null;
     private searchComponent: SearchComponent | null = null;
     private semanticBar: SemanticIndexBar | null = null;
+    private previewModal: ImagePreviewModal | null = null;
     private unsubscribeSemantic: (() => void) | null = null;
     /** Semantic search/similar requests: a newer one drops older results. */
     private semanticToken = 0;
@@ -79,6 +100,8 @@ export class OssGalleryView extends ItemView {
     private listingLoaded = false;
     /** URL lookup for the current listing (see `objectUrlsFor`). */
     private objectUrlCache: { source: OssImage[]; urls: Map<string, string> } | null = null;
+    /** Multi-selection; survives re-renders for keys still shown. */
+    private selection: SelectionState = EMPTY_SELECTION;
 
     // State
     private state: GalleryState = {
@@ -98,7 +121,8 @@ export class OssGalleryView extends ItemView {
         provider: IOssProvider,
         listPrefix = '',
         private readonly semanticHooks: GallerySemanticHooks | null = null,
-        private readonly thumbnailHooks: GalleryThumbnailHooks | null = null
+        private readonly thumbnailHooks: GalleryThumbnailHooks | null = null,
+        private readonly extras: GalleryViewExtras = {}
     ) {
         super(leaf);
         this.provider = provider;
@@ -133,6 +157,8 @@ export class OssGalleryView extends ItemView {
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
             this.listingLoaded = false;
+            this.selection = EMPTY_SELECTION;
+            this.previewModal?.close();
             void this.loadGallery(true);
         } else {
             // Bucket, credentials or base path edited: wait for typing to settle.
@@ -165,9 +191,20 @@ export class OssGalleryView extends ItemView {
 
         this.container = container;
         this.container.empty();
+        this.container.addClass('oss-gallery-view');
 
         this.createToolbar(container);
         this.createSemanticBar(container);
+        this.createMetaRow(container);
+        this.bodyEl = container.createDiv({ cls: 'oss-gallery-body' });
+        this.createBackToTop(container);
+        this.registerDomEvent(container, 'keydown', (event) => {
+            // Esc anywhere in the gallery (but in the search box) clears the selection.
+            if (event.key !== 'Escape' || this.selection.keys.size === 0 || event.defaultPrevented) return;
+            if ((event.target as HTMLElement).closest('input, textarea')) return;
+            event.preventDefault();
+            this.clearSelection();
+        });
         await this.loadGallery();
         this.startAutoSync();
         this.setupScrollListener(container);
@@ -199,6 +236,7 @@ export class OssGalleryView extends ItemView {
                         void this.clearSemanticResult(true);
                     }
                 },
+                onSemanticUnavailable: () => this.explainSemanticUnavailable(),
             } : {}),
         });
 
@@ -212,6 +250,69 @@ export class OssGalleryView extends ItemView {
                 void this.loadGallery(true);
             }
         };
+    }
+
+    /** Image count, or the selection with its batch actions. */
+    private createMetaRow(container: HTMLElement): void {
+        const row = container.createDiv({ cls: 'oss-gallery-meta-row oss-gallery-is-hidden' });
+        this.metaRow = row;
+        this.countEl = row.createDiv({ cls: 'oss-gallery-count', attr: { 'aria-live': 'polite' } });
+
+        const sel = row.createDiv({
+            cls: 'oss-gallery-selection-bar oss-gallery-is-hidden',
+            attr: { role: 'toolbar', 'aria-label': t('Selection actions') },
+        });
+        this.selectionEl = sel;
+        this.selectionCountEl = sel.createSpan({ cls: 'oss-gallery-selection-count', attr: { 'aria-live': 'polite' } });
+        const button = (icon: string, label: string, onClick: () => void, cls = '') => {
+            const btn = sel.createEl('button', {
+                cls: `clickable-icon oss-gallery-selection-btn ${cls}`.trim(),
+                attr: { type: 'button', 'aria-label': label },
+            });
+            setIcon(btn, icon);
+            btn.addEventListener('click', onClick);
+            return btn;
+        };
+        button('link', t('Copy URLs'), () => void this.copyUrls(this.selectedKeys()));
+        button('copy', t('Copy as embeds'), () => void this.copyEmbeds(this.selectedKeys()));
+        button('file-input', t('Insert into note'), () => this.insertIntoNote(this.selectedKeys()));
+        this.selectionDeleteBtn = button('trash', t('Delete'), () => this.requestDelete(this.selectedKeys()), 'oss-gallery-selection-delete');
+        button('x', t('Clear selection'), () => this.clearSelection());
+    }
+
+    private updateMeta(): void {
+        const row = this.metaRow;
+        if (!row) return;
+        const selected = this.selection.keys.size;
+        const canList = providerRegistry.supports(this.provider.name, 'list');
+        row.toggleClass('oss-gallery-is-hidden', !canList || (!this.listingLoaded && selected === 0));
+
+        const total = this.state.remoteObjects.length;
+        const shown = this.state.visibleImages.length;
+        const filtered = this.state.isSearching || this.state.semanticResult !== null;
+        const count = (n: number) => (n === 1 ? t('Gallery image count one') : t('Gallery image count').replace('{count}', String(n)));
+        this.countEl?.setText(filtered
+            ? t('Gallery filtered count').replace('{count}', String(shown)).replace('{total}', String(total))
+            : count(total));
+        this.countEl?.toggleClass('oss-gallery-is-hidden', selected > 0);
+
+        this.selectionEl?.toggleClass('oss-gallery-is-hidden', selected === 0);
+        this.selectionCountEl?.setText(t('Selected count').replace('{count}', String(selected)));
+        this.selectionDeleteBtn?.toggleClass('oss-gallery-is-hidden', !providerRegistry.supports(this.provider.name, 'delete'));
+    }
+
+    private selectedKeys(): string[] {
+        return this.imageGrid?.getSelectedKeys()
+            ?? this.state.visibleImages.filter((o) => this.selection.keys.has(o.key)).map((o) => o.key);
+    }
+
+    private clearSelection(): void {
+        if (this.imageGrid) {
+            this.imageGrid.clearSelection();
+        } else {
+            this.selection = EMPTY_SELECTION;
+            this.updateMeta();
+        }
     }
 
     /** Index progress / status strip under the toolbar (semantic search). */
@@ -270,6 +371,36 @@ export class OssGalleryView extends ItemView {
     }
 
     /**
+     * Why semantic search can't be used here, as a notice; settings-related
+     * reasons get an "Open settings" button.
+     */
+    private explainSemanticUnavailable(): void {
+        const hooks = this.semanticHooks;
+        if (!hooks) return;
+        const availability = hooks.availability(this.provider.name, this.listPrefix);
+        if (availability.ok) return;
+        const label = semanticToggleLabel(availability);
+        if (availability.reason !== 'not-installed' && availability.reason !== 'disabled') {
+            new Notice(label);
+            return;
+        }
+        const fragment = createFragment();
+        fragment.createDiv({ text: label });
+        const btn = fragment.createEl('button', { cls: 'oss-gallery-notice-button', text: t('Open settings') });
+        const notice = new Notice(fragment, 8000);
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            notice.hide();
+            this.openSettings();
+        });
+    }
+
+    /** This plugin's settings tab. */
+    private openSettings(): void {
+        openPluginSettings(this.app, this.extras.pluginId);
+    }
+
+    /**
      * Switch the search box to semantic mode (status bar click). Explains
      * with a notice when it is not available yet.
      */
@@ -278,9 +409,17 @@ export class OssGalleryView extends ItemView {
         if (!hooks || !this.searchComponent) return;
         this.refreshSemanticUi();
         if (!this.searchComponent.enableSemantic()) {
-            new Notice(semanticToggleLabel(hooks.availability(this.provider.name, this.listPrefix)));
+            this.explainSemanticUnavailable();
         }
         this.searchComponent.focus();
+    }
+
+    /** Hide the search box and image count when the provider cannot list. */
+    private syncListingSupport(): boolean {
+        const canList = providerRegistry.supports(this.provider.name, 'list');
+        this.searchComponent?.setVisible(canList);
+        this.updateMeta();
+        return canList;
     }
 
     async loadGallery(forceRefresh = false): Promise<void> {
@@ -297,17 +436,13 @@ export class OssGalleryView extends ItemView {
             return;
         }
 
-        if (!providerRegistry.supports(this.provider.name, 'list')) {
+        if (!this.syncListingSupport()) {
             this.cleanupImageGrid();
             this.state.remoteObjects = [];
             this.state.visibleImages = [];
             this.listingLoaded = false;
             this.clearStatusMessages();
-
-            container.createDiv({
-                cls: 'oss-gallery-error',
-                text: t('Image listing is not available'),
-            });
+            this.renderListingUnsupported();
             return;
         }
 
@@ -331,7 +466,10 @@ export class OssGalleryView extends ItemView {
                 await this.renderCurrentObjects();
             } else {
                 this.cleanupImageGrid();
-                loading = container.createDiv({ cls: 'oss-gallery-loading-spinner' });
+                loading = this.bodyEl?.createDiv({
+                    cls: 'oss-gallery-loading-spinner',
+                    attr: { role: 'status', 'aria-label': t('Loading...') },
+                }) ?? null;
             }
 
             const ticket = this.semanticHook((h) => h.beginListing(this.provider.name, this.listPrefix), null);
@@ -346,6 +484,8 @@ export class OssGalleryView extends ItemView {
             loading?.remove();
             if (!showCachedFirst || changes.hasChanges) {
                 await this.renderCurrentObjects();
+            } else {
+                this.updateMeta();
             }
         } catch (err) {
             if (!this.isCurrentLoad(generation)) return;
@@ -356,10 +496,8 @@ export class OssGalleryView extends ItemView {
             }
             // A failed background refresh keeps the cached grid silently.
             if (loading) {
-                loading.removeClass('oss-gallery-loading-spinner');
-                loading.addClass('oss-gallery-error');
-                const errorMessage = err instanceof Error ? err.message : String(err);
-                loading.setText(`${t('Load failed')}: ${errorMessage}`);
+                loading.remove();
+                this.renderListingError(err instanceof Error ? err.message : String(err));
             }
         } finally {
             if (!this.isCurrentLoad(generation)) {
@@ -367,6 +505,89 @@ export class OssGalleryView extends ItemView {
             }
             this.endLoad(generation);
         }
+    }
+
+    /** A status block in the body: icon, message, optional detail and buttons. */
+    private renderStatusBlock(
+        cls: string,
+        icon: string,
+        message: string,
+        detail: string | null,
+        actions: { label: string; cta?: boolean; run: () => void }[]
+    ): HTMLElement {
+        const box = (this.bodyEl ?? this.contentEl).createDiv({ cls: `oss-gallery-status-block ${cls}` });
+        setIcon(box.createDiv({ cls: 'oss-gallery-status-icon', attr: { 'aria-hidden': 'true' } }), icon);
+        box.createDiv({ cls: 'oss-gallery-status-message', text: message });
+        if (detail) {
+            box.createDiv({ cls: 'oss-gallery-status-detail', text: detail });
+        }
+        if (actions.length > 0) {
+            const row = box.createDiv({ cls: 'oss-gallery-status-actions' });
+            for (const action of actions) {
+                const btn = row.createEl('button', {
+                    cls: action.cta ? 'mod-cta' : '',
+                    text: action.label,
+                    attr: { type: 'button' },
+                });
+                btn.addEventListener('click', action.run);
+            }
+        }
+        return box;
+    }
+
+    private renderListingError(message: string): void {
+        const box = this.renderStatusBlock('oss-gallery-error', 'alert-triangle', t('Listing failed title'), message, [
+            { label: t('Retry'), cta: true, run: () => void this.loadGallery(true) },
+            { label: t('Open settings'), run: () => this.openSettings() },
+        ]);
+        box.setAttr('role', 'alert');
+    }
+
+    private renderListingUnsupported(): void {
+        const label = providerRegistry.getLabel(this.provider.name, this.app);
+        this.renderStatusBlock('oss-gallery-error oss-gallery-is-unsupported', 'cloud-off',
+            t('Image listing is not available'),
+            t('Listing unsupported').replace('{provider}', label),
+            [{ label: t('Open settings'), cta: true, run: () => this.openSettings() }]);
+    }
+
+    /** Nothing to show: an empty bucket / base path, or a search without matches. */
+    private renderEmptyState(): void {
+        const kind = emptyStateKind({
+            listed: this.state.remoteObjects.length,
+            searching: this.state.isSearching,
+            semantic: this.state.semanticResult !== null,
+        });
+        const clearSearch = { label: t('Clear search'), cta: true, run: () => void this.clearSearch() };
+        switch (kind) {
+            case 'empty-listing': {
+                const message = this.listPrefix
+                    ? t('Empty listing path').replace('{path}', this.listPrefix)
+                    : t('Empty listing all');
+                this.renderStatusBlock('oss-gallery-empty', 'image', message, t('Empty listing hint'), [
+                    { label: t('Refresh'), run: () => void this.loadGallery(true) },
+                ]);
+                return;
+            }
+            case 'no-text-match':
+                this.renderStatusBlock('oss-gallery-empty', 'search-x',
+                    t('No text matches').replace('{query}', this.state.savedSearchTerm), null, [clearSearch]);
+                return;
+            case 'no-semantic-match':
+                this.renderStatusBlock('oss-gallery-empty', 'search-x', t('No semantic matches'), null, [clearSearch]);
+                return;
+        }
+    }
+
+    /** "Clear search" of an empty state: back to every image. */
+    private async clearSearch(): Promise<void> {
+        if (this.hasSemanticActivity()) {
+            await this.clearSemanticResult(true);
+            return;
+        }
+        this.searchComponent?.clear();
+        await this.handleSearch('');
+        this.searchComponent?.focus();
     }
 
     private beginLoad(): number {
@@ -403,7 +624,7 @@ export class OssGalleryView extends ItemView {
 
     private clearStatusMessages(): void {
         this.container
-            ?.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-error')
+            ?.querySelectorAll('.oss-gallery-loading-spinner, .oss-gallery-status-block')
             .forEach(el => el.remove());
     }
 
@@ -434,8 +655,15 @@ export class OssGalleryView extends ItemView {
 
     private async renderObjects(objects: OssImage[], scores?: Map<string, number>): Promise<void> {
         this.state.visibleImages = objects;
+        // Keys no longer shown leave the selection (the grid keeps the rest).
+        this.selection = retainKeys(this.selection, objects.map((o) => o.key));
         this.clearStatusMessages();
         this.cleanupImageGrid();
+        this.updateMeta();
+        if (objects.length === 0) {
+            this.renderEmptyState();
+            return;
+        }
         const grid = this.createImageGrid();
         await grid?.renderImages(objects, undefined, scores);
     }
@@ -503,6 +731,11 @@ export class OssGalleryView extends ItemView {
         }
     }
 
+    private canFindSimilar(key: string): boolean {
+        return this.semanticReady
+            && (this.semanticHooks?.isIndexed(this.provider.name, this.listPrefix, key) ?? false);
+    }
+
     /** "Find similar images": rank by the stored vector of `key`. */
     private async findSimilar(key: string): Promise<void> {
         const hooks = this.semanticHooks;
@@ -566,9 +799,97 @@ export class OssGalleryView extends ItemView {
         }
     }
 
-    /** Right click on a tile: find similar, copy URL, delete. */
-    private openContextMenu(key: string, event: MouseEvent, element: HTMLElement): void {
-        const object = this.state.visibleImages.find((o) => o.key === key);
+    // ---- per-image actions (menu, tile buttons, lightbox, selection bar) ----
+
+    private objectFor(key: string): OssImage | undefined {
+        return this.state.visibleImages.find((o) => o.key === key)
+            ?? this.state.remoteObjects.find((o) => o.key === key);
+    }
+
+    private objectsFor(keys: readonly string[]): OssImage[] {
+        const wanted = new Set(keys);
+        const byKey = new Map<string, OssImage>();
+        for (const o of [...this.state.remoteObjects, ...this.state.visibleImages]) {
+            if (wanted.has(o.key)) byKey.set(o.key, o);
+        }
+        return keys.map((k) => byKey.get(k)).filter((o): o is OssImage => !!o?.url);
+    }
+
+    /** Embed text of an original (the embedFormat setting, like uploads), without the trailing newline. */
+    private embedFor(object: OssImage): string {
+        const name = fileNameOf(object.key);
+        const text = this.extras.renderEmbed
+            ? this.extras.renderEmbed(object.url, name)
+            : `![](${object.url})`;
+        return text.replace(/\n+$/, '');
+    }
+
+    private embedsFor(keys: readonly string[]): string {
+        return this.objectsFor(keys).map((o) => this.embedFor(o)).join('\n');
+    }
+
+    private async copyText(text: string, success: string): Promise<void> {
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            new Notice(success);
+        } catch (error) {
+            console.error('Copy failed', error);
+            new Notice(t('Copy failed'));
+        }
+    }
+
+    private async copyUrls(keys: readonly string[]): Promise<void> {
+        const objects = this.objectsFor(keys);
+        await this.copyText(
+            objects.map((o) => o.url).join('\n'),
+            objects.length === 1 ? t('URL copied') : t('URLs copied').replace('{count}', String(objects.length))
+        );
+    }
+
+    private async copyEmbeds(keys: readonly string[]): Promise<void> {
+        const objects = this.objectsFor(keys);
+        await this.copyText(
+            objects.map((o) => this.embedFor(o)).join('\n'),
+            objects.length === 1 ? t('Embed copied') : t('Embeds copied').replace('{count}', String(objects.length))
+        );
+    }
+
+    /** The markdown view the user worked in last (the gallery itself is not one). */
+    private targetMarkdownView(): MarkdownView | null {
+        const workspace = this.app.workspace;
+        const recent = workspace.getMostRecentLeaf();
+        if (recent?.view instanceof MarkdownView) return recent.view;
+        const active = workspace.getActiveViewOfType(MarkdownView);
+        if (active) return active;
+        let best: MarkdownView | null = null;
+        let bestTime = -1;
+        for (const leaf of workspace.getLeavesOfType('markdown')) {
+            const time = (leaf as unknown as { activeTime?: number }).activeTime ?? 0;
+            if (leaf.view instanceof MarkdownView && time > bestTime) {
+                best = leaf.view;
+                bestTime = time;
+            }
+        }
+        return best;
+    }
+
+    /** Insert the embeds at the cursor of the most recent note. */
+    private insertIntoNote(keys: readonly string[]): void {
+        const text = this.embedsFor(keys);
+        if (!text) return;
+        const view = this.targetMarkdownView();
+        if (!view) {
+            new Notice(t('No note to insert into'));
+            return;
+        }
+        view.editor.replaceSelection(`${text}\n`);
+        new Notice(t('Inserted into note').replace('{note}', view.file?.basename ?? ''));
+    }
+
+    /** Context menu / "more actions" of one tile. */
+    private buildMenu(key: string): Menu {
+        const object = this.objectFor(key);
         const menu = new Menu();
         const hooks = this.semanticHooks;
         if (hooks && this.semanticReady) {
@@ -584,24 +905,39 @@ export class OssGalleryView extends ItemView {
         if (object?.url) {
             menu.addItem((item) => item
                 .setTitle(t('Copy URL'))
+                .setIcon('link')
+                .onClick(() => void this.copyUrls([key])));
+            menu.addItem((item) => item
+                .setTitle(t('Copy as embed'))
                 .setIcon('copy')
-                .onClick(async () => {
-                    try {
-                        await navigator.clipboard.writeText(object.url);
-                        new Notice(t('URL copied'));
-                    } catch {
-                        new Notice(t('Copy failed'));
-                    }
-                }));
+                .onClick(() => void this.copyEmbeds([key])));
+            menu.addItem((item) => item
+                .setTitle(t('Insert into note'))
+                .setIcon('file-input')
+                .onClick(() => this.insertIntoNote([key])));
+        }
+        if (this.imageGrid) {
+            const selected = this.imageGrid.isSelected(key);
+            menu.addSeparator();
+            menu.addItem((item) => item
+                .setTitle(selected ? t('Deselect') : t('Select'))
+                .setIcon(selected ? 'square' : 'check')
+                .onClick(() => this.imageGrid?.toggleSelected(key)));
         }
         if (providerRegistry.supports(this.provider.name, 'delete')) {
+            menu.addSeparator();
             menu.addItem((item) => item
                 .setTitle(t('Delete'))
                 .setIcon('trash')
-                .onClick(() => {
-                    void this.handleDelete(key, element);
-                }));
+                .setWarning(true)
+                .onClick(() => this.requestDelete([key])));
         }
+        return menu;
+    }
+
+    /** Right click on a tile (or the context-menu key / long press). */
+    private openContextMenu(key: string, event: MouseEvent, element: HTMLElement): void {
+        const menu = this.buildMenu(key);
         // The context-menu key reports (0, 0): open the menu at the tile instead.
         if (event.clientX === 0 && event.clientY === 0) {
             const rect = element.getBoundingClientRect();
@@ -611,31 +947,41 @@ export class OssGalleryView extends ItemView {
         }
     }
 
-    private createImageGrid(): ImageGrid | null {
-        if (!this.container) return null;
+    private openMoreMenu(key: string, anchor: HTMLElement): void {
+        const rect = anchor.getBoundingClientRect();
+        this.buildMenu(key).showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+    }
 
-        const gridContainer = this.container.createDiv({
+    private createImageGrid(): ImageGrid | null {
+        if (!this.bodyEl) return null;
+
+        const gridContainer = this.bodyEl.createDiv({
             cls: 'oss-gallery-container'
         });
 
+        const canDelete = providerRegistry.supports(this.provider.name, 'delete');
         this.imageGrid = new ImageGrid(gridContainer, {
             getObjectUrl: async (objectName) => await this.getObjectUrl(objectName),
-            canDelete: providerRegistry.supports(this.provider.name, 'delete'),
+            canDelete,
             onPreview: (objectName) => {
                 this.openImagePreview(objectName);
             },
-            onDelete: (objectName, element) => {
-                void this.handleDelete(objectName, element);
-            },
+            onDelete: (keys) => this.requestDelete(keys),
             onContextMenu: (objectName, event, element) => {
                 this.openContextMenu(objectName, event, element);
             },
-            canFindSimilar: (objectName) => this.semanticReady
-                && (this.semanticHooks?.isIndexed(this.provider.name, this.listPrefix, objectName) ?? false),
+            onMore: (objectName, anchor) => this.openMoreMenu(objectName, anchor),
+            canFindSimilar: (objectName) => this.canFindSimilar(objectName),
             onFindSimilar: (objectName) => {
                 void this.findSimilar(objectName);
             },
             tileSources: this.thumbnailHooks?.tileSources(this.provider.name, this.listPrefix) ?? null,
+            dragText: (keys) => this.embedsFor(keys) || null,
+            initialSelection: this.selection,
+            onSelectionChange: (selection) => {
+                this.selection = selection;
+                this.updateMeta();
+            },
         });
         return this.imageGrid;
     }
@@ -676,12 +1022,16 @@ export class OssGalleryView extends ItemView {
                     this.state.useRegexSearch
                 )).matchedObjects;
 
+            // Before the first listing the load spinner stays; the load renders.
+            if (!this.listingLoaded) return;
             await this.renderObjects(objectsToRender);
         } catch (error) {
             new Notice(error instanceof Error ? error.message : t('Search failed'));
             console.error('Search error:', error);
         }
     }
+
+    // ---- lightbox ----
 
     /**
      * Open the preview by object key: grid tiles must not capture indexes,
@@ -695,27 +1045,51 @@ export class OssGalleryView extends ItemView {
         }
 
         this.state.currentPreviewKey = object.key;
+        const canDelete = providerRegistry.supports(this.provider.name, 'delete');
 
-        const modalInstance = new ImagePreviewModal(this.app, object.url, object.key, {
-            onNavigate: (direction: 'prev' | 'next') => {
-                const currentIndex = this.state.visibleImages.findIndex(
-                    obj => obj.key === this.state.currentPreviewKey
-                );
-                if (currentIndex < 0) return;
-
-                const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
-                const nextObject = this.state.visibleImages[newIndex];
-                if (nextObject) {
-                    modalInstance.updateImage(nextObject.url, nextObject.key);
-                    this.state.currentPreviewKey = nextObject.key;
-                    this.preloadAdjacentImages(newIndex);
-                }
-            }
+        const modal = new ImagePreviewModal(this.app, object.url, object.key, {
+            onNavigate: (direction) => this.navigatePreview(direction),
+            position: (key) => {
+                const index = this.state.visibleImages.findIndex((o) => o.key === key);
+                return index < 0 ? null : { index: index + 1, total: this.state.visibleImages.length };
+            },
+            onCopyUrl: (key) => void this.copyUrls([key]),
+            onCopyEmbed: (key) => void this.copyEmbeds([key]),
+            ...(canDelete ? { onDelete: (key: string) => this.requestDelete([key]) } : {}),
+            ...(this.semanticHooks ? {
+                canFindSimilar: (key: string) => this.canFindSimilar(key),
+                onFindSimilar: (key: string) => void this.findSimilar(key),
+            } : {}),
+            onClosed: () => {
+                if (this.previewModal !== modal) return;
+                this.previewModal = null;
+                // Back to the tile of the image last shown.
+                const key = this.state.currentPreviewKey;
+                if (key) this.imageGrid?.focusKey(key, false);
+            },
         });
-        modalInstance.open();
+        this.previewModal = modal;
+        modal.open();
 
         // 预加载相邻图片
         this.preloadAdjacentImages(imageIndex);
+    }
+
+    private navigatePreview(direction: 'prev' | 'next'): void {
+        const modal = this.previewModal;
+        if (!modal) return;
+        const currentIndex = this.state.visibleImages.findIndex(
+            obj => obj.key === this.state.currentPreviewKey
+        );
+        if (currentIndex < 0) return;
+
+        const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
+        const nextObject = this.state.visibleImages[newIndex];
+        if (nextObject) {
+            this.state.currentPreviewKey = nextObject.key;
+            modal.updateImage(nextObject.url, nextObject.key);
+            this.preloadAdjacentImages(newIndex);
+        }
     }
 
     private preloadAdjacentImages(currentIndex: number): void {
@@ -738,37 +1112,116 @@ export class OssGalleryView extends ItemView {
         }
     }
 
-    private async handleDelete(objectName: string, element: HTMLElement): Promise<void> {
+    // ---- delete ----
+
+    /** Confirm, then delete one image or a selection. */
+    private requestDelete(keys: readonly string[]): void {
         if (!providerRegistry.supports(this.provider.name, 'delete')) {
             new Notice(t('Delete failed'));
             return;
         }
-
-        const modal = new ConfirmModal(this.app, () => {
-            void this.deleteConfirmed(objectName, element);
-        });
-        modal.open();
-    }
-
-    private async deleteConfirmed(objectName: string, element: HTMLElement): Promise<void> {
-        try {
-            await this.syncService.deleteObject(objectName);
-        } catch (err) {
-            new Notice(t('Delete failed'));
-            console.error(err);
+        if (keys.length === 0) return;
+        const names = keys.map(fileNameOf);
+        const run = () => {
+            void this.deleteKeys([...keys]);
+        };
+        if (keys.length === 1) {
+            new ConfirmModal(this.app, run, {
+                title: t('Delete image title'),
+                message: t('Delete confirm one').replace('{name}', names[0] ?? ''),
+            }).open();
             return;
         }
+        const { shown, more } = previewNames(names, CONFIRM_NAMES_SHOWN);
+        const count = String(keys.length);
+        new ConfirmModal(this.app, run, {
+            title: t('Delete images title').replace('{count}', count),
+            message: t('Delete confirm many').replace('{count}', count),
+            names: shown,
+            more,
+        }).open();
+    }
 
-        // The vector goes right away (no tombstone for our own deletes).
-        this.semanticHook((h) => h.onDeleted(this.provider.name, this.listPrefix, objectName), undefined);
-        this.thumbnailHooks?.onDeleted(this.provider.name, this.listPrefix, objectName);
+    /**
+     * Delete one by one (providers such as GitHub can't take parallel
+     * commits); every success updates the index and thumbnails exactly like
+     * a single delete, failures are reported together.
+     */
+    private async deleteKeys(keys: string[]): Promise<void> {
+        const provider = this.provider;
+        const listPrefix = this.listPrefix;
+        const syncService = this.syncService;
+        const deleted: string[] = [];
+        const failed: string[] = [];
 
-        // Update in-memory state instead of re-listing the whole bucket.
-        element.remove();
-        this.state.remoteObjects = this.state.remoteObjects.filter(obj => obj.key !== objectName);
-        this.state.visibleImages = this.state.visibleImages.filter(obj => obj.key !== objectName);
+        for (const key of keys) {
+            try {
+                await syncService.deleteObject(key);
+            } catch (err) {
+                console.error(`Delete failed: ${key}`, err);
+                failed.push(key);
+                continue;
+            }
+            deleted.push(key);
+            // The vector goes right away (no tombstone for our own deletes).
+            this.semanticHook((h) => h.onDeleted(provider.name, listPrefix, key), undefined);
+            this.thumbnailHooks?.onDeleted(provider.name, listPrefix, key);
+        }
 
-        new Notice(t('Delete success'));
+        // Settings changed meanwhile: the gallery shows another listing now.
+        if (provider === this.provider && listPrefix === this.listPrefix && deleted.length > 0) {
+            this.removeDeleted(new Set(deleted));
+        }
+
+        if (keys.length === 1) {
+            new Notice(deleted.length === 1
+                ? t('Deleted name').replace('{name}', fileNameOf(keys[0] ?? ''))
+                : t('Delete failed'));
+            return;
+        }
+        const summary = summarizeBatchDelete(deleted.length, failed.length);
+        switch (summary.kind) {
+            case 'all':
+                new Notice(t('Deleted count').replace('{count}', String(summary.deleted)));
+                break;
+            case 'partial':
+                new Notice(t('Delete partial')
+                    .replace('{deleted}', String(summary.deleted))
+                    .replace('{failed}', String(summary.failed)));
+                break;
+            case 'none':
+                new Notice(t('Delete none').replace('{count}', String(summary.failed)));
+                break;
+        }
+    }
+
+    /** Update state and grid in place instead of re-listing the whole bucket. */
+    private removeDeleted(removed: ReadonlySet<string>): void {
+        const before = this.state.visibleImages.map((o) => o.key);
+        const nextKey = nextFocusAfterRemoval(before, removed);
+        this.state.remoteObjects = this.state.remoteObjects.filter(obj => !removed.has(obj.key));
+        this.state.visibleImages = this.state.visibleImages.filter(obj => !removed.has(obj.key));
+        this.selection = retainKeys(this.selection, this.state.visibleImages.map((o) => o.key));
+
+        const modal = this.previewModal;
+        if (modal && removed.has(modal.currentKey)) {
+            const next = nextKey ? this.state.visibleImages.find((o) => o.key === nextKey) : undefined;
+            if (next) {
+                this.state.currentPreviewKey = next.key;
+                modal.updateImage(next.url, next.key);
+            } else {
+                modal.close();
+            }
+        }
+
+        if (this.state.visibleImages.length === 0) {
+            this.cleanupImageGrid();
+            this.clearStatusMessages();
+            this.renderEmptyState();
+        } else {
+            this.imageGrid?.removeItems([...removed], !this.previewModal);
+        }
+        this.updateMeta();
     }
 
     private async getObjectUrl(objectName: string): Promise<string> {
@@ -837,13 +1290,7 @@ export class OssGalleryView extends ItemView {
                 const scrollTop = container.scrollTop;
                 const containerHeight = container.clientHeight;
                 const showThreshold = containerHeight * 0.5;
-
-                if (scrollTop > showThreshold) {
-                    this.showBackToTopButton(container);
-                } else {
-                    this.hideBackToTopButton();
-                }
-
+                this.backToTopBtn?.toggleClass('oss-gallery-visible', scrollTop > showThreshold);
                 this.scrollTimeout = null;
             }, 16);
         };
@@ -851,23 +1298,21 @@ export class OssGalleryView extends ItemView {
         this.registerDomEvent(container, 'scroll', throttledHandleScroll, { passive: true });
     }
 
-    private showBackToTopButton(container: HTMLElement): void {
-        if (!this.backToTopBtn) {
-            this.backToTopBtn = container.createEl('button', {
-                cls: 'oss-gallery-back-to-top'
-            });
-            setIcon(this.backToTopBtn, 'chevron-up');
-
-            this.backToTopBtn.onclick = () => {
-                container.scrollTo({ top: 0, behavior: 'smooth' });
-            };
-        }
-
-        this.backToTopBtn.classList.add('oss-gallery-visible');
-    }
-
-    private hideBackToTopButton(): void {
-        this.backToTopBtn?.classList.remove('oss-gallery-visible');
+    /** Sticky at the bottom of the view's scroll area (not fixed to the window). */
+    private createBackToTop(container: HTMLElement): void {
+        const wrap = container.createDiv({ cls: 'oss-gallery-back-to-top-wrap' });
+        this.backToTopBtn = wrap.createEl('button', {
+            cls: 'oss-gallery-back-to-top',
+            attr: { type: 'button', 'aria-label': t('Back to top') },
+        });
+        setIcon(this.backToTopBtn, 'chevron-up');
+        this.backToTopBtn.addEventListener('click', () => {
+            const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            container.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+            // Keyboard users continue at the first tile.
+            const first = this.state.visibleImages[0];
+            if (first) this.imageGrid?.focusKey(first.key, true);
+        });
     }
 
     async onClose(): Promise<void> {
@@ -881,8 +1326,12 @@ export class OssGalleryView extends ItemView {
             this.scrollTimeout = null;
         }
 
-        this.backToTopBtn?.remove();
         this.backToTopBtn = null;
+        this.metaRow = null;
+        this.bodyEl = null;
+
+        this.previewModal?.close();
+        this.previewModal = null;
 
         this.searchComponent?.destroy();
         this.searchComponent = null;

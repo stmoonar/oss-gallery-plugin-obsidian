@@ -203,6 +203,29 @@ export class SmMsProvider implements IOssProvider {
         }
     }
 
+    /** One page of the upload history (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.token) {
+            throw new Error(t('Please configure OSS settings first'));
+        }
+        const response = await requestUrl({
+            url: `${SEE_API_BASE_URL}/files?page=1`,
+            method: 'GET',
+            headers: {
+                'Authorization': this.settings.token,
+                'Accept': 'application/json'
+            },
+            throw: false
+        });
+        const data = parseJsonResponse(response.text);
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(getString(data?.message) || `Request failed with status ${response.status}`);
+        }
+        if (!data || getBoolean(data.success) !== true) {
+            throw new Error(getString(data?.message) || 'S.EE returned an invalid JSON response');
+        }
+    }
+
     async deleteImage(key: string): Promise<void> {
         try {
             const response = await requestUrl({
@@ -232,12 +255,12 @@ export class SmMsProvider implements IOssProvider {
 
     renderSettings(containerEl: HTMLElement, settings: PluginSettings, saveSettings: () => Promise<void>): void {
         new Setting(containerEl)
-            .setName(t('Token'))
+            .setName(t('S.EE API key'))
             .setDesc(t('SM.MS Secret Token'))
             .addText(text => {
                 text.inputEl.type = 'password';
                 return text
-                .setPlaceholder(t('Enter your token'))
+                .setPlaceholder(t('Enter your S.EE API key'))
                 .setValue(settings.providers.smms.token)
                 .onChange(async (value) => {
                     settings.providers.smms.token = value;

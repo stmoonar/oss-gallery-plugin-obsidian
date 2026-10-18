@@ -15,6 +15,17 @@ import { SettingsManager } from "./settings/SettingsManager";
 import { normalizeBasePath, ObjectKeyBuilder } from "./services/ObjectKeyBuilder";
 import { EmbedRenderer } from "./services/EmbedRenderer";
 import { UploadService, UploadProgress } from "./services/UploadService";
+import { SavedToVault, UploadQueue, UploadQueueHost, UploadResult } from "./services/UploadQueue";
+import {
+	FileTriage,
+	formatNameList,
+	SkippedSummary,
+	summarizeSkipped,
+	triageFiles,
+} from "./services/uploadFileTriage";
+import { UploadAnnouncer } from "./editor/uploadAnnouncer";
+import { formatMissingSummary } from "./settings/settingsUx";
+import { openPluginSettings } from "./utils/openPluginSettings";
 import { getFileTypeByMime } from "./utils/FileUtils";
 import { filterSensitiveInfo, handleUploadError } from "./utils/ErrorHandler";
 import { OssProviderManager } from "./providers/OssProviderManager";
@@ -60,6 +71,10 @@ export default class OssGalleryPlugin extends Plugin {
 	private uploadCounter = 0;
 	/** Upload progress shown in editors/reading view; never written to notes. */
 	private readonly uploadProgress = new UploadProgressStore();
+	/** Runs uploads one at a time and keeps failed ones (with their file) until resolved. */
+	private uploadQueue: UploadQueue<UploadTarget>;
+	/** Polite live region announcing upload results to screen readers. */
+	private uploadAnnouncer: UploadAnnouncer | null = null;
 
 	// Services
 	private keyBuilder: ObjectKeyBuilder;
@@ -90,6 +105,16 @@ export default class OssGalleryPlugin extends Plugin {
 		true
 	);
 
+	/**
+	 * After edits settle, forget failed uploads whose placeholder the user
+	 * deleted, so their files do not stay in memory.
+	 */
+	private readonly requestFailedUploadSweep = debounce(
+		() => this.releaseOrphanedFailedUploads(),
+		1000,
+		true
+	);
+
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
@@ -104,6 +129,8 @@ export default class OssGalleryPlugin extends Plugin {
 		this.addCommands();
 
 		this.initializeServices();
+		this.uploadQueue = new UploadQueue(this.uploadProgress, this.createUploadQueueHost());
+		this.uploadAnnouncer = new UploadAnnouncer();
 		this.registerEvents();
 		this.registerUploadProgressRendering();
 		this.setupView();
@@ -170,7 +197,7 @@ export default class OssGalleryPlugin extends Plugin {
 			icon: "upload-cloud",
 			editorCallback: (editor: Editor, ctx: MarkdownView | MarkdownFileInfo) => {
 				if (!this.validateSettings()) {
-					new Notice(t("Please configure OSS settings first"));
+					this.showNotConfiguredNotice();
 					return;
 				}
 				this.triggerFileUpload(this.createUploadTarget(editor, ctx));
@@ -187,7 +214,7 @@ export default class OssGalleryPlugin extends Plugin {
 					return;
 				}
 				if (!this.validateSettings()) {
-					new Notice(t("Please configure OSS settings first"));
+					this.showNotConfiguredNotice();
 					return;
 				}
 				void this.openGalleryView();
@@ -254,6 +281,13 @@ export default class OssGalleryPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("editor-drop", this.handleUploader.bind(this))
 		);
+		this.registerEvent(
+			this.app.workspace.on("editor-change", () => {
+				if (this.uploadQueue.failedJobs().length > 0) {
+					this.requestFailedUploadSweep();
+				}
+			})
+		);
 	}
 
 	private setupView(): void {
@@ -270,7 +304,11 @@ export default class OssGalleryPlugin extends Plugin {
 					provider,
 					this.getGalleryListPrefix(),
 					this.semanticIndexing.galleryHooks(),
-					this.galleryThumbnails.galleryHooks()
+					this.galleryThumbnails.galleryHooks(),
+					{
+						renderEmbed: (url, name) => this.embedRenderer.render("image", url, name),
+						pluginId: this.manifest.id,
+					}
 				);
 			}
 		);
@@ -281,7 +319,7 @@ export default class OssGalleryPlugin extends Plugin {
 				return;
 			}
 			if (!this.validateSettings()) {
-				new Notice(t("Please configure OSS settings first"));
+				this.showNotConfiguredNotice();
 				return;
 			}
 			void this.openGalleryView();
@@ -295,7 +333,7 @@ export default class OssGalleryPlugin extends Plugin {
 			return;
 		}
 		if (!this.validateSettings()) {
-			new Notice(t("Please configure OSS settings first"));
+			this.showNotConfiguredNotice();
 			return;
 		}
 
@@ -345,12 +383,14 @@ export default class OssGalleryPlugin extends Plugin {
 		const input = createEl("input");
 		input.setAttribute("type", "file");
 		input.setAttribute("accept", this.getFilePickerAccept());
+		input.multiple = true;
 
-		input.onchange = async (event: Event) => {
-			const file = (event.target as HTMLInputElement)?.files?.[0];
-			if (file && getFileTypeByMime(file)) {
-				await this.uploadFiles(target, this.filterAcceptedFiles([file]));
-			}
+		input.onchange = async () => {
+			const files = Array.from(input.files ?? []);
+			if (files.length === 0) return;
+			const triage = this.triageFiles(files);
+			this.showSkippedNotice(summarizeSkipped(triage, "picker"));
+			await this.uploadFiles(target, triage.accepted);
 		};
 
 		input.click();
@@ -358,8 +398,8 @@ export default class OssGalleryPlugin extends Plugin {
 
 	/**
 	 * Insert placeholders for all files into the originating note up front (so a
-	 * batch never spills into a note the user switched to), then upload them
-	 * one by one and swap each placeholder for its final embed.
+	 * batch never spills into a note the user switched to), then queue the
+	 * uploads; each placeholder is swapped for its final embed when done.
 	 */
 	private async uploadFiles(target: UploadTarget, files: File[]): Promise<void> {
 		if (files.length === 0) return;
@@ -370,70 +410,122 @@ export default class OssGalleryPlugin extends Plugin {
 		}));
 
 		// Register progress entries before the placeholders land in the note so
-		// the first render already shows the progress card.
+		// the first render already shows the card ("Waiting").
 		for (const { id, file } of pending) {
-			this.uploadProgress.start(id, file);
+			this.uploadQueue.add(id, file, target);
 		}
 
 		await this.insertPlaceholders(target, pending);
 
-		for (const upload of pending) {
-			await this.performUpload(target, upload);
-		}
+		this.uploadQueue.enqueue(pending.map(({ id }) => id));
 	}
 
-	private async performUpload(
-		target: UploadTarget,
-		{ file, id }: PendingUpload
-	): Promise<void> {
-		try {
-			const uploadService = this.getUploadService();
-			// Where the semantic index files this upload: the provider and
-			// scope at upload start (settings may change while it runs).
-			const indexTarget = this.semanticIndexing.uploadTarget(
-				this.providerManager.getActiveProvider()
-			);
-			const objectName = this.keyBuilder.generateObjectName(file);
-			const fileType = getFileTypeByMime(file);
+	/** Upload with the active provider; side effects of a finished upload. */
+	private async uploadToProvider(
+		file: File,
+		onProgress: (percent: number) => void
+	): Promise<UploadResult> {
+		const uploadService = this.getUploadService();
+		// Where the semantic index files this upload: the provider and
+		// scope at upload start (settings may change while it runs).
+		const indexTarget = this.semanticIndexing.uploadTarget(
+			this.providerManager.getActiveProvider()
+		);
+		const objectName = this.keyBuilder.generateObjectName(file);
+		const fileType = getFileTypeByMime(file);
 
-			const url = await uploadService.uploadFile(
-				file,
-				objectName,
-				(progress: UploadProgress) => {
-					const percent = Math.min(
-						100,
-						Math.max(0, Math.round(progress.percentage))
-					);
-					if (!Number.isFinite(percent)) return;
-					// Display-only: the note text is not touched, and the store
-					// ignores unchanged values.
-					this.uploadProgress.update(id, { percent });
-				}
-			);
+		const url = await uploadService.uploadFile(
+			file,
+			objectName,
+			// Display-only: the note text is not touched, and the store
+			// ignores unchanged values.
+			(progress: UploadProgress) => onProgress(progress.percentage)
+		);
 
-			this.uploadProgress.update(id, { percent: 100, status: "done" });
-			// Index the new image from the bytes in hand (no download).
-			this.semanticIndexing.onUploaded(indexTarget, objectName, file).catch((error) => {
-				console.error("OSS Gallery: semantic upload indexing failed", error);
+		// The object exists now, even if the user cancelled meanwhile: index
+		// it from the bytes in hand (no download) and refresh galleries.
+		this.semanticIndexing.onUploaded(indexTarget, objectName, file).catch((error) => {
+			console.error("OSS Gallery: semantic upload indexing failed", error);
+		});
+		this.requestGalleryRefresh();
+		return { url, text: this.embedRenderer.render(fileType, url, file.name) };
+	}
+
+	/** Note, notice and vault access for the upload queue. */
+	private createUploadQueueHost(): UploadQueueHost<UploadTarget> {
+		const fill = (template: string, values: Record<string, string>) =>
+			template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match);
+		return {
+			upload: (file, onProgress) => this.uploadToProvider(file, onProgress),
+			replacePlaceholder: (target, id, text) => this.replacePlaceholder(target, id, text),
+			replacePlaceholderNow: (target, id, text) => this.replacePlaceholderNow(target, id, text),
+			saveToVault: (target, file) => this.saveUploadToVault(target, file),
+			interruptedText: (name) =>
+				fill(t("Upload interrupted marker"), { name: this.sanitizePlaceholderLabel(name) }),
+			describeError: (error) =>
+				filterSensitiveInfo(error instanceof Error ? error.message : String(error)),
+			onUploaded: (name) => {
+				this.uploadAnnouncer?.announce(fill(t("Upload aria done"), { name }));
+			},
+			onFailed: (name, message, error) => {
+				handleUploadError(error, name);
+				this.uploadAnnouncer?.announce(fill(t("Upload aria failed"), { name, message }));
+				new Notice(fill(t("Upload failed kept"), { name, message }), 8000);
+			},
+			onPlaceholderLost: (name, url) => this.showPlaceholderLostNotice(name, url),
+			onCancelled: (name) => {
+				new Notice(fill(t("Upload cancelled"), { name }), 6000);
+			},
+			onSavedToVault: (name, path) => {
+				new Notice(fill(t("Upload saved to vault"), { name, path }));
+			},
+			onSaveToVaultFailed: (name, message, error) => {
+				handleUploadError(error, name);
+				new Notice(fill(t("Upload save to vault failed"), { name, message }), 8000);
+			},
+		};
+	}
+
+	/**
+	 * Save a file whose upload failed as an ordinary attachment of the note,
+	 * where Obsidian would have put it, linked the way the user's "use
+	 * [[Wikilinks]]" / link format settings say.
+	 */
+	private async saveUploadToVault(target: UploadTarget, file: File): Promise<SavedToVault> {
+		const sourcePath = target.file?.path ?? "";
+		const name = file.name.trim() || "attachment";
+		const path = await this.app.fileManager.getAvailablePathForAttachment(name, sourcePath);
+		const created = await this.app.vault.createBinary(path, await file.arrayBuffer());
+		const link = this.app.fileManager.generateMarkdownLink(created, sourcePath);
+		const fileType = getFileTypeByMime(file);
+		const embed =
+			fileType === "image" ||
+			fileType === "video" ||
+			fileType === "audio" ||
+			created.extension.toLowerCase() === "pdf";
+		const text = `${embed && !link.startsWith("!") ? "!" : ""}${link}\n`;
+		return { text, path: created.path };
+	}
+
+	/**
+	 * Upload finished, but the user removed its placeholder: offer the URL
+	 * instead of losing it. Stays until dismissed.
+	 */
+	private showPlaceholderLostNotice(name: string, url: string): void {
+		const fragment = createFragment((frag) => {
+			frag.createDiv({ text: t("Upload placeholder lost").replace("{name}", () => name) });
+			const button = frag.createEl("button", {
+				cls: "oss-gallery-notice-button",
+				text: t("Copy URL"),
 			});
-			const finalText = this.embedRenderer.render(fileType, url, file.name);
-			await this.replacePlaceholder(target, id, finalText);
-			this.requestGalleryRefresh();
-		} catch (error) {
-			handleUploadError(error, file.name);
-			this.uploadProgress.update(id, { status: "failed" });
-			await this.replacePlaceholder(target, id, "");
-			const message = error instanceof Error ? error.message : String(error);
-			new Notice(
-				t("Upload failed with reason")
-					.replace("{name}", () => file.name)
-					.replace("{message}", () => filterSensitiveInfo(message)),
-				8000
-			);
-		} finally {
-			// Also revokes the thumbnail object URL.
-			this.uploadProgress.remove(id);
-		}
+			button.addEventListener("click", () => {
+				navigator.clipboard.writeText(url).then(
+					() => new Notice(t("URL copied")),
+					() => new Notice(url, 0)
+				);
+			});
+		});
+		new Notice(fragment, 0);
 	}
 
 	/**
@@ -442,8 +534,11 @@ export default class OssGalleryPlugin extends Plugin {
 	 * over it by the editor extension / reading mode post processor.
 	 */
 	private buildPlaceholder(id: string, name: string): string {
-		const label = name.replace(/[[\]\\\r\n]/g, "_");
-		return `[${t("Uploading")} ${label}\u2026](#${id})`;
+		return `[${t("Uploading")} ${this.sanitizePlaceholderLabel(name)}\u2026](#${id})`;
+	}
+
+	private sanitizePlaceholderLabel(name: string): string {
+		return name.replace(/[[\]\\\r\n]/g, "_");
 	}
 
 	private async insertPlaceholders(
@@ -561,6 +656,38 @@ export default class OssGalleryPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Plugin unload: replace the placeholder right away in an open editor;
+	 * a note that is not open is rewritten in the background (best effort).
+	 * The placeholder line itself is kept.
+	 */
+	private replacePlaceholderNow(target: UploadTarget, id: string, text: string): void {
+		const pattern = placeholderPattern(id);
+		const editor = this.resolveEditor(target);
+		if (editor) {
+			this.replaceInEditor(editor, pattern, text);
+			return;
+		}
+		if (!target.file) return;
+		this.app.vault
+			.process(target.file, (data) => data.replace(pattern, () => text))
+			.catch((error) => handleUploadError(error));
+	}
+
+	/**
+	 * Forget failed uploads whose placeholder is gone from the editor that
+	 * shows their note. Notes that are not open are left alone: their
+	 * placeholder is still in the file as far as we know.
+	 */
+	private releaseOrphanedFailedUploads(): void {
+		for (const { id, target } of this.uploadQueue.failedJobs()) {
+			const editor = this.resolveEditor(target);
+			if (editor && !placeholderPattern(id).test(editor.getValue())) {
+				this.uploadQueue.releaseFailed(id);
+			}
+		}
+	}
+
 	async handleUploader(
 		evt: ClipboardEvent | DragEvent,
 		editor: Editor,
@@ -570,22 +697,26 @@ export default class OssGalleryPlugin extends Plugin {
 		if (this.isRichTextPaste(evt)) return;
 
 		const files = this.extractFilesFromEvent(evt);
-		const supported = files.filter((f) => getFileTypeByMime(f));
-		if (supported.length === 0) return;
-		if (!this.validateSettings()) return;
+		if (files.length === 0) return;
+		const triage = this.triageFiles(files);
+		// Nothing this plugin uploads: an ordinary Obsidian paste / drop.
+		if (triage.accepted.length === 0 && triage.rejectedByProvider.length === 0) return;
 
-		const accepted = this.filterAcceptedFiles(supported);
-		// Nothing the active provider can take: leave the event to Obsidian.
-		if (accepted.length === 0) return;
-
-		evt.preventDefault();
-
-		const skipped = files.length - supported.length;
-		if (skipped > 0) {
-			new Notice(t("Some files are not supported and were skipped"));
+		if (!this.validateSettings()) {
+			// Obsidian still handles the event; say why nothing was uploaded,
+			// but only when the active provider would have taken a file.
+			if (triage.accepted.length > 0) {
+				this.showNotConfiguredNotice(t("Not configured paste fallback"));
+			}
+			return;
 		}
 
-		await this.uploadFiles(this.createUploadTarget(editor, info), accepted);
+		this.showSkippedNotice(summarizeSkipped(triage, "drop"));
+		// Nothing the active provider can take: leave the event to Obsidian.
+		if (triage.accepted.length === 0) return;
+
+		evt.preventDefault();
+		await this.uploadFiles(this.createUploadTarget(editor, info), triage.accepted);
 	}
 
 	/**
@@ -600,24 +731,83 @@ export default class OssGalleryPlugin extends Plugin {
 	}
 
 	/**
-	 * Drop files the active provider cannot take (e.g. non-images for
-	 * Imgur), telling the user which ones were skipped.
+	 * Split files into those the active provider takes, those it does not
+	 * (e.g. non-images for Imgur) and those this plugin never uploads.
 	 */
-	private filterAcceptedFiles(files: File[]): File[] {
+	private triageFiles(files: File[]): FileTriage<File> {
 		const providerId = this.settings.activeProvider;
-		const accepted: File[] = [];
-		for (const file of files) {
-			if (providerRegistry.acceptsFileType(providerId, getFileTypeByMime(file), this.app)) {
-				accepted.push(file);
-			} else {
-				new Notice(
-					t("File type not supported by provider")
-						.replace("{provider}", () => providerRegistry.getLabel(providerId, this.app))
-						.replace("{name}", () => file.name)
-				);
+		return triageFiles(
+			files,
+			(file) => getFileTypeByMime(file) !== "",
+			(file) => providerRegistry.acceptsFileType(providerId, getFileTypeByMime(file), this.app)
+		);
+	}
+
+	/** One notice for every file left out of a paste, drop or pick. */
+	private showSkippedNotice(summary: SkippedSummary | null): void {
+		if (!summary) return;
+		const provider = providerRegistry.getLabel(this.settings.activeProvider, this.app);
+		const list = (names: string[]) =>
+			formatNameList(names, t("List separator"), (shown, count) =>
+				t("Upload more names")
+					.replace("{names}", () => shown)
+					.replace("{count}", () => String(count))
+			);
+		const heading =
+			summary.heading === "partial"
+				? t("Upload skipped heading")
+				: summary.heading === "native"
+					? t("Upload native heading")
+					: t("Upload none heading");
+
+		const fragment = createFragment((frag) => {
+			frag.createDiv({ text: heading });
+			if (summary.rejectedNames.length > 0) {
+				frag.createDiv({
+					text: t("Upload rejected by provider")
+						.replace("{provider}", () => provider)
+						.replace("{names}", () => list(summary.rejectedNames)),
+				});
 			}
-		}
-		return accepted;
+			if (summary.unsupportedNames.length > 0) {
+				frag.createDiv({
+					text: t("Upload unsupported type").replace("{names}", () =>
+						list(summary.unsupportedNames)
+					),
+				});
+			}
+		});
+		new Notice(fragment, 8000);
+	}
+
+	/**
+	 * The active provider is missing required settings: name them and offer
+	 * a way to the settings tab. `detail` adds what happened instead.
+	 */
+	private showNotConfiguredNotice(detail?: string): void {
+		const providerId = this.settings.activeProvider;
+		const provider = providerRegistry.getLabel(providerId, this.app);
+		const missing = providerRegistry.getMissingFields(providerId, this.settings.providers[providerId]);
+
+		const fragment = createFragment((frag) => {
+			frag.createDiv({ text: t("Provider not configured").replace("{provider}", () => provider) });
+			if (missing.length > 0) {
+				frag.createDiv({
+					text: formatMissingSummary(
+						missing.map((spec) => t(spec.label)),
+						t("Missing required fields"),
+						t("List separator")
+					),
+				});
+			}
+			if (detail) frag.createDiv({ text: detail });
+			const button = frag.createEl("button", {
+				cls: "oss-gallery-notice-button mod-cta",
+				text: t("Open settings"),
+			});
+			button.addEventListener("click", () => openPluginSettings(this.app, this.manifest.id));
+		});
+		new Notice(fragment, 10000);
 	}
 
 	/**
@@ -687,6 +877,13 @@ export default class OssGalleryPlugin extends Plugin {
 		// pending gallery refresh.
 		this.requestSaveData.run();
 		this.requestGalleryRefresh.cancel();
+		this.requestFailedUploadSweep.cancel();
+		// Stop waiting for uploads; placeholders that can no longer finish
+		// become a readable "did not finish" note (the card needs this
+		// session's state, so it could never render them again).
+		this.uploadQueue?.dispose();
+		this.uploadAnnouncer?.destroy();
+		this.uploadAnnouncer = null;
 		// Stop indexing and write every open index (synchronously).
 		this.semanticIndexing?.dispose();
 		// Write pending thumbnail manifests (synchronously).

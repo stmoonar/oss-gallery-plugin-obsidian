@@ -122,6 +122,42 @@ export class LocalProvider implements IOssProvider {
     }
 
     /**
+     * Settings check without writing anything: the storage directory (or,
+     * before the first upload, its nearest existing parent, since uploads
+     * create it) must be a writable directory.
+     */
+    async testConnection(): Promise<void> {
+        if (!this.settings.storagePath) {
+            throw new Error(t('Please configure local storage path first'));
+        }
+        let dir = path.resolve(this.getAbsoluteStoragePath());
+        for (;;) {
+            let stat: fs.Stats | null = null;
+            try {
+                stat = await fs.promises.stat(dir);
+            } catch {
+                stat = null;
+            }
+            if (stat) {
+                if (!stat.isDirectory()) {
+                    throw new Error(`${t('Local storage is not a directory')}: ${dir}`);
+                }
+                try {
+                    await fs.promises.access(dir, fs.constants.W_OK);
+                } catch {
+                    throw new Error(`${t('Local storage is not writable')}: ${dir}`);
+                }
+                return;
+            }
+            const parent = path.dirname(dir);
+            if (parent === dir) {
+                throw new Error(`${t('Local storage is not writable')}: ${dir}`);
+            }
+            dir = parent;
+        }
+    }
+
+    /**
      * Read a stored object's bytes from disk (semantic indexing: zero network
      * traffic). The key is resolved inside the storage directory; keys that
      * escape it (e.g. containing "..") are rejected.

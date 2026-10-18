@@ -1,6 +1,7 @@
 import { MarkdownPostProcessor, MarkdownRenderChild } from "obsidian";
 import {
 	createUploadProgressCard,
+	UploadCardActionHandler,
 	updateUploadProgressCard,
 } from "../components/UploadProgressCard";
 import { UPLOAD_ID_PREFIX, uploadIdFromHref } from "../services/uploadPlaceholder";
@@ -11,7 +12,8 @@ class UploadProgressRenderChild extends MarkdownRenderChild {
 	constructor(
 		containerEl: HTMLElement,
 		private readonly id: string,
-		private readonly store: UploadProgressStore
+		private readonly store: UploadProgressStore,
+		private readonly onAction: UploadCardActionHandler
 	) {
 		super(containerEl);
 	}
@@ -23,7 +25,7 @@ class UploadProgressRenderChild extends MarkdownRenderChild {
 				const entry = this.store.get(this.id);
 				// A removed entry means the placeholder is being replaced in the
 				// note, which re-renders this section anyway.
-				if (entry) updateUploadProgressCard(this.containerEl, entry);
+				if (entry) updateUploadProgressCard(this.containerEl, entry, this.onAction);
 			})
 		);
 	}
@@ -38,6 +40,7 @@ const LINK_SELECTOR = `a[href^="#${UPLOAD_ID_PREFIX}"], a[data-href^="#${UPLOAD_
 export function createUploadProgressPostProcessor(
 	store: UploadProgressStore
 ): MarkdownPostProcessor {
+	const onAction: UploadCardActionHandler = (id, action) => store.requestAction(id, action);
 	return (el, ctx) => {
 		el.querySelectorAll<HTMLAnchorElement>(LINK_SELECTOR).forEach((link) => {
 			const id =
@@ -46,9 +49,9 @@ export function createUploadProgressPostProcessor(
 			const entry = id ? store.get(id) : undefined;
 			if (!id || !entry) return;
 
-			const card = createUploadProgressCard(entry);
+			const card = createUploadProgressCard(entry, onAction);
 			link.replaceWith(card);
-			ctx.addChild(new UploadProgressRenderChild(card, id, store));
+			ctx.addChild(new UploadProgressRenderChild(card, id, store, onAction));
 		});
 	};
 }

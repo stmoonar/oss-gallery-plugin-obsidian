@@ -23,13 +23,14 @@ import type { ThumbnailWriter } from "../thumbnails/ThumbnailCache";
 import { IndexScope, makeIndexScope } from "./fingerprint";
 import { clearVaultIndex, ClearResult, vaultIdFor } from "./indexFiles";
 import { resolveIndexDir, ResolvedModelDir } from "./modelDir";
-import { formatBytes } from "./format";
+import { formatBytes, formatPercent } from "./format";
 import { AbortSignalLike, fetchRemoteImageBytes, FailureDescriber, TooLargeDescriber } from "../services/remoteBytes";
 import type { SemanticController } from "./SemanticController";
 import { IndexProgress, IndexStats, RunSummary, SemanticIndexService } from "./SemanticIndexService";
 import { SemanticHit, SemanticSearchService } from "./SemanticSearchService";
 import { formatCount, formatIndexSummary } from "./statusText";
 import { rasterizeSvg } from "./svgRasterizer";
+import { openPluginSettings } from "../utils/openPluginSettings";
 
 /** Index state shown in the gallery's semantic bar. */
 export interface GalleryIndexState {
@@ -76,6 +77,8 @@ export interface GallerySemanticHooks {
 
 export interface SemanticIndexingHost {
 	app: App;
+	/** The plugin's manifest (its id opens the plugin's settings tab). */
+	manifest: { id: string };
 	settings: PluginSettings;
 	providerManager: OssProviderManager;
 	semantic: SemanticController;
@@ -532,7 +535,7 @@ export class SemanticIndexing {
 			await this.startIndexingUnchecked(provider, scope, relist);
 		} catch (error) {
 			console.error("OSS Gallery: starting semantic indexing failed", error);
-			new Notice(`${t("Semantic indexing stopped")}: ${errorMessage(error)}`, 10000);
+			new Notice(t("Semantic indexing failed").replace("{message}", errorMessage(error)), 10000);
 			this.notify();
 		}
 	}
@@ -580,7 +583,7 @@ export class SemanticIndexing {
 			active = this.activeProvider();
 		} catch (error) {
 			console.error("OSS Gallery: semantic index scope failed", error);
-			new Notice(`${t("Semantic indexing stopped")}: ${errorMessage(error)}`, 10000);
+			new Notice(t("Semantic indexing failed").replace("{message}", errorMessage(error)), 10000);
 			return;
 		}
 		if (active) {
@@ -588,13 +591,34 @@ export class SemanticIndexing {
 		}
 	}
 
+	/** Ready to index; otherwise a notice says what to do first. */
 	private async ensureReady(): Promise<boolean> {
 		const state = await this.host.semantic.refresh();
-		if (!this.host.settings.semantic.enabled || state.kind !== "installed") {
-			new Notice(t("Semantic self-test needs installed model"));
-			return false;
+		if (this.host.settings.semantic.enabled && state.kind === "installed") {
+			return true;
 		}
-		return true;
+		switch (state.kind) {
+			case "installed":
+				// Installed but switched off.
+				new Notice(t("Semantic turn on in settings"));
+				break;
+			case "unsupported":
+				new Notice(t("Semantic self-test needs WebGPU"));
+				break;
+			case "checking":
+			case "downloading":
+			case "verifying":
+			case "deleting":
+				new Notice(t("Semantic model busy"));
+				break;
+			case "needs-repair":
+				new Notice(t("Semantic search files need repair"));
+				break;
+			default:
+				new Notice(t("Semantic self-test needs installed model"));
+				break;
+		}
+		return false;
 	}
 
 	// ---- settings ----------------------------------------------------------
@@ -602,6 +626,20 @@ export class SemanticIndexing {
 	statsForCurrentScope(): IndexStats | null {
 		const scope = this.currentScope();
 		return scope && this.index.hasIndex(scope) ? this.index.getStats(scope) : null;
+	}
+
+	/**
+	 * What a new image detail would rebuild for the active provider: its
+	 * indexed count and the last listing (sizes for the download estimate).
+	 * null when the provider cannot be indexed.
+	 */
+	rebuildInputs(): { indexed: number; listed: OssImage[] | null; local: boolean } | null {
+		const scope = this.currentScope();
+		if (!scope) {
+			return null;
+		}
+		const indexed = this.index.hasIndex(scope) ? this.index.getStats(scope).indexed : 0;
+		return { indexed, listed: this.index.getRemote(scope), local: scope.local };
 	}
 
 	/** Ask, then delete this vault's index files under the index directory. */
@@ -640,6 +678,10 @@ export class SemanticIndexing {
 		el.setAttribute("role", "button");
 		el.setAttribute("tabindex", "0");
 		const activate = () => {
+			if (this.isModelBusy()) {
+				this.openSettings();
+				return;
+			}
 			const p = this.index.getProgress();
 			if (p.state === "paused") {
 				this.index.resume();
@@ -659,37 +701,52 @@ export class SemanticIndexing {
 		this.renderStatusBar();
 	}
 
+	/** Model download / verification running (shown in the status bar). */
+	private isModelBusy(): boolean {
+		const kind = this.host.semantic.getState().kind;
+		return kind === "downloading" || kind === "verifying";
+	}
+
+	/** Open this plugin's tab in Obsidian's settings (download progress lives there). */
+	private openSettings(): void {
+		openPluginSettings(this.host.app, this.host.manifest.id);
+	}
+
 	/**
-	 * Running: "Indexing 12/340" (click pauses/resumes). Idle: "Semantic: N
-	 * indexed" for the active provider (click opens the gallery in semantic
-	 * mode). Hidden while the feature is off or there is no index.
+	 * Model download: "Model download 42%" (click opens the settings tab).
+	 * Indexing: "Indexing 12/340 · click to pause" (click pauses/resumes).
+	 * Hidden when nothing is happening; index statistics are in the
+	 * settings tab and the gallery.
 	 */
 	private renderStatusBar(): void {
 		const el = this.statusBar;
 		if (!el) {
 			return;
 		}
+		const install = this.host.semantic.getState();
+		if (install.kind === "downloading" || install.kind === "verifying") {
+			el.show();
+			const template = install.kind === "downloading" ? t("Status model download") : t("Status model verifying");
+			el.setText(template.replace("{percent}", formatPercent(install.bytesDone, install.bytesTotal)));
+			el.setAttribute("aria-label", t("Status open settings"));
+			return;
+		}
 		const p = this.index.getProgress();
 		if (p.state !== "idle") {
 			el.show();
-			const label = p.state === "paused" ? t("Semantic index paused") : t("Semantic indexing");
-			el.setText(`${label} ${formatCount(p.done)}/${formatCount(p.total)}`);
-			el.setAttribute("aria-label", p.state === "paused" ? t("Click to resume") : t("Click to pause"));
+			const paused = p.state === "paused";
+			el.setText((paused ? t("Status indexing paused") : t("Status indexing running"))
+				.replace("{done}", formatCount(p.done))
+				.replace("{total}", formatCount(p.total)));
+			el.setAttribute("aria-label", paused ? t("Click to resume") : t("Click to pause"));
 			return;
 		}
-		const scope = this.host.semantic.isReady() ? this.currentScope() : null;
-		if (!scope || !this.index.hasIndex(scope)) {
-			el.hide();
-			return;
-		}
-		el.show();
-		el.setText(t("Semantic status idle").replace("{count}", formatCount(this.index.getStats(scope).indexed)));
-		el.setAttribute("aria-label", t("Open gallery in semantic search mode"));
+		el.hide();
 	}
 
 	private reportRun(summary: RunSummary): void {
 		if (summary.error) {
-			new Notice(`${t("Semantic indexing stopped")}: ${summary.error}`, 10000);
+			new Notice(t("Semantic indexing failed").replace("{message}", summary.error), 10000);
 			return;
 		}
 		const issues = summary.converted + summary.unsupported + summary.failed > 0;

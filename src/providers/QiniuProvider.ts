@@ -141,42 +141,10 @@ export class QiniuProvider implements IOssProvider {
         }
 
         try {
-            const host = 'rsf.qiniuapi.com';
             const collector = new ListingCollector(this.name, listPrefix);
 
             return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
-                const query = new URLSearchParams({
-                    bucket: this.settings.bucket,
-                    limit: '1000',
-                });
-                if (listPrefix) {
-                    query.append('prefix', listPrefix);
-                }
-                if (marker) {
-                    query.append('marker', marker);
-                }
-
-                const queryString = query.toString();
-                const authorization = this.createManagementAuthorization(
-                    host,
-                    'POST',
-                    '/list',
-                    queryString
-                );
-
-                const response = await requestUrl({
-                    url: `https://${host}/list?${queryString}`,
-                    method: 'POST',
-                    headers: {
-                        'Authorization': authorization,
-                    },
-                });
-
-                if (response.status !== 200) {
-                    throw new Error(`List failed with status: ${response.status}`);
-                }
-
-                const data = getRecord(response.json as unknown);
+                const data = await this.fetchListPage(listPrefix, marker, 1000);
                 const items: OssImage[] = [];
                 for (const item of getArray(data?.items) ?? []) {
                     const record = getRecord(item);
@@ -204,6 +172,60 @@ export class QiniuProvider implements IOssProvider {
             console.error('Failed to list Qiniu images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    /** One signed list request with at most one key (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.accessKey || !this.settings.secretKey || !this.settings.bucket) {
+            throw new Error(t('Please configure Qiniu settings first'));
+        }
+        // Throws when the required CDN domain is missing.
+        this.getPublicBaseUrl();
+        try {
+            await this.fetchListPage(buildListPrefix(this.settings.path, undefined), '', 1);
+        } catch (error) {
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async fetchListPage(
+        listPrefix: string,
+        marker: string,
+        limit: number
+    ): Promise<Record<string, unknown> | undefined> {
+        const host = 'rsf.qiniuapi.com';
+        const query = new URLSearchParams({
+            bucket: this.settings.bucket,
+            limit: String(limit),
+        });
+        if (listPrefix) {
+            query.append('prefix', listPrefix);
+        }
+        if (marker) {
+            query.append('marker', marker);
+        }
+
+        const queryString = query.toString();
+        const authorization = this.createManagementAuthorization(
+            host,
+            'POST',
+            '/list',
+            queryString
+        );
+
+        const response = await requestUrl({
+            url: `https://${host}/list?${queryString}`,
+            method: 'POST',
+            headers: {
+                'Authorization': authorization,
+            },
+        });
+
+        if (response.status !== 200) {
+            throw new Error(`List failed with status: ${response.status}`);
+        }
+
+        return getRecord(response.json as unknown);
     }
 
     listingKeyForUpload(path: string): string {

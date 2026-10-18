@@ -20,6 +20,7 @@ import {
 	ModelDownloadManager,
 	VerifyResult,
 } from "./ModelDownloadManager";
+import { mirrorMayHelp, usesMirror } from "./mirrors";
 import { resolveModelDir, ResolvedModelDir } from "./modelDir";
 import type { EmbeddingConfig, EmbeddingMode } from "./protocol";
 import { probeWebGpu, WebGpuProbeResult } from "./webGpuProbe";
@@ -104,7 +105,10 @@ export class SemanticController {
 			return;
 		}
 		if (result.error) {
-			new Notice(`${t("Semantic search download failed")}: ${describeDownloadError(result.error)}`);
+			const hint = mirrorMayHelp(result.error.code) && !usesMirror(this.host.settings.semantic)
+				? ` ${t("Semantic try mirror hint")}`
+				: "";
+			new Notice(`${t("Semantic search download failed")}: ${describeDownloadError(result.error)}${hint}`, hint ? 10000 : undefined);
 		}
 	}
 

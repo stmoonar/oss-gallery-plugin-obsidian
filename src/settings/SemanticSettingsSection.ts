@@ -1,16 +1,19 @@
-import { App, debounce, Setting, ToggleComponent } from "obsidian";
+import { App, debounce, DropdownComponent, Setting, ToggleComponent } from "obsidian";
 import { t } from "../i18n";
 import { renderIndexStatusDetails } from "../components/IndexStatusDetails";
-import { SemanticDeleteModal, SemanticDownloadModal } from "../modals/SemanticModals";
+import { SemanticConfirmModal, SemanticDeleteModal, SemanticDownloadModal } from "../modals/SemanticModals";
+import { providerRegistry } from "../providers/registry";
 import { AssetEntry, totalSize } from "../semantic/assets";
-import { formatMegabytes, formatPercent } from "../semantic/format";
+import { formatBytes, formatMegabytes, formatPercent } from "../semantic/format";
 import { InstallState, remainingFiles, stateHasFiles } from "../semantic/ModelDownloadManager";
 import { defaultIndexDir, defaultModelDir, resolveIndexDir } from "../semantic/modelDir";
-import { MirrorUrlError, normalizeMirrorUrl } from "../semantic/mirrors";
+import { MirrorUrlError, mirrorMayHelp, normalizeMirrorUrl, usesMirror } from "../semantic/mirrors";
 import { describeDownloadError, SemanticController } from "../semantic/SemanticController";
+import { formatCount } from "../semantic/statusText";
 import type { WebGpuFailureReason, WebGpuProbeResult } from "../semantic/webGpuProbe";
 import type { ImageTokenBudget, PluginSettings } from "../types/settings";
 import { setDestructiveButton } from "../utils/buttonStyle";
+import { estimateRebuild, semanticDownloadSize } from "./settingsUx";
 
 type MirrorKey = "hfEndpoint" | "githubMirror";
 
@@ -38,12 +41,39 @@ export function describeProbeFailure(probe: Extract<WebGpuProbeResult, { ok: fal
 }
 
 /**
- * "Semantic search" block of the settings tab (docs/semantic-search.md §9.2):
- * WebGPU status, install status/progress, download/cancel/verify/delete,
- * model directory, token budget and auto-index.
+ * Setup: model not installed yet, only status, mirrors and download.
+ * Ready: installed (or needs repair), every option.
+ */
+type Phase = "setup" | "ready";
+
+/** null = keep the current phase (transient states such as a running download). */
+function phaseOf(state: InstallState): Phase | null {
+	switch (state.kind) {
+		case "installed":
+		case "needs-repair":
+			return "ready";
+		case "not-installed":
+		case "incomplete":
+		case "unsupported":
+		case "invalid-dir":
+			return "setup";
+		default:
+			return null;
+	}
+}
+
+/**
+ * "Semantic search" block of the settings tab (docs/semantic-search.md §9.2),
+ * with progressive disclosure: before the model is installed only the
+ * WebGPU status, the download sources and the download itself are shown;
+ * after that the on/off switch, image detail, auto-index and index status.
+ * Model and index directories live in a collapsed "Advanced" area.
  */
 export class SemanticSettingsSection {
 	private unsubscribe: (() => void) | null = null;
+	private rootEl: HTMLElement | null = null;
+	private phase: Phase = "setup";
+	private probeResult: WebGpuProbeResult | null = null;
 	private probeSetting: Setting | null = null;
 	private statusSetting: Setting | null = null;
 	private enableToggle: ToggleComponent | null = null;
@@ -54,6 +84,8 @@ export class SemanticSettingsSection {
 	private syncingToggle = false;
 	private indexStatusEl: HTMLElement | null = null;
 	private unsubscribeIndex: (() => void) | null = null;
+	/** The "Advanced" area stays open across re-renders once opened. */
+	private advancedOpen = false;
 
 	constructor(
 		private readonly app: App,
@@ -67,19 +99,104 @@ export class SemanticSettingsSection {
 
 	render(containerEl: HTMLElement): void {
 		this.dispose();
+		this.rootEl = containerEl.createDiv({ cls: "oss-gallery-semantic-settings" });
+		const state = this.controller.getState();
+		this.phase = phaseOf(state) ?? (this.settings.enabled ? "ready" : "setup");
+		this.renderSection();
 
-		new Setting(containerEl)
+		this.unsubscribe = this.controller.manager.subscribe(() => this.scheduleUpdate());
+		void this.controller.probe().then((probe) => {
+			this.probeResult = probe;
+			this.renderProbe();
+		});
+		void this.controller.refresh();
+	}
+
+	dispose(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+		this.disposeIndexStatus();
+		if (this.frame !== null) {
+			window.cancelAnimationFrame(this.frame);
+			this.frame = null;
+		}
+		this.renderedKey = null;
+		this.rootEl = null;
+	}
+
+	private disposeIndexStatus(): void {
+		this.unsubscribeIndex?.();
+		this.unsubscribeIndex = null;
+		this.indexStatusEl = null;
+	}
+
+	/** (Re)build the block for the current phase. */
+	private renderSection(): void {
+		const el = this.rootEl;
+		if (!el) {
+			return;
+		}
+		el.empty();
+		this.disposeIndexStatus();
+		this.probeSetting = null;
+		this.statusSetting = null;
+		this.enableToggle = null;
+		this.renderedKey = null;
+
+		new Setting(el)
 			.setName(t("Semantic search"))
-			.setDesc(t("Semantic search description"))
+			.setDesc(t("Semantic search description")
+				.replace("{size}", semanticDownloadSize(this.controller.getAssets())))
 			.setHeading();
 
-		this.probeSetting = new Setting(containerEl)
+		this.probeSetting = new Setting(el)
 			.setName(t("WebGPU"))
 			.setDesc(t("Checking..."));
+		this.renderProbe();
 
-		this.statusSetting = new Setting(containerEl).setName(t("Model files"));
+		if (this.phase === "setup") {
+			// Mirrors first: they decide whether the download below works.
+			this.renderMirrorSettings(el);
+			this.statusSetting = new Setting(el).setName(t("Model files"));
+			const advanced = this.renderAdvanced(el);
+			this.renderModelDirSetting(advanced);
+			this.renderIndexDirSetting(advanced);
+		} else {
+			this.statusSetting = new Setting(el).setName(t("Model files"));
+			this.renderEnableToggle(el);
+			this.renderBudgetSetting(el);
+			new Setting(el)
+				.setName(t("Index automatically"))
+				.setDesc(t("Index automatically description"))
+				.addToggle((toggle) => toggle
+					.setValue(this.settings.autoIndex)
+					.onChange(async (value) => {
+						this.settings.autoIndex = value;
+						await this.host.saveSettings();
+					}));
+			this.renderIndexStatus(el);
+			const advanced = this.renderAdvanced(el);
+			this.renderModelDirSetting(advanced);
+			this.renderIndexDirSetting(advanced);
+			this.renderMirrorSettings(advanced);
+		}
 
-		new Setting(containerEl)
+		this.update(this.controller.getState());
+	}
+
+	/** Collapsible "Advanced" area; returns the element to render into. */
+	private renderAdvanced(el: HTMLElement): HTMLElement {
+		const details = el.createEl("details", { cls: "oss-gallery-settings-advanced" });
+		details.open = this.advancedOpen;
+		details.createEl("summary", { text: t("Semantic advanced") });
+		details.addEventListener("toggle", () => {
+			this.advancedOpen = details.open;
+		});
+		return details;
+	}
+
+	private renderEnableToggle(el: HTMLElement): void {
+		new Setting(el)
 			.setName(t("Enable semantic search"))
 			.setDesc(t("Enable semantic search description"))
 			.addToggle((toggle) => {
@@ -93,31 +210,14 @@ export class SemanticSettingsSection {
 					this.update(this.controller.getState());
 				});
 			});
+	}
 
-		const saveModelDir = debounce(async () => {
-			await this.host.saveSettings();
-			await this.controller.onModelDirChanged();
-			this.update(this.controller.getState());
-		}, 600, true);
-
-		new Setting(containerEl)
-			.setName(t("Model directory"))
-			.setDesc(t("Model directory description").replace("{dir}", defaultModelDir()))
-			.addText((text) => text
-				.setPlaceholder(defaultModelDir())
-				.setValue(this.settings.modelDir)
-				.onChange((value) => {
-					if (this.controller.manager.isBusy()) {
-						text.setValue(this.settings.modelDir);
-						return;
-					}
-					this.settings.modelDir = value.trim();
-					saveModelDir();
-				}));
-
-		this.renderIndexDirSetting(containerEl);
-
-		new Setting(containerEl)
+	/**
+	 * Image detail: a new value resets the whole index of this vault, so it
+	 * asks first (indexed count, download estimate); Cancel restores it.
+	 */
+	private renderBudgetSetting(el: HTMLElement): void {
+		new Setting(el)
 			.setName(t("Image detail"))
 			.setDesc(t("Image detail description"))
 			.addDropdown((dropdown) => dropdown
@@ -125,61 +225,89 @@ export class SemanticSettingsSection {
 				.addOption("140", t("Image detail 140"))
 				.addOption("280", t("Image detail 280"))
 				.setValue(String(this.settings.imageTokenBudget))
-				.onChange(async (value) => {
-					this.settings.imageTokenBudget = Number(value) as ImageTokenBudget;
-					await this.host.saveSettings();
+				.onChange((value) => {
+					const next = Number(value) as ImageTokenBudget;
+					if (next === this.settings.imageTokenBudget) {
+						return;
+					}
+					this.confirmBudgetChange(dropdown, next);
 				}));
-
-		new Setting(containerEl)
-			.setName(t("Index automatically"))
-			.setDesc(t("Index automatically description"))
-			.addToggle((toggle) => toggle
-				.setValue(this.settings.autoIndex)
-				.onChange(async (value) => {
-					this.settings.autoIndex = value;
-					await this.host.saveSettings();
-				}));
-
-		this.renderIndexStatus(containerEl);
-
-		new Setting(containerEl)
-			.setName(t("Download sources"))
-			.setDesc(t("Download sources description"))
-			.setHeading();
-
-		this.renderMirrorSetting(
-			containerEl,
-			"hfEndpoint",
-			t("Hugging Face endpoint"),
-			t("Hugging Face endpoint description"),
-			"https://hf-mirror.com"
-		);
-		this.renderMirrorSetting(
-			containerEl,
-			"githubMirror",
-			t("GitHub mirror"),
-			t("GitHub mirror description"),
-			"https://gh-proxy.com"
-		);
-
-		this.unsubscribe = this.controller.manager.subscribe(() => this.scheduleUpdate());
-		this.update(this.controller.getState());
-
-		void this.controller.probe().then((probe) => this.renderProbe(probe));
-		void this.controller.refresh();
 	}
 
-	dispose(): void {
-		this.unsubscribe?.();
-		this.unsubscribe = null;
-		this.unsubscribeIndex?.();
-		this.unsubscribeIndex = null;
-		this.indexStatusEl = null;
-		if (this.frame !== null) {
-			window.cancelAnimationFrame(this.frame);
-			this.frame = null;
+	private confirmBudgetChange(dropdown: DropdownComponent, next: ImageTokenBudget): void {
+		const restore = (): void => {
+			dropdown.setValue(String(this.settings.imageTokenBudget));
+		};
+		const paragraphs = [t("Image detail change intro")];
+		const inputs = this.controller.indexing?.rebuildInputs() ?? null;
+		if (inputs) {
+			const provider = providerRegistry.getLabel(this.host.settings.activeProvider);
+			const estimate = estimateRebuild(inputs.indexed, inputs.listed, inputs.local);
+			paragraphs.push(t("Image detail change indexed")
+				.replace("{count}", formatCount(estimate.indexed))
+				.replace("{provider}", provider));
+			if (estimate.downloadBytes === 0 && inputs.local) {
+				paragraphs.push(t("Image detail change local"));
+			} else if (estimate.downloadBytes === null) {
+				paragraphs.push(t("Image detail change download unknown"));
+			} else {
+				let text = t("Image detail change download")
+					.replace("{size}", formatBytes(estimate.downloadBytes))
+					.replace("{provider}", provider);
+				if (estimate.unknownSizeCount > 0) {
+					text += ` ${t("Semantic traffic unknown size").replace("{count}", formatCount(estimate.unknownSizeCount))}`;
+				}
+				paragraphs.push(text);
+			}
 		}
-		this.renderedKey = null;
+		new SemanticConfirmModal(this.app, {
+			title: t("Image detail change title"),
+			paragraphs,
+			warning: t("Image detail change warning"),
+			confirmText: t("Image detail change confirm"),
+			onConfirm: () => {
+				void this.applyBudget(next);
+			},
+			onCancel: restore,
+		}).open();
+	}
+
+	private async applyBudget(next: ImageTokenBudget): Promise<void> {
+		this.settings.imageTokenBudget = next;
+		await this.host.saveSettings();
+		this.renderIndexStatusContent();
+	}
+
+	/**
+	 * Model directory. It cannot change while a download or check runs:
+	 * the field is reset and says why.
+	 */
+	private renderModelDirSetting(el: HTMLElement): void {
+		const setting = new Setting(el)
+			.setName(t("Model directory"))
+			.setDesc(t("Model directory description").replace("{dir}", defaultModelDir()));
+		const errorEl = setting.descEl.createDiv({ cls: "oss-gallery-setting-error" });
+		errorEl.hide();
+		const saveModelDir = debounce(async () => {
+			await this.host.saveSettings();
+			await this.controller.onModelDirChanged();
+			this.update(this.controller.getState());
+		}, 600, true);
+
+		setting.addText((text) => text
+			.setPlaceholder(defaultModelDir())
+			.setValue(this.settings.modelDir)
+			.onChange((value) => {
+				if (this.controller.manager.isBusy()) {
+					text.setValue(this.settings.modelDir);
+					errorEl.setText(t("Model directory busy"));
+					errorEl.show();
+					return;
+				}
+				errorEl.hide();
+				this.settings.modelDir = value.trim();
+				saveModelDir();
+			}));
 	}
 
 	/**
@@ -187,8 +315,8 @@ export class SemanticSettingsSection {
 	 * value points at a new location: the old index stays where it was, the
 	 * stores reopen there (remote providers ask for confirmation again).
 	 */
-	private renderIndexDirSetting(containerEl: HTMLElement): void {
-		const setting = new Setting(containerEl)
+	private renderIndexDirSetting(el: HTMLElement): void {
+		const setting = new Setting(el)
 			.setName(t("Index directory"))
 			.setDesc(t("Index directory description").replace("{dir}", defaultIndexDir()));
 		const errorEl = setting.descEl.createDiv({ cls: "oss-gallery-setting-error" });
@@ -216,12 +344,12 @@ export class SemanticSettingsSection {
 	}
 
 	/** Index statistics of the active provider, clear button, problem files. */
-	private renderIndexStatus(containerEl: HTMLElement): void {
+	private renderIndexStatus(el: HTMLElement): void {
 		const indexing = this.controller.indexing;
 		if (!indexing) {
 			return;
 		}
-		new Setting(containerEl)
+		new Setting(el)
 			.setName(t("Index for this vault"))
 			.setDesc(t("Index for this vault description"))
 			.addButton((btn) => {
@@ -229,7 +357,7 @@ export class SemanticSettingsSection {
 					.setButtonText(t("Clear index for this vault"))
 					.onClick(() => indexing.confirmClearIndex(() => this.renderIndexStatusContent())));
 			});
-		this.indexStatusEl = containerEl.createDiv({ cls: "oss-gallery-semantic-index-status" });
+		this.indexStatusEl = el.createDiv({ cls: "oss-gallery-semantic-index-status" });
 		this.renderIndexStatusContent();
 		let pending = false;
 		this.unsubscribeIndex = indexing.index.onProgress((p) => {
@@ -269,6 +397,28 @@ export class SemanticSettingsSection {
 		renderIndexStatusDetails(el, stats);
 	}
 
+	private renderMirrorSettings(el: HTMLElement): void {
+		new Setting(el)
+			.setName(t("Download sources"))
+			.setDesc(t("Download sources description"))
+			.setClass("oss-gallery-setting-subheading");
+
+		this.renderMirrorSetting(
+			el,
+			"hfEndpoint",
+			t("Hugging Face endpoint"),
+			t("Hugging Face endpoint description"),
+			"https://hf-mirror.com"
+		);
+		this.renderMirrorSetting(
+			el,
+			"githubMirror",
+			t("GitHub mirror"),
+			t("GitHub mirror description"),
+			"https://gh-proxy.com"
+		);
+	}
+
 	/**
 	 * Mirror URL field. Only valid values are saved (normalized: https, no
 	 * trailing slash); an invalid value shows an inline error and keeps the
@@ -287,6 +437,8 @@ export class SemanticSettingsSection {
 		errorEl.hide();
 		const save = debounce(async () => {
 			await this.host.saveSettings();
+			// The "try a mirror" hint depends on whether one is set.
+			this.update(this.controller.getState());
 		}, 600, true);
 
 		setting.addText((text) => text
@@ -307,8 +459,9 @@ export class SemanticSettingsSection {
 			}));
 	}
 
-	private renderProbe(probe: WebGpuProbeResult): void {
-		if (!this.probeSetting) {
+	private renderProbe(): void {
+		const probe = this.probeResult;
+		if (!this.probeSetting || !probe) {
 			return;
 		}
 		if (probe.ok) {
@@ -331,6 +484,12 @@ export class SemanticSettingsSection {
 	}
 
 	private update(state: InstallState): void {
+		const phase = phaseOf(state) ?? this.phase;
+		if (phase !== this.phase) {
+			this.phase = phase;
+			this.renderSection();
+			return;
+		}
 		const setting = this.statusSetting;
 		if (!setting) {
 			return;
@@ -378,7 +537,10 @@ export class SemanticSettingsSection {
 
 	private describeState(state: InstallState): string {
 		const lastError = this.controller.manager.getLastError();
-		const errorSuffix = lastError ? ` ${t("Last error")}: ${describeDownloadError(lastError)}` : "";
+		let errorSuffix = lastError ? ` ${t("Last error")}: ${describeDownloadError(lastError)}` : "";
+		if (lastError && mirrorMayHelp(lastError.code) && !usesMirror(this.settings)) {
+			errorSuffix += ` ${t("Semantic try mirror hint")}`;
+		}
 		switch (state.kind) {
 			case "checking":
 				return t("Checking...");
@@ -481,8 +643,7 @@ export class SemanticSettingsSection {
 		if (pending.length === 0) {
 			return;
 		}
-		const usesMirror = this.settings.hfEndpoint !== "" || this.settings.githubMirror !== "";
-		new SemanticDownloadModal(this.app, pending, dir.dir, usesMirror, () => {
+		new SemanticDownloadModal(this.app, pending, dir.dir, usesMirror(this.settings), () => {
 			void this.controller.download();
 		}).open();
 	}

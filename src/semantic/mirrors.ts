@@ -93,3 +93,19 @@ export function sourceHosts(urls: readonly string[]): string[] {
 	}
 	return hosts;
 }
+
+/**
+ * Download failures a mirror may help with (official hosts blocked, slow or
+ * redirecting). Integrity, disk and lock errors are not about the source.
+ */
+export function mirrorMayHelp(errorCode: string | undefined): boolean {
+	return errorCode === "network"
+		|| errorCode === "http"
+		|| errorCode === "too-many-redirects"
+		|| errorCode === "insecure-redirect";
+}
+
+/** Whether any download mirror is configured. */
+export function usesMirror(settings: MirrorSettings): boolean {
+	return settings.hfEndpoint !== "" || settings.githubMirror !== "";
+}

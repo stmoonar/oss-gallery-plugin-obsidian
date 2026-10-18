@@ -206,6 +206,48 @@ export class GithubProvider implements IOssProvider {
         return await this.walkDirectories(repo, listPrefix);
     }
 
+    /**
+     * Settings check: the repository (token + name, write access) and the
+     * branch, two small API requests. An empty repository has no branch yet;
+     * the first upload creates it.
+     */
+    async testConnection(): Promise<void> {
+        if (!this.settings.repo || !this.settings.token) {
+            throw new Error(t('Please configure OSS settings first'));
+        }
+        const headers = {
+            'Authorization': `Bearer ${this.settings.token}`,
+            'User-Agent': 'Obsidian-OSS-Gallery',
+            'Accept': 'application/vnd.github.v3+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        };
+        const repoResponse = await requestUrl({
+            url: `https://api.github.com/repos/${this.settings.repo}`,
+            method: 'GET',
+            headers,
+            throw: false,
+        });
+        if (repoResponse.status !== 200) {
+            throw this.listStatusError(repoResponse.status);
+        }
+        const repo = getRecord(repoResponse.json as unknown);
+        if (getRecord(repo?.permissions)?.push === false) {
+            throw new Error('The token can read this repository but cannot write to it.');
+        }
+        const branchResponse = await requestUrl({
+            url: `https://api.github.com/repos/${this.settings.repo}/branches/${this.getEncodedBranch()}`,
+            method: 'GET',
+            headers,
+            throw: false,
+        });
+        if (branchResponse.status === 404 && getNumber(repo?.size) === 0) {
+            return;
+        }
+        if (branchResponse.status !== 200) {
+            throw this.listStatusError(branchResponse.status);
+        }
+    }
+
     private listStatusError(status: number): Error {
         if (status === 401) {
             return new Error('GitHub authentication failed. Please check your token.');

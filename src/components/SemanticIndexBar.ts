@@ -119,7 +119,7 @@ export class SemanticIndexBar {
 			} else {
 				iconButton(row, "pause", t("Pause indexing"), () => this.callbacks.onPause());
 			}
-			iconButton(row, "x", t("Cancel indexing"), () => this.callbacks.onCancel());
+			iconButton(row, "square", t("Cancel indexing"), () => this.callbacks.onCancel());
 			return;
 		}
 
@@ -167,7 +167,7 @@ export class SemanticIndexBar {
 			chip.createSpan({ text: label });
 			chip.createSpan({
 				cls: "oss-gallery-semantic-result-count",
-				text: info.count === 0 ? t("No semantic results") : t("Semantic result count").replace("{count}", formatCount(info.count)),
+				text: info.count === 0 ? t("No semantic results") : t("Ranked by similarity").replace("{count}", formatCount(info.count)),
 			});
 			iconButton(chip, "x", t("Back to all images"), () => this.callbacks.onClearResult(), "oss-gallery-semantic-result-close");
 		}

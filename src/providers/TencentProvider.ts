@@ -112,33 +112,10 @@ export class TencentProvider implements IOssProvider {
         }
 
         try {
-            const host = this.getHost();
             const collector = new ListingCollector(this.name, listPrefix);
 
             return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
-                const query: Record<string, string> = { 'max-keys': '1000' };
-                if (listPrefix) {
-                    query.prefix = listPrefix;
-                }
-                if (marker) {
-                    query.marker = marker;
-                }
-
-                const authorization = this.generateAuthorization('GET', '/', query, { host });
-                const queryString = new URLSearchParams(query).toString();
-                const response = await requestUrl({
-                    url: `https://${host}/?${queryString}`,
-                    method: 'GET',
-                    headers: {
-                        'Authorization': authorization,
-                    },
-                });
-
-                if (response.status !== 200) {
-                    throw new Error(`List failed with status: ${response.status}`);
-                }
-
-                const page = parseS3ListObjectsPage(response.text);
+                const page = await this.fetchListPage(listPrefix, marker, 1000);
                 // V1 ListObjects: NextMarker is only sent with a delimiter;
                 // otherwise continue after the last key of the page.
                 const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
@@ -152,6 +129,45 @@ export class TencentProvider implements IOssProvider {
             console.error('Failed to list Tencent COS images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    /** One signed ListObjects request with at most one key (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.secretId || !this.settings.secretKey || !this.settings.bucket) {
+            throw new Error(t('Please configure Tencent COS settings first'));
+        }
+        try {
+            await this.fetchListPage(buildListPrefix(this.settings.path, undefined), '', 1);
+        } catch (error) {
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async fetchListPage(listPrefix: string, marker: string, maxKeys: number) {
+        const host = this.getHost();
+        const query: Record<string, string> = { 'max-keys': String(maxKeys) };
+        if (listPrefix) {
+            query.prefix = listPrefix;
+        }
+        if (marker) {
+            query.marker = marker;
+        }
+
+        const authorization = this.generateAuthorization('GET', '/', query, { host });
+        const queryString = new URLSearchParams(query).toString();
+        const response = await requestUrl({
+            url: `https://${host}/?${queryString}`,
+            method: 'GET',
+            headers: {
+                'Authorization': authorization,
+            },
+        });
+
+        if (response.status !== 200) {
+            throw new Error(`List failed with status: ${response.status}`);
+        }
+
+        return parseS3ListObjectsPage(response.text);
     }
 
     listingKeyForUpload(path: string): string {

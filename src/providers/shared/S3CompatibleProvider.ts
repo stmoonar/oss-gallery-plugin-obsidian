@@ -177,43 +177,7 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
         try {
             const collector = new ListingCollector(this.name, listPrefix);
             return await collectPages(collector, MAX_LIST_PAGES, async (continuationToken) => {
-                const queryParams = new URLSearchParams({
-                    'list-type': '2',
-                    'max-keys': '1000',
-                });
-                if (listPrefix) {
-                    queryParams.append('prefix', listPrefix);
-                }
-                if (continuationToken) {
-                    queryParams.append('continuation-token', continuationToken);
-                }
-
-                const requestPath = this.getListRequestPath(queryParams.toString());
-                const request = {
-                    host: this.getSignedHost(),
-                    path: requestPath,
-                    service: 's3',
-                    region: this.getRegion(),
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/xml',
-                    },
-                };
-
-                this.signRequest(request);
-
-                const response = await requestUrl({
-                    url: this.getRequestUrl(requestPath),
-                    method: 'GET',
-                    headers: extractSignedHeaders(request.headers),
-                });
-
-                if (response.status !== 200) {
-                    this.logListResponseFailure(response.status, response.text);
-                    throw new Error(`List objects failed with status ${response.status}`);
-                }
-
-                const page = parseS3ListObjectsPage(response.text);
+                const page = await this.fetchListPage(listPrefix, continuationToken, 1000);
                 return {
                     items: s3EntriesToImages(page.objects, (key) => this.generateAccessUrl(key)),
                     more: page.isTruncated,
@@ -223,6 +187,62 @@ export abstract class S3CompatibleProvider<TSettings> implements IOssProvider {
         } catch (error) {
             return this.handleListError(error);
         }
+    }
+
+    /** One signed ListObjectsV2 request with at most one key (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.canListImages()) {
+            throw this.getConfigurationError();
+        }
+        try {
+            await this.fetchListPage('', undefined, 1);
+        } catch (error) {
+            this.handleListError(error);
+        }
+    }
+
+    private async fetchListPage(
+        listPrefix: string,
+        continuationToken: string | undefined,
+        maxKeys: number
+    ): Promise<ReturnType<typeof parseS3ListObjectsPage>> {
+        const queryParams = new URLSearchParams({
+            'list-type': '2',
+            'max-keys': String(maxKeys),
+        });
+        if (listPrefix) {
+            queryParams.append('prefix', listPrefix);
+        }
+        if (continuationToken) {
+            queryParams.append('continuation-token', continuationToken);
+        }
+
+        const requestPath = this.getListRequestPath(queryParams.toString());
+        const request = {
+            host: this.getSignedHost(),
+            path: requestPath,
+            service: 's3',
+            region: this.getRegion(),
+            method: 'GET',
+            headers: {
+                'Accept': 'application/xml',
+            },
+        };
+
+        this.signRequest(request);
+
+        const response = await requestUrl({
+            url: this.getRequestUrl(requestPath),
+            method: 'GET',
+            headers: extractSignedHeaders(request.headers),
+        });
+
+        if (response.status !== 200) {
+            this.logListResponseFailure(response.status, response.text);
+            throw new Error(`List objects failed with status ${response.status}`);
+        }
+
+        return parseS3ListObjectsPage(response.text);
     }
 
     listingKeyForUpload(path: string): string {

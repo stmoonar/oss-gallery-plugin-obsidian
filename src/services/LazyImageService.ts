@@ -63,11 +63,13 @@ export class LazyImageService {
 	private readonly rootMargin: string;
 	private readonly threshold: number;
 	private readonly onImageLoaded?: (img: HTMLImageElement, url: string) => void;
+	private readonly onImageFailed?: (img: HTMLImageElement) => void;
 
 	constructor(options: LazyImageOptions = {}) {
 		this.rootMargin = options.rootMargin ?? PREFETCH_ROOT_MARGIN;
 		this.threshold = options.threshold ?? 0;
 		this.onImageLoaded = options.onImageLoaded;
+		this.onImageFailed = options.onImageFailed;
 		this.queue = new ImageLoadQueue<HTMLImageElement>(
 			{
 				start: (img, attempt) => this.startLoad(img, attempt),
@@ -475,12 +477,28 @@ export class LazyImageService {
 		}
 	}
 
+	/**
+	 * Every attempt failed: the element is emptied and marked; the tile
+	 * draws its failed state in CSS (`onImageFailed`) and can `retry`.
+	 */
 	private showFailed(img: HTMLImageElement): void {
 		clearHandlers(img);
 		this.stopObserving(img);
+		img.removeAttribute("src");
 		img.classList.add("oss-gallery-img-error");
-		img.src = this.getPlaceholderUrl();
 		console.warn("Image load failed after retries:", this.urls.get(img));
+		this.onImageFailed?.(img);
+	}
+
+	/**
+	 * Load a failed tile again from scratch (cached thumbnail, original,
+	 * <img> fallback, with the usual attempts).
+	 */
+	retry(img: HTMLImageElement, url: string, source?: TileSource): void {
+		this.release(img);
+		img.classList.remove("oss-gallery-img-error");
+		if (url) img.dataset.src = url;
+		this.observe(img, source);
 	}
 
 	private stopObserving(img: HTMLImageElement): void {
@@ -506,21 +524,6 @@ export class LazyImageService {
 		// attribute (instead of src = "") fires no error event.
 		img.removeAttribute("src");
 		this.revokeAllBlobs(img);
-	}
-
-	/**
-	 * 获取占位图 URL
-	 */
-	private getPlaceholderUrl(): string {
-		return (
-			"data:image/svg+xml;base64," +
-			btoa(`
-            <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
-                <rect width="100" height="100" fill="#ccc"/>
-                <text x="50" y="50" text-anchor="middle" dy=".3em" fill="#666" font-size="12">Load failed</text>
-            </svg>
-        `)
-		);
 	}
 
 	/**

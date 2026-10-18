@@ -13,6 +13,7 @@ import { R2Provider } from './R2Provider';
 import { S3Provider } from './S3Provider';
 import { LocalProvider } from './LocalProvider';
 import { getIndexIdentity, IndexIdentity, INDEX_IDENTITY } from './indexIdentity';
+import { missingRequiredFields, ProviderFieldSpec, requiredFieldsOf } from './requiredFields';
 
 export interface ProviderCapabilities {
     upload: boolean;
@@ -40,6 +41,12 @@ export interface ProviderRegistryEntry<K extends keyof ProviderSettingsMap = key
      * cannot be indexed. Defined in ./indexIdentity.ts.
      */
     getIndexIdentity?(settings: ProviderSettingsMap[K]): IndexIdentity;
+    /**
+     * Settings fields the provider needs (presentation: "Required" markers
+     * and the "Missing: ..." line in the settings tab). Defined in
+     * ./requiredFields.ts; keep in sync with isConfigured.
+     */
+    requiredFields?: readonly ProviderFieldSpec[];
 }
 
 const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
@@ -111,7 +118,8 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         defaultSettings: DEFAULT_QINIU_SETTINGS,
         isConfigured: (settings) => {
             const qiniu = settings as QiniuSettings;
-            // The CDN domain is required: Qiniu has no usable default public URL.
+            // The CDN domain is required: Qiniu has no usable default public URL
+            // (shown as required in the settings tab, see ./requiredFields.ts).
             return Boolean(qiniu.accessKey && qiniu.secretKey && qiniu.bucket && qiniu.url?.trim());
         },
         create: (settings) => new QiniuProvider(settings as QiniuSettings),
@@ -123,7 +131,8 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
         defaultSettings: DEFAULT_UPYUN_SETTINGS,
         isConfigured: (settings) => {
             const upyun = settings as UpyunSettings;
-            // The acceleration domain is required: Upyun has no usable default public URL.
+            // The acceleration domain is required: Upyun has no usable default public URL
+            // (shown as required in the settings tab, see ./requiredFields.ts).
             return Boolean(upyun.operator && upyun.password && upyun.bucket && upyun.url?.trim());
         },
         create: (settings) => new UpyunProvider(settings as UpyunSettings),
@@ -173,11 +182,12 @@ const PROVIDER_ENTRIES: ProviderRegistryEntry[] = [
     },
 ];
 
-// Attach the index identity getters (kept in a pure module for tests).
+// Attach the index identity getters and required fields (pure modules, unit tested).
 for (const entry of PROVIDER_ENTRIES) {
     if (INDEX_IDENTITY[entry.id]) {
         entry.getIndexIdentity = (settings) => getIndexIdentity(entry.id, settings) ?? {};
     }
+    entry.requiredFields = requiredFieldsOf(entry.id);
 }
 
 /**
@@ -262,6 +272,11 @@ export class ProviderRegistry {
             return false;
         }
         return entry.isConfigured(settings, app);
+    }
+
+    /** Required settings fields of a provider that are still empty. */
+    getMissingFields(id: string, settings: unknown): ProviderFieldSpec[] {
+        return missingRequiredFields(id, settings);
     }
 
     /**

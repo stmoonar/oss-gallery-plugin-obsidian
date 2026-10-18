@@ -1,22 +1,31 @@
+import { setIcon } from "obsidian";
 import { t } from "../i18n";
-import { UploadEntry } from "../services/UploadProgressStore";
+import { UploadAction, UploadEntry } from "../services/UploadProgressStore";
 
 const ROOT_CLASS = "oss-gallery-upload-widget";
 
+/** Called when a card button is clicked. */
+export type UploadCardActionHandler = (id: string, action: UploadAction) => void;
+
 /**
- * Render the upload progress card (thumbnail + name + progress bar). Shared
- * by the editor widget and the reading mode post processor.
+ * Render the upload progress card (thumbnail + name + progress bar, and the
+ * buttons for the current state). Shared by the editor widget and the
+ * reading mode post processor. Display only: never written to the note.
  */
-export function createUploadProgressCard(entry: UploadEntry): HTMLElement {
+export function createUploadProgressCard(
+	entry: UploadEntry,
+	onAction: UploadCardActionHandler
+): HTMLElement {
 	const root = createSpan({
 		cls: ROOT_CLASS,
-		attr: { "data-upload-id": entry.id },
+		attr: { "data-upload-id": entry.id, role: "group" },
 	});
 
 	if (entry.previewUrl) {
 		root.createEl("img", {
 			cls: "oss-gallery-upload-thumb",
-			attr: { src: entry.previewUrl, alt: entry.name, draggable: "false" },
+			// The card's label already names the file.
+			attr: { src: entry.previewUrl, alt: "", draggable: "false" },
 		});
 	}
 
@@ -30,8 +39,11 @@ export function createUploadProgressCard(entry: UploadEntry): HTMLElement {
 		attr: { role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100" },
 	});
 	track.createSpan({ cls: "oss-gallery-upload-bar" });
+	body.createSpan({ cls: "oss-gallery-upload-error" });
 
-	updateUploadProgressCard(root, entry);
+	root.createSpan({ cls: "oss-gallery-upload-actions" });
+
+	updateUploadProgressCard(root, entry, onAction);
 	return root;
 }
 
@@ -40,28 +52,131 @@ export function getUploadProgressCardId(el: HTMLElement): string | null {
 	return el.hasClass(ROOT_CLASS) ? el.getAttribute("data-upload-id") : null;
 }
 
-/** Update an existing card in place so the bar width can transition. */
-export function updateUploadProgressCard(root: HTMLElement, entry: UploadEntry): void {
-	root.toggleClass("oss-gallery-is-done", entry.status === "done");
-	root.toggleClass("oss-gallery-is-failed", entry.status === "failed");
-	root.setAttribute("aria-label", `${t("Uploading")} ${entry.name}`);
+/** Accessible name of a card for its current state. */
+export function describeUploadEntry(entry: UploadEntry): string {
+	const fill = (key: Parameters<typeof t>[0]) =>
+		t(key)
+			.replace("{name}", () => entry.name)
+			.replace("{percent}", () => String(entry.percent))
+			.replace("{message}", () => entry.error ?? "");
+	switch (entry.status) {
+		case "queued":
+			return fill("Upload aria waiting");
+		case "done":
+			return fill("Upload aria done");
+		case "failed":
+			return fill("Upload aria failed");
+		default:
+			return fill("Upload aria uploading");
+	}
+}
 
-	const percent = entry.status === "done" ? 100 : entry.percent;
+/** Update an existing card in place so the bar width can transition. */
+export function updateUploadProgressCard(
+	root: HTMLElement,
+	entry: UploadEntry,
+	onAction: UploadCardActionHandler
+): void {
+	const failed = entry.status === "failed";
+	root.toggleClass("oss-gallery-is-done", entry.status === "done");
+	root.toggleClass("oss-gallery-is-failed", failed);
+	root.toggleClass("oss-gallery-is-queued", entry.status === "queued");
+	root.setAttribute("aria-label", describeUploadEntry(entry));
+	root.setAttribute("aria-busy", String(entry.status === "uploading" || entry.busy === true));
+
+	const percent = entry.status === "done" ? 100 : entry.status === "queued" ? 0 : entry.percent;
 
 	const status = root.querySelector<HTMLElement>(".oss-gallery-upload-status");
 	if (status) {
 		status.setText(
-			entry.status === "failed"
+			failed
 				? t("Upload failed")
 				: entry.status === "done"
 					? t("Upload complete")
-					: `${percent}%`
+					: entry.status === "queued"
+						? t("Upload waiting")
+						: `${percent}%`
 		);
 	}
 
 	const track = root.querySelector<HTMLElement>(".oss-gallery-upload-track");
 	if (track) {
+		track.toggleClass("oss-gallery-hidden", failed);
 		track.setAttribute("aria-valuenow", String(percent));
+		track.setAttribute("aria-valuetext", status?.getText() ?? `${percent}%`);
 		track.setCssProps({ "--oss-upload-progress": `${percent}%` });
+	}
+
+	const errorEl = root.querySelector<HTMLElement>(".oss-gallery-upload-error");
+	if (errorEl) {
+		const message = failed ? entry.error ?? "" : "";
+		errorEl.setText(message);
+		errorEl.toggleClass("oss-gallery-hidden", message === "");
+		if (message) errorEl.setAttribute("title", message);
+		else errorEl.removeAttribute("title");
+	}
+
+	const actions = root.querySelector<HTMLElement>(".oss-gallery-upload-actions");
+	if (actions) renderActions(actions, entry, onAction);
+}
+
+/**
+ * (Re)build the buttons only when the state they depend on changed, so
+ * progress ticks never replace a button under the pointer or keyboard focus.
+ */
+function renderActions(
+	container: HTMLElement,
+	entry: UploadEntry,
+	onAction: UploadCardActionHandler
+): void {
+	const key = `${entry.status}:${entry.busy === true}`;
+	if (container.getAttribute("data-state") === key) return;
+	container.setAttribute("data-state", key);
+	container.empty();
+
+	const addButton = (
+		action: UploadAction,
+		label: string,
+		options: { icon?: string; tooltip?: string; cta?: boolean } = {}
+	) => {
+		const button = container.createEl("button", {
+			cls: "oss-gallery-upload-action",
+			attr: { type: "button" },
+		});
+		if (options.cta) button.addClass("mod-cta");
+		if (options.icon) {
+			// Icon only: the label is its accessible name (and Obsidian's tooltip).
+			button.addClass("clickable-icon");
+			button.setAttribute("aria-label", label);
+			setIcon(button, options.icon);
+		} else {
+			// Visible text stays the accessible name; the tooltip only adds detail.
+			button.setText(label);
+			if (options.tooltip) button.setAttribute("title", options.tooltip);
+		}
+		button.disabled = entry.busy === true;
+		// Keep the editor from moving its cursor / selection into the widget.
+		button.addEventListener("mousedown", (event) => event.preventDefault());
+		button.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			onAction(entry.id, action);
+		});
+	};
+
+	switch (entry.status) {
+		case "queued":
+		case "uploading":
+			addButton("cancel", t("Upload cancel"), { icon: "x" });
+			break;
+		case "failed":
+			addButton("retry", t("Upload retry"), { cta: true });
+			addButton("save-local", t("Upload save to vault"), {
+				tooltip: t("Upload save to vault tooltip"),
+			});
+			addButton("dismiss", t("Upload remove"), { tooltip: t("Upload remove tooltip") });
+			break;
+		default:
+			break;
 	}
 }

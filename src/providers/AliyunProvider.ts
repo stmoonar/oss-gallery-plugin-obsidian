@@ -155,26 +155,7 @@ export class AliyunProvider implements IOssProvider {
             const collector = new ListingCollector(this.name, listPrefix);
 
             return await collectPages(collector, MAX_LIST_PAGES, async (marker = '') => {
-                const date = new Date().toUTCString();
-                const authorization = this.createAuthorization('GET', date);
-                const query = new URLSearchParams({ 'max-keys': '1000' });
-                if (listPrefix) {
-                    query.append('prefix', listPrefix);
-                }
-                if (marker) {
-                    query.append('marker', marker);
-                }
-
-                const response = await this.requestApi((baseUrl) => ({
-                    url: `${baseUrl}/?${query.toString()}`,
-                    method: 'GET',
-                    headers: {
-                        'Authorization': authorization,
-                        'Date': date,
-                    },
-                }));
-
-                const page = parseS3ListObjectsPage(response.text);
+                const page = await this.fetchListPage(listPrefix, marker, 1000);
                 // V1 ListObjects: NextMarker is only sent with a delimiter;
                 // otherwise continue after the last key of the page.
                 const nextMarker = page.nextMarker || page.objects[page.objects.length - 1]?.key;
@@ -188,6 +169,41 @@ export class AliyunProvider implements IOssProvider {
             console.error('Failed to list Aliyun OSS images:', error);
             throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    /** One signed ListObjects request with at most one key (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.accessKeyId || !this.settings.accessKeySecret || !this.settings.bucket) {
+            throw new Error(t('Please configure Aliyun OSS settings first'));
+        }
+        try {
+            await this.fetchListPage(buildListPrefix(this.settings.path, undefined), '', 1);
+        } catch (error) {
+            throw new Error(`List failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async fetchListPage(listPrefix: string, marker: string, maxKeys: number) {
+        const date = new Date().toUTCString();
+        const authorization = this.createAuthorization('GET', date);
+        const query = new URLSearchParams({ 'max-keys': String(maxKeys) });
+        if (listPrefix) {
+            query.append('prefix', listPrefix);
+        }
+        if (marker) {
+            query.append('marker', marker);
+        }
+
+        const response = await this.requestApi((baseUrl) => ({
+            url: `${baseUrl}/?${query.toString()}`,
+            method: 'GET',
+            headers: {
+                'Authorization': authorization,
+                'Date': date,
+            },
+        }));
+
+        return parseS3ListObjectsPage(response.text);
     }
 
     listingKeyForUpload(path: string): string {

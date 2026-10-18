@@ -26,16 +26,19 @@ It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seeb
 
 ## Features
 
-- Upload files from the command palette, paste, or drag and drop
+- Upload files from the command palette (several at once), paste, or drag and drop
+- Upload progress cards in the note: cancel a running or waiting upload; a failed upload keeps its file in the note with Retry, Save to vault (as a normal attachment) and Remove
 - Supported file types: images, video, audio, `.doc`, `.docx`, `.pdf`, `.pptx`, `.xls`, `.xlsx`
 - Global object naming and path rules
 - Optional base path prefix for all uploads
 - Configurable embed output for image, video, audio, and document preview
 - Gallery view for providers that support listing
 - URL search with plain text or regex mode
-- One-click URL copy
+- One-click URL copy, copy as embed (your embed format), insert into the last note, or drag a tile into a note to insert its embed
 - Delete from the gallery for providers that support deletion
-- Full-screen image preview
+- Multi-select (Ctrl/Cmd-click, Shift-click, Ctrl/Cmd+A, Esc to clear) with batch copy URLs / embeds, insert and delete
+- Keyboard navigation in the grid (arrow keys, Home/End, Enter to preview, context-menu key for actions)
+- Full-screen image preview with zoom (wheel, pinch, double click, +/-/0/1), fit to screen / fit width / 100%, drag to pan, previous/next buttons, arrow keys or swipe, and copy / delete / find similar actions
 - Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
 - Local gallery thumbnails: each image is downloaded once, then shown from a small thumbnail kept on this device (size-capped, works without semantic search)
 - Optional on-device semantic image search: find images by description or by similarity (WebGPU, model downloaded on request; see [below](#semantic-image-search-optional))
@@ -53,20 +56,20 @@ Choose an active provider in the plugin settings, then configure:
 ### Global settings
 
 - **Base path**: optional prefix applied to every uploaded object key; the gallery only lists files under it (and under the provider's own path prefix, if set)
-- **Object naming rules**
-  - `local`
-  - `time`
-  - `timeAndLocal`
-- **Object path rules**
-  - `root`
-  - `type`
-  - `date`
-  - `typeAndDate`
-- **Preview**
-  - image preview on or off
-  - video preview on or off
-  - audio preview on or off
-  - document preview provider: disabled, Google Docs, or Office Online
+- **File naming** (how uploaded files are named in storage)
+  - Original file name (`local`; overwrites a stored file with the same name)
+  - Timestamp (`time`)
+  - Timestamp and original file name (`timeAndLocal`)
+- **Folder structure** (folders under the base path)
+  - None (`root`)
+  - By file type (`type`)
+  - By date (`date`)
+  - By file type and date (`typeAndDate`)
+- **Inserted links** (what is written into the note after an upload)
+  - embed images on or off (off: a plain link); the image embed format is shown while it is on
+  - embed videos / audio as players on or off
+  - document viewer: disabled (plain link), Google Docs, or Office Online
+- **Provider setup**: the provider list shows which providers are upload-only and which are not set up yet; required fields are marked and a line lists the missing ones. **Test connection** checks the settings with one small read-only request (a one-file listing; nothing is uploaded). Upload-only providers (Imgur) can only be checked by uploading.
 - **Gallery thumbnails** (on by default, independent of semantic search)
   - The first time a gallery tile is shown, the original is downloaded once (Obsidian's request API; Local reads the file from disk), shown, and a small copy (longest side 320 px, WebP) is saved on this device, outside the vault: Windows `%LOCALAPPDATA%\obsidian-oss-gallery\thumbs`, macOS `~/Library/Application Support/obsidian-oss-gallery/thumbs`, Linux `~/.cache/obsidian-oss-gallery/thumbs`. Later views show the thumbnail without downloading. Semantic indexing saves thumbnails too.
   - Preview, **Copy URL** and embeds always use the original. Animated GIFs and SVGs load the original as before; TIFF tiles show a thumbnail only if indexing made one.
@@ -80,8 +83,8 @@ Choose an active provider in the plugin settings, then configure:
 
 - Available in Obsidian desktop only
 - Storage path: vault-relative directory, or absolute directory inserted as `file:///` links
-- Use vault-relative path: toggle (default on, requires a local file-system vault)
-- Delete to trash: move deleted files to system trash (default on)
+- Path relative to the vault: toggle (default on, desktop only)
+- Delete to the trash: move deleted files to the system trash (default on)
 
 #### SM.MS
 
@@ -152,15 +155,15 @@ Note: Imgur uploads are supported for image files only; gallery listing and dele
 - Access Key ID
 - Secret Access Key
 - Bucket
-- Use SSL: toggle (default on)
-- Force path style: use `endpoint/bucket/key` instead of `bucket.endpoint/key` (default on)
+- Use HTTPS: toggle (default on)
+- Path-style URLs: use `endpoint/bucket/key` instead of `bucket.endpoint/key` (default on)
 - Public URL: optional custom URL for file access
 
 #### MinIO
 
 - Endpoint: host name or complete URL; an explicit `http://` / `https://` scheme and port take precedence
 - Port: used when Endpoint is a host name without a port
-- Use SSL: used when Endpoint does not include a URL scheme
+- Use HTTPS: used when Endpoint does not include a URL scheme
 - Access Key
 - Secret Key
 - Bucket
@@ -195,8 +198,8 @@ Semantic search finds images by describing them in English or Chinese, and finds
   - Mirrors cannot change what gets installed: every file must still match the SHA-256 hash built into the plugin, and the download dialog shows the hosts actually contacted. Changing a mirror does not affect files already installed.
   - If no mirror works for you, use the offline install below.
 - **Offline install:** copy the files into the model directory with the same layout (`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` and `runtime/<plugin version>/...`), then press **Verify** or **Download**: files that pass the hash check are kept and not downloaded again.
-- **Settings:** image detail (70/140/280 image tokens, default 70; changing it later rebuilds the index) and automatic indexing.
-- **Indexing:** every listable provider can be indexed (not Imgur). Press **Build index** / **Update index (N new)** in the gallery (or run **Semantic search: index current provider now**). While it runs, a bar at the top of the gallery shows the count, the current file, pause/resume and stop; the status bar shows the same count (click to pause/resume). Stopping keeps what was indexed; the next start continues.
+- **Settings:** before the model is installed the section shows only the WebGPU check, the download sources and the download; the model and index directories are under **Advanced**. While the model downloads, the status bar shows "Model download 42%" (click to open the settings). After installing: image detail (how closely the model looks at each image: 70/140/280, default 70; changing it later asks first, since it rebuilds the index and remote images are downloaded again) and automatic indexing.
+- **Indexing:** every listable provider can be indexed (not Imgur). Press **Build index** / **Update index (N new)** in the gallery (or run **Semantic search: index the current provider now**). While it runs, a bar at the top of the gallery shows the count, the current file, pause/resume and stop; the status bar shows the same count, e.g. "Indexing 12/80 · click to pause" (click to pause/resume). Stopping keeps what was indexed; the next start continues.
   - **Local** reads files from disk: no network traffic, no confirmation.
   - **Remote providers** download each image once to analyze it on your computer. Indexing never starts without a dialog showing the number of images, the download size and how many are already indexed. With **Index automatically** on, new images are indexed after the gallery refreshes; it asks the first time on each device and again only when more than 200 MB would be downloaded.
   - Images are downloaded with Obsidian's own request API (no bucket CORS rules needed, uses the system proxy) from the same URL the gallery shows. For **private** S3 / R2 / MinIO buckets a signed request is used when the public URL is refused. Images that still can't be read (for example a private Aliyun/Tencent/Qiniu bucket) are listed as *failed* with "access denied: check the bucket permissions".
@@ -206,7 +209,7 @@ Semantic search finds images by describing them in English or Chinese, and finds
 - **Image formats:** JPEG, PNG, WebP, GIF (first frame), BMP, ICO and AVIF are read directly (the gallery lists `.avif` files too). **SVG** is rasterized (scripts and external references are never loaded) and **TIFF** is decoded with the bundled [UTIF.js](https://github.com/photopea/UTIF.js) (MIT); both are listed as *converted*. HEIC/HEIF, PSD, camera RAW and unreadable files are *unsupported* and skipped.
 - **Search:** the ✨ toggle next to the search box switches it to semantic mode (it is disabled, with the reason in its tooltip, until the model is installed and the provider has an index; the regex toggle is off in this mode). Type a description and press **Enter**: all images are sorted by similarity, best first, with a small score on each tile. The first search loads the search model (about 1.5 s). **Esc**, the clear button or **×** returns to all images. There is no cut-off: scores only rank results.
 - **Find similar images:** right-click an image (or use the hover button) → **Find similar images**. The gallery shows the images closest to it under "Similar to *name* ×".
-- **Index status:** when idle, a chip under the search box reads like "1,234 indexed · 3 converted · 2 unsupported". Click it for the details: converted files (with their source format) and unsupported / failed files with the reason; click a file name to show it in the gallery, or **Retry failed**. The status bar shows "Semantic: N indexed"; click it to open the gallery in semantic mode. The settings page shows the same lists.
+- **Index status:** when idle, a chip under the search box reads like "1,234 indexed · 3 converted · 2 unsupported". Click it for the details: converted files (with their source format) and unsupported / failed files with the reason; click a file name to show it in the gallery, or **Retry failed**. The status bar stays empty while nothing runs. The settings page shows the same counts and lists.
 - **Self-test:** after the model is installed, run **Semantic search: run self-test** from the command palette. It loads the model on your GPU, embeds a few test queries, a generated test image and up to two images from your vault (the active image first), and shows load time, latency and a similarity table. Nothing leaves your computer; the model runs offline from the model directory.
 - **Third-party licenses:** the runtime bundles [transformers.js](https://github.com/huggingface/transformers.js) (Apache-2.0), ONNX Runtime Web (MIT), UTIF.js and pako (MIT/Zlib) and a few of their dependencies. Their license texts are in `THIRD_PARTY_NOTICES.txt`, attached to every GitHub release next to `semantic-worker.js`.
 

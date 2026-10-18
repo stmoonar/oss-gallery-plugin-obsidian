@@ -234,6 +234,37 @@ export class UpyunProvider implements IOssProvider {
         }
     }
 
+    /** One signed listing of the service root, one entry at most (settings check). */
+    async testConnection(): Promise<void> {
+        if (!this.settings.operator || !this.settings.password || !this.settings.bucket) {
+            throw new Error(t('Please configure Upyun settings first'));
+        }
+        // Throws when the required acceleration domain is missing.
+        this.getPublicBaseUrl();
+        const date = new Date().toUTCString();
+        const authorization = createUpyunAuthorization(
+            this.settings.operator,
+            this.settings.password,
+            'GET',
+            this.getSignedUri(''),
+            date
+        );
+        const response = await requestUrl({
+            url: this.getRequestUrl(''),
+            method: 'GET',
+            headers: {
+                'Authorization': authorization,
+                'Date': date,
+                'Accept': 'application/json',
+                'x-list-limit': '1',
+            },
+            throw: false,
+        });
+        if (response.status !== 200) {
+            throw new Error(`List failed with status: ${response.status}`);
+        }
+    }
+
     listingKeyForUpload(path: string): string {
         return buildObjectKey(this.settings.path, path);
     }

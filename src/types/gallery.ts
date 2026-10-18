@@ -2,6 +2,16 @@ import { IOssProvider, OssImage } from "./oss";
 
 export interface ImagePreviewOptions {
 	onNavigate?: (direction: "prev" | "next") => void;
+	/** 1-based position of `key` among the shown images (counter, prev/next buttons). */
+	position?: (key: string) => { index: number; total: number } | null;
+	/** Action row; an absent callback hides its button. All act on the original. */
+	onCopyUrl?: (key: string) => void;
+	onCopyEmbed?: (key: string) => void;
+	onDelete?: (key: string) => void;
+	canFindSimilar?: (key: string) => boolean;
+	/** Called after the lightbox closed itself. */
+	onFindSimilar?: (key: string) => void;
+	onClosed?: () => void;
 }
 
 export interface SyncChanges {
@@ -77,6 +87,8 @@ export interface LazyImageOptions {
 	/** Concurrent cached thumbnail reads (disk, separate from the network limit; default 4). */
 	maxConcurrentLocal?: number;
 	onImageLoaded?: (img: HTMLImageElement, url: string) => void;
+	/** Every attempt failed: the tile shows its failed state (it can be retried). */
+	onImageFailed?: (img: HTMLImageElement) => void;
 }
 
 export interface ServiceDependencies {

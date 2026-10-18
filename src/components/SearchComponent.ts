@@ -16,6 +16,8 @@ export interface SearchComponentOptions {
 	onToggleSemantic?: (enabled: boolean) => void;
 	/** Escape in an empty box (e.g. leave "find similar"). */
 	onEscapeEmpty?: () => void;
+	/** Click on the semantic toggle while it is unavailable (explain why). */
+	onSemanticUnavailable?: () => void;
 	placeholder?: string;
 	semanticPlaceholder?: string;
 }
@@ -169,6 +171,9 @@ export class SearchComponent {
 		const before = this.mode;
 		const next = toggleSemantic(before, this.availability);
 		if (next === before) {
+			if (!before.semantic && !this.availability.ok) {
+				this.options.onSemanticUnavailable?.();
+			}
 			return;
 		}
 		this.setMode(next);
@@ -271,6 +276,11 @@ export class SearchComponent {
 			return;
 		}
 		this.setMode({ ...this.mode, regex: enabled });
+	}
+
+	/** Hide the search box (providers that cannot list have nothing to search). */
+	setVisible(visible: boolean): void {
+		this.searchContainer.toggleClass("oss-gallery-is-hidden", !visible);
 	}
 
 	/**

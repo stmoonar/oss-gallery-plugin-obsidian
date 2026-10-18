@@ -79,6 +79,14 @@ export interface IStorageProvider {
     signedObjectGet?(key: string): { url: string; headers: Record<string, string> } | null;
 
     deleteImage(key: string): Promise<void>;
+
+    /**
+     * Check the settings with one cheap read-only request (e.g. a one-key
+     * listing page, or reading the storage directory). Throws a descriptive
+     * error on failure. Never uploads, writes or deletes anything. Providers
+     * that can only be checked by uploading (Imgur) do not implement it.
+     */
+    testConnection?(): Promise<void>;
 }
 
 /**

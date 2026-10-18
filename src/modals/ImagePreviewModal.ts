@@ -1,427 +1,581 @@
 import { App, Modal, setIcon } from "obsidian";
 import { t } from "../i18n";
 import { ImagePreviewOptions } from "../types/gallery";
+import { fileNameOf } from "../semantic/statusText";
+import {
+	detectSwipe,
+	distance,
+	doubleClickTarget,
+	fitView,
+	FitMode,
+	midpoint,
+	overflow,
+	panBy,
+	Point,
+	Size,
+	wheelZoomFactor,
+	ZOOM_STEP,
+	zoomAround,
+	ZoomView,
+	zoomPercent,
+} from "../components/zoomMath";
 
+/** "manual": the user zoomed or panned; a resize keeps the zoom instead of re-fitting. */
+type ZoomMode = FitMode | "manual";
+
+/** Pixels a pointer may move before a press counts as a drag (not a click). */
+const DRAG_SLOP = 6;
+/** Arrow-key pan step in stage pixels. */
+const KEY_PAN_STEP = 80;
+/** How long the zoom percentage stays visible. */
+const ZOOM_BADGE_MS = 1000;
+/** The spinner only shows for loads slower than this. */
+const LOADING_DELAY = 500;
+
+interface PointerInfo {
+	/** Element pressed (pointer capture retargets later events to the stage). */
+	target: EventTarget | null;
+	start: Point;
+	last: Point;
+	startTime: number;
+}
+
+/**
+ * Lightbox of the gallery: the original image with zoom (wheel, pinch,
+ * double click, buttons, keys), pan by dragging, prev/next by buttons,
+ * arrows or swipe, a position counter and per-image actions. Zoom/pan math
+ * lives in `components/zoomMath.ts`.
+ */
 export class ImagePreviewModal extends Modal {
 	private imageUrl: string;
-	private fileName: string;
-	private container: HTMLElement;
+	private key: string;
+	private readonly options: ImagePreviewOptions;
+	private container!: HTMLElement;
+	private stage!: HTMLElement;
 	private imgElement: HTMLImageElement | null = null;
 	private placeholderElement: HTMLElement | null = null;
 	private pathElement: HTMLElement | null = null;
-	private onNavigate?: (direction: "prev" | "next") => void;
-	private isUpdating: boolean = false;
-	private currentTheme: "dark" | "light" = "dark";
-	private pendingUpdate: { url: string; fileName?: string } | null = null;
+	private counterElement: HTMLElement | null = null;
+	private prevBtn: HTMLButtonElement | null = null;
+	private nextBtn: HTMLButtonElement | null = null;
+	private actionsElement: HTMLElement | null = null;
+	private zoomBadge: HTMLElement | null = null;
+	private zoomBadgeTimer: number | null = null;
+	private errorElement: HTMLElement | null = null;
 	private loadingSpinner: HTMLElement | null = null;
 	private loadingTimer: number | null = null;
-	private isLoadingShown: boolean = false;
-	private originalImgSrc: string | null = null;
+	private resizeObserver: ResizeObserver | null = null;
+	private currentTheme: "dark" | "light" = "dark";
+	/** Bumped per load: a late load of a previous image is ignored. */
+	private loadToken = 0;
 	private closed = false;
-	private static readonly LOADING_DELAY = 500; // 500ms阈值
 
-	constructor(
-		app: App,
-		imageUrl: string,
-		fileName: string,
-		options?: ImagePreviewOptions
-	) {
+	// Zoom state
+	private natural: Size | null = null;
+	private view: ZoomView = { scale: 1, x: 0, y: 0 };
+	private zoomMode: ZoomMode = "contain";
+	private readonly pointers = new Map<number, PointerInfo>();
+	private dragged = false;
+	private pinchStart: { distance: number; view: ZoomView } | null = null;
+
+	constructor(app: App, imageUrl: string, key: string, options: ImagePreviewOptions = {}) {
 		super(app);
 		this.imageUrl = imageUrl;
-		this.fileName = fileName;
-		this.onNavigate = options?.onNavigate;
-
-		// 初始化时移除默认样式
-		this.setupModalStyle();
+		this.key = key;
+		this.options = options;
+		this.modalEl.addClass("oss-gallery-image-preview-modal-shell");
 	}
 
-	/**
-	 * 设置模态框样式
-	 */
-	private setupModalStyle(): void {
-		window.requestAnimationFrame(() => {
-			const modalEl = this.modalEl;
-			modalEl.addClass("oss-gallery-image-preview-modal-shell");
-
-			// 移除默认关闭按钮
-			const closeBtn = modalEl.querySelector(
-				".modal-close-button"
-			) as HTMLElement;
-			closeBtn?.remove();
-		});
+	/** Key of the image shown. */
+	get currentKey(): string {
+		return this.key;
 	}
 
 	onOpen(): void {
 		this.closed = false;
+		// Obsidian's own close button sits under the lightbox; ours is in the top bar.
+		this.modalEl.querySelector(".modal-close-button")?.remove();
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("oss-gallery-image-preview-modal-content");
 
-		// 创建主容器
-		this.container = contentEl.createDiv({
-			cls: "oss-gallery-image-preview-container",
-		});
-
-		// 创建控制栏
-		this.createControlBar();
-
-		// 创建占位符
-		this.createPlaceholder();
-
-		// 创建图片元素
-		this.createImageElement(); // 绑定事件
-		this.bindEvents();
-
-		// 显示动画
-		this.showAnimation();
-
-		// 初始加载图片
-		this.updateImage(this.imageUrl, this.fileName);
-	}
-
-	/**
-	 * 创建控制栏
-	 */
-	private createControlBar(): void {
-		const controlBar = this.container.createDiv({
-			cls: "oss-gallery-preview-control-bar",
-		});
-
-		// 主题切换按钮
-		const themeToggleBtn = controlBar.createEl("button", {
-			cls: "oss-gallery-preview-toggle-bg-btn",
-		});
-		setIcon(themeToggleBtn, this.currentTheme === "dark" ? "sun" : "moon");
-		themeToggleBtn.title = t("Toggle background");
-
-		themeToggleBtn.onclick = (e) => {
-			e.stopPropagation();
-			this.toggleTheme();
-			setIcon(
-				themeToggleBtn,
-				this.currentTheme === "dark" ? "sun" : "moon"
-			);
-		};
-
-		// 路径显示
-		this.pathElement = controlBar.createDiv({
-			cls: "oss-gallery-preview-path",
-			text: this.formatUrlToPath(this.imageUrl),
-		});
-
-		// 应用当前主题
+		this.container = contentEl.createDiv({ cls: "oss-gallery-image-preview-container" });
+		this.createTopBar();
+		this.createStage();
+		this.createActionBar();
 		this.applyTheme(this.currentTheme);
+		this.bindKeys();
+
+		this.resizeObserver = new ResizeObserver(() => this.onResize());
+		this.resizeObserver.observe(this.stage);
+
+		window.requestAnimationFrame(() => this.container.addClass("oss-gallery-show"));
+		this.updateImage(this.imageUrl, this.key);
 	}
 
-	private formatUrlToPath(url: string): string {
-		try {
-			const urlObj = new URL(url);
-			return decodeURIComponent(urlObj.pathname).substring(1); // 去掉开头的 /
-		} catch {
-			return url;
+	private iconButton(parent: HTMLElement, icon: string, label: string, onClick: () => void, cls = ""): HTMLButtonElement {
+		const btn = parent.createEl("button", {
+			cls: `oss-gallery-preview-btn ${cls}`.trim(),
+			attr: { type: "button", "aria-label": label },
+		});
+		setIcon(btn, icon);
+		btn.addEventListener("click", (event) => {
+			event.stopPropagation();
+			onClick();
+		});
+		return btn;
+	}
+
+	private createTopBar(): void {
+		const bar = this.container.createDiv({ cls: "oss-gallery-preview-control-bar" });
+		this.counterElement = bar.createDiv({ cls: "oss-gallery-preview-counter", attr: { "aria-live": "polite" } });
+		this.pathElement = bar.createDiv({ cls: "oss-gallery-preview-path" });
+
+		const tools = bar.createDiv({ cls: "oss-gallery-preview-tools" });
+		this.iconButton(tools, "zoom-out", t("Zoom out"), () => this.zoomStep(1 / ZOOM_STEP));
+		this.iconButton(tools, "zoom-in", t("Zoom in"), () => this.zoomStep(ZOOM_STEP));
+		this.iconButton(tools, "minimize", t("Fit to screen"), () => this.setFit("contain", true));
+		this.iconButton(tools, "move-horizontal", t("Fit width"), () => this.setFit("width", true));
+		this.iconButton(tools, "scan", t("Actual size"), () => this.zoomTo(1, this.stageCenter(), true));
+		const themeBtn = this.iconButton(tools, "sun", t("Toggle background"), () => {
+			this.currentTheme = this.currentTheme === "dark" ? "light" : "dark";
+			this.applyTheme(this.currentTheme);
+			setIcon(themeBtn, this.currentTheme === "dark" ? "sun" : "moon");
+		});
+		this.iconButton(tools, "x", t("Close"), () => this.close(), "oss-gallery-preview-close-btn");
+	}
+
+	private createStage(): void {
+		this.stage = this.container.createDiv({ cls: "oss-gallery-preview-stage" });
+
+		this.placeholderElement = this.stage.createDiv({ cls: "oss-gallery-preview-placeholder" });
+		setIcon(this.placeholderElement.createDiv({ cls: "oss-gallery-preview-placeholder-icon" }), "image");
+
+		this.imgElement = this.stage.createEl("img", {
+			cls: "oss-gallery-image-preview oss-gallery-is-hidden",
+			attr: { alt: "", draggable: "false" },
+		});
+
+		this.zoomBadge = this.stage.createDiv({ cls: "oss-gallery-preview-zoom-badge", attr: { "aria-live": "polite" } });
+
+		if (this.options.onNavigate) {
+			this.prevBtn = this.iconButton(this.stage, "chevron-left", t("Previous image"), () => this.navigate("prev"), "oss-gallery-preview-nav oss-gallery-preview-prev");
+			this.nextBtn = this.iconButton(this.stage, "chevron-right", t("Next image"), () => this.navigate("next"), "oss-gallery-preview-nav oss-gallery-preview-next");
 		}
+
+		this.stage.addEventListener("pointerdown", (e) => this.onPointerDown(e));
+		this.stage.addEventListener("pointermove", (e) => this.onPointerMove(e));
+		this.stage.addEventListener("pointerup", (e) => this.onPointerUp(e));
+		this.stage.addEventListener("pointercancel", (e) => this.onPointerCancel(e));
+		this.stage.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+		this.stage.addEventListener("dblclick", (e) => this.onDoubleClick(e));
 	}
 
-	/**
-	 * 创建占位符
-	 */
-	private createPlaceholder(): void {
-		this.placeholderElement = this.container.createDiv({
-			cls: "oss-gallery-preview-placeholder",
+	private createActionBar(): void {
+		this.actionsElement = this.container.createDiv({
+			cls: "oss-gallery-preview-actions",
+			attr: { role: "toolbar", "aria-label": t("Image actions") },
 		});
-		const iconEl = this.placeholderElement.createDiv({
-			cls: "oss-gallery-preview-placeholder-icon",
-		});
-		setIcon(iconEl, "image");
-		this.setHidden(this.placeholderElement, true);
 	}
 
-	/**
-	 * 创建图片元素
-	 */
-	private createImageElement(): void {
-		this.imgElement = this.container.createEl("img", {
-			cls: "oss-gallery-image-preview",
-			attr: {
-				// src: this.imageUrl, // 移除初始 src，由 updateImage 统一处理
-				alt: "Preview",
-			},
-		});
-
-		// 阻止图片点击事件冒泡
-		this.imgElement.onclick = (e) => e.stopPropagation();
-
-		// 错误处理
-		this.imgElement.onerror = () => {
-			// 忽略空 src 的错误
-			if (this.imgElement?.getAttribute("src")) {
-				console.error("Failed to load preview image:", this.imageUrl);
-			}
+	/** Actions depend on the image (find similar needs it indexed). */
+	private renderActions(): void {
+		const bar = this.actionsElement;
+		if (!bar) return;
+		bar.empty();
+		const key = this.key;
+		const o = this.options;
+		const action = (icon: string, label: string, run: () => void, cls = "") => {
+			const btn = this.iconButton(bar, icon, label, run, `oss-gallery-preview-action ${cls}`);
+			btn.createSpan({ text: label });
 		};
-
-	}
-
-	/**
-	 * 绑定事件
-	 */
-	private bindEvents(): void {
-		// 点击背景关闭
-		this.container.onclick = () => this.close();
-
-		// Escape 关闭由 Modal 基类处理
-		if (this.onNavigate) {
-			this.scope.register([], "ArrowLeft", () =>
-				this.onNavigate?.("prev")
-			);
-			this.scope.register([], "ArrowRight", () =>
-				this.onNavigate?.("next")
-			);
+		if (o.onCopyUrl) action("link", t("Copy URL"), () => o.onCopyUrl?.(key));
+		if (o.onCopyEmbed) action("copy", t("Copy as embed"), () => o.onCopyEmbed?.(key));
+		if (o.onFindSimilar && o.canFindSimilar?.(key)) {
+			action("images", t("Find similar images"), () => {
+				this.close();
+				o.onFindSimilar?.(key);
+			});
 		}
+		if (o.onDelete) action("trash", t("Delete"), () => o.onDelete?.(key), "mod-warning");
+		bar.toggleClass("oss-gallery-is-hidden", bar.childElementCount === 0);
 	}
 
-	/**
-	 * 显示动画
-	 */
-	private showAnimation(): void {
-		window.requestAnimationFrame(() => {
-			this.container.classList.add("oss-gallery-show");
-		});
+	private updatePosition(): void {
+		const pos = this.options.position?.(this.key) ?? null;
+		this.counterElement?.setText(pos
+			? t("Image position").replace("{index}", String(pos.index)).replace("{total}", String(pos.total))
+			: "");
+		const setNav = (btn: HTMLButtonElement | null, enabled: boolean) => {
+			if (!btn) return;
+			btn.disabled = !enabled;
+			btn.toggleClass("oss-gallery-is-hidden", !enabled);
+		};
+		setNav(this.prevBtn, pos ? pos.index > 1 : true);
+		setNav(this.nextBtn, pos ? pos.index < pos.total : true);
 	}
 
-	/**
-	 * 处理图片加载错误
-	 */
-	private handleImageError(): void {
-		// 清除所有错误消息
-		this.hideErrorMessages();
-
-		// 不要恢复原始图片，保留背景图案
-		// if (this.imgElement && this.originalImgSrc) {
-		//     this.imgElement.src = this.originalImgSrc;
-		//     this.imgElement.style.display = '';
-		//     this.imgElement.style.background = '';
-		// }
-
-		// 隐藏加载动画
-		this.hideLoadingSpinner();
-
-		// 创建错误提示元素
-		const errorContainer = this.container.createDiv({
-			cls: "oss-gallery-preview-error",
-		});
-		errorContainer.createDiv({ cls: "oss-gallery-preview-error-icon", text: "⚠️" });
-		errorContainer.createDiv({
-			cls: "oss-gallery-preview-error-message",
-			text: t("Failed to load image"),
-		});
-		errorContainer.createDiv({ cls: "oss-gallery-preview-error-url", text: this.imageUrl });
-
-		this.container.appendChild(errorContainer);
-
-		// 3秒后自动隐藏错误消息
-		window.setTimeout(() => {
-			if (errorContainer && errorContainer.parentNode) {
-				errorContainer.remove();
-			}
-		}, 3000);
+	private navigate(direction: "prev" | "next"): void {
+		this.options.onNavigate?.(direction);
 	}
 
-	/**
-	 * 切换主题
-	 */
-	private toggleTheme(): void {
-		this.currentTheme = this.currentTheme === "dark" ? "light" : "dark";
-		this.applyTheme(this.currentTheme);
-	}
-
-	/**
-	 * 应用主题
-	 */
 	private applyTheme(theme: "dark" | "light"): void {
-		this.container.classList.toggle("oss-gallery-dark", theme === "dark");
-		this.container.classList.toggle("oss-gallery-light", theme === "light");
+		this.container.toggleClass("oss-gallery-dark", theme === "dark");
+		this.container.toggleClass("oss-gallery-light", theme === "light");
 	}
 
 	private setHidden(element: HTMLElement | null, hidden: boolean): void {
-		element?.classList.toggle("oss-gallery-is-hidden", hidden);
+		element?.toggleClass("oss-gallery-is-hidden", hidden);
 	}
 
-	/**
-	 * 更新图片
-	 */
-	updateImage(newUrl: string, newFileName?: string): void {
-		if (this.closed) return;
-
-		// 立即清除之前的错误信息和加载状态
-		this.hideErrorMessages();
-		this.hideLoadingSpinner();
-
-		// 如果正在更新，保存最新的更新请求
-		if (this.isUpdating) {
-			this.pendingUpdate = { url: newUrl, fileName: newFileName };
-			return;
-		}
-
-		if (!this.imgElement) return;
-
+	/** Show another image (navigation, or the same one again for Retry). Resets to fit. */
+	updateImage(newUrl: string, newKey?: string): void {
+		if (this.closed || !this.imgElement) return;
+		const img = this.imgElement;
+		const token = ++this.loadToken;
 		this.imageUrl = newUrl;
-		this.isUpdating = true;
+		if (newKey) this.key = newKey;
+		const name = fileNameOf(this.key);
 
-		// 更新文件名（即使不显示也保存）
-		if (newFileName) {
-			this.fileName = newFileName;
-		}
+		this.hideError();
+		this.clearLoadingTimer();
+		this.setHidden(this.loadingSpinner, true);
+		this.pathElement?.setText(name);
+		this.pathElement?.setAttr("title", this.key);
+		this.updatePosition();
+		this.renderActions();
 
-		// 立即更新路径显示
-		if (this.pathElement) {
-			this.pathElement.textContent = this.formatUrlToPath(newUrl);
-		}
+		this.natural = null;
+		this.zoomMode = "contain";
+		this.pointers.clear();
+		this.pinchStart = null;
+		this.setHidden(img, true);
+		img.removeAttribute("src");
+		img.alt = name;
+		this.setHidden(this.placeholderElement, false);
 
-		// 延迟显示加载动画
-		{
-			// 保存原始图片
-			this.originalImgSrc = this.imgElement?.src || null;
-			this.isLoadingShown = false;
+		this.loadingTimer = window.setTimeout(() => {
+			if (token === this.loadToken) this.showLoadingSpinner();
+		}, LOADING_DELAY);
 
-			// 切换到占位符显示
-			if (this.imgElement) {
-				this.setHidden(this.imgElement, true);
-				this.imgElement.removeAttribute("src");
-			}
-
-			this.setHidden(this.placeholderElement, false);
-
-			// 设置延迟显示加载动画（在背景图案之上）
-			this.loadingTimer = window.setTimeout(() => {
-				this.showLoadingSpinner();
-				this.isLoadingShown = true;
-			}, ImagePreviewModal.LOADING_DELAY);
-
-			// 预加载新图片
-			const tempImg = new Image();
-			tempImg.onload = () => {
-				if (this.closed) return;
-
-				// 清除延迟计时器
-				if (this.loadingTimer) {
-					window.clearTimeout(this.loadingTimer);
-					this.loadingTimer = null;
-				}
-
-				// 恢复图片显示
-				this.setHidden(this.placeholderElement, true);
-
-				if (this.imgElement) {
-					this.setHidden(this.imgElement, false);
-					this.imgElement.src = newUrl;
-				}
-
-				this.hideLoadingSpinner();
-				this.isUpdating = false;
-				this.isLoadingShown = false;
-				this.checkPendingUpdate();
+		// Load off-screen first so the previous image never shows half-decoded.
+		const loader = new Image();
+		loader.onload = () => {
+			if (this.closed || token !== this.loadToken || !this.imgElement) return;
+			this.clearLoadingTimer();
+			this.setHidden(this.loadingSpinner, true);
+			this.setHidden(this.placeholderElement, true);
+			const fallback = this.stageSize();
+			this.natural = {
+				width: loader.naturalWidth || fallback.width,
+				height: loader.naturalHeight || fallback.height,
 			};
+			img.setCssProps({
+				"--oss-preview-w": `${this.natural.width}px`,
+				"--oss-preview-h": `${this.natural.height}px`,
+			});
+			img.src = newUrl;
+			this.setFit("contain", false);
+			this.setHidden(img, false);
+		};
+		loader.onerror = () => {
+			if (this.closed || token !== this.loadToken) return;
+			this.clearLoadingTimer();
+			this.setHidden(this.loadingSpinner, true);
+			this.showError();
+		};
+		loader.src = newUrl;
+	}
 
-			tempImg.onerror = () => {
-				if (this.closed) return;
-
-				// 清除延迟计时器
-				if (this.loadingTimer) {
-					window.clearTimeout(this.loadingTimer);
-					this.loadingTimer = null;
-				}
-
-				// 保持占位符显示，或者显示错误状态
-				// 这里我们保持占位符，并显示错误信息
-
-				this.hideLoadingSpinner();
-				this.handleImageError();
-				this.isUpdating = false;
-				this.isLoadingShown = false;
-				this.checkPendingUpdate();
-			};
-
-			// 开始加载新图片
-			tempImg.src = newUrl;
+	private clearLoadingTimer(): void {
+		if (this.loadingTimer !== null) {
+			window.clearTimeout(this.loadingTimer);
+			this.loadingTimer = null;
 		}
 	}
 
-	/**
-	 * 显示加载动画
-	 */
 	private showLoadingSpinner(): void {
 		if (!this.loadingSpinner) {
-			this.loadingSpinner = this.container.createDiv({
-				cls: "oss-gallery-preview-loading oss-gallery-is-hidden",
-			});
+			this.loadingSpinner = this.stage.createDiv({ cls: "oss-gallery-preview-loading" });
 			this.loadingSpinner.createDiv({ cls: "oss-gallery-preview-spinner" });
-			this.loadingSpinner.createDiv({
-				cls: "oss-gallery-preview-loading-text",
-				text: t("Loading..."),
-			});
-			this.container.appendChild(this.loadingSpinner);
+			this.loadingSpinner.createDiv({ cls: "oss-gallery-preview-loading-text", text: t("Loading...") });
 		}
-
-		// 确保只显示一个加载动画
-		this.hideErrorMessages();
 		this.setHidden(this.loadingSpinner, false);
 	}
 
-	/**
-	 * 隐藏所有错误消息
-	 */
-	private hideErrorMessages(): void {
-		const errorElements = this.container.querySelectorAll(
-			".oss-gallery-preview-error"
-		);
-		errorElements.forEach((el) => el.remove());
+	/** Load failure: stays until the next image or a retry. */
+	private showError(): void {
+		this.hideError();
+		this.setHidden(this.placeholderElement, true);
+		const box = this.stage.createDiv({ cls: "oss-gallery-preview-error", attr: { role: "alert" } });
+		setIcon(box.createDiv({ cls: "oss-gallery-preview-error-icon" }), "image-off");
+		box.createDiv({ cls: "oss-gallery-preview-error-message", text: t("Failed to load image") });
+		box.createDiv({ cls: "oss-gallery-preview-error-url", text: this.imageUrl });
+		const retry = box.createEl("button", { cls: "mod-cta", text: t("Retry"), attr: { type: "button" } });
+		retry.addEventListener("click", (event) => {
+			event.stopPropagation();
+			this.updateImage(this.imageUrl, this.key);
+		});
+		box.addEventListener("pointerdown", (event) => event.stopPropagation());
+		this.errorElement = box;
 	}
 
-	/**
-	 * 隐藏加载动画
-	 */
-	private hideLoadingSpinner(): void {
-		this.setHidden(this.loadingSpinner, true);
-		this.isLoadingShown = false;
+	private hideError(): void {
+		this.errorElement?.remove();
+		this.errorElement = null;
 	}
 
-	/**
-	 * 检查是否有待处理的更新
-	 */
-	private checkPendingUpdate(): void {
-		if (this.pendingUpdate) {
-			const pending = this.pendingUpdate;
-			this.pendingUpdate = null;
+	// ---- zoom / pan ----
 
-			// 清理计时器
-			if (this.loadingTimer) {
-				window.clearTimeout(this.loadingTimer);
-				this.loadingTimer = null;
-			}
+	private stageSize(): Size {
+		return { width: this.stage?.clientWidth || 1, height: this.stage?.clientHeight || 1 };
+	}
 
-			// 延迟一点再处理，让当前更新完成
-			window.setTimeout(() => {
-				if (!this.closed) {
-					this.updateImage(pending.url, pending.fileName);
-				}
-			}, 50);
+	private stageCenter(): Point {
+		const s = this.stageSize();
+		return { x: s.width / 2, y: s.height / 2 };
+	}
+
+	private stagePoint(event: { clientX: number; clientY: number }): Point {
+		const rect = this.stage.getBoundingClientRect();
+		return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+	}
+
+	private applyView(animate: boolean): void {
+		const img = this.imgElement;
+		if (!img) return;
+		img.toggleClass("oss-gallery-zoom-animate", animate);
+		img.setCssProps({
+			"--oss-preview-x": `${this.view.x}px`,
+			"--oss-preview-y": `${this.view.y}px`,
+			"--oss-preview-scale": String(this.view.scale),
+		});
+		const over = this.isPannable();
+		this.stage.toggleClass("oss-gallery-is-pannable", over);
+	}
+
+	private isPannable(): boolean {
+		if (!this.natural) return false;
+		const o = overflow(this.view, this.natural, this.stageSize());
+		return o.x || o.y;
+	}
+
+	private setFit(mode: FitMode, animate: boolean): void {
+		if (!this.natural) return;
+		this.zoomMode = mode;
+		this.view = fitView(this.natural, this.stageSize(), mode);
+		this.applyView(animate);
+		if (animate) this.flashZoom();
+	}
+
+	private zoomTo(scale: number, point: Point, animate: boolean): void {
+		if (!this.natural) return;
+		this.zoomMode = "manual";
+		this.view = zoomAround(this.view, scale, point, this.natural, this.stageSize());
+		this.applyView(animate);
+		this.flashZoom();
+	}
+
+	private zoomStep(factor: number): void {
+		this.zoomTo(this.view.scale * factor, this.stageCenter(), true);
+	}
+
+	private pan(dx: number, dy: number): void {
+		if (!this.natural) return;
+		this.view = panBy(this.view, dx, dy, this.natural, this.stageSize());
+		// Panning a fitted long image keeps "fit width" for resizes.
+		if (this.zoomMode === "contain") this.zoomMode = "manual";
+		this.applyView(false);
+	}
+
+	private flashZoom(): void {
+		const badge = this.zoomBadge;
+		if (!badge) return;
+		badge.setText(`${zoomPercent(this.view.scale)}%`);
+		badge.addClass("oss-gallery-show");
+		if (this.zoomBadgeTimer !== null) window.clearTimeout(this.zoomBadgeTimer);
+		this.zoomBadgeTimer = window.setTimeout(() => {
+			badge.removeClass("oss-gallery-show");
+			this.zoomBadgeTimer = null;
+		}, ZOOM_BADGE_MS);
+	}
+
+	/** Re-fit while the user hasn't zoomed; otherwise keep the zoom and re-clamp. */
+	private onResize(): void {
+		if (!this.natural) return;
+		if (this.zoomMode === "manual") {
+			this.view = panBy(this.view, 0, 0, this.natural, this.stageSize());
+			this.applyView(false);
+		} else if (this.zoomMode === "width") {
+			// Keep the scroll position of a long image (relative), refit the width.
+			const before = this.view;
+			const fitted = fitView(this.natural, this.stageSize(), "width");
+			const ratio = fitted.scale / before.scale;
+			this.view = panBy({ scale: fitted.scale, x: fitted.x, y: before.y * ratio }, 0, 0, this.natural, this.stageSize());
+			this.applyView(false);
+		} else {
+			this.setFit("contain", false);
 		}
+	}
+
+	private onWheel(event: WheelEvent): void {
+		if (!this.natural) return;
+		event.preventDefault();
+		// Fit width: the wheel scrolls the long image; Ctrl/pinch still zooms.
+		if (!event.ctrlKey && !event.metaKey && this.zoomMode === "width") {
+			this.pan(-event.deltaX, -event.deltaY);
+			return;
+		}
+		const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+		this.zoomTo(this.view.scale * wheelZoomFactor(delta), this.stagePoint(event), false);
+	}
+
+	/** The stage point lies on the image (pointer capture retargets clicks to the stage). */
+	private isOnImage(point: Point): boolean {
+		if (!this.natural) return false;
+		const { x, y, scale } = this.view;
+		return point.x >= x && point.x <= x + this.natural.width * scale
+			&& point.y >= y && point.y <= y + this.natural.height * scale;
+	}
+
+	private onDoubleClick(event: MouseEvent): void {
+		if (!this.natural || !this.isOnImage(this.stagePoint(event))) return;
+		event.preventDefault();
+		if (doubleClickTarget(this.view) === "actual") {
+			this.zoomTo(1, this.stagePoint(event), true);
+		} else {
+			this.setFit("contain", true);
+		}
+	}
+
+	private onPointerDown(event: PointerEvent): void {
+		if ((event.target as HTMLElement).closest("button")) return;
+		if (event.pointerType === "mouse" && event.button !== 0) return;
+		const point = this.stagePoint(event);
+		this.pointers.set(event.pointerId, { target: event.target, start: point, last: point, startTime: performance.now() });
+		this.stage.setPointerCapture(event.pointerId);
+		if (this.pointers.size === 1) {
+			this.dragged = false;
+		} else if (this.pointers.size === 2) {
+			const [a, b] = [...this.pointers.values()];
+			if (a && b) this.pinchStart = { distance: distance(a.last, b.last), view: this.view };
+			this.dragged = true;
+		}
+	}
+
+	private onPointerMove(event: PointerEvent): void {
+		const info = this.pointers.get(event.pointerId);
+		if (!info) return;
+		const point = this.stagePoint(event);
+		const dx = point.x - info.last.x;
+		const dy = point.y - info.last.y;
+		info.last = point;
+
+		if (this.pointers.size >= 2 && this.pinchStart && this.natural) {
+			const [a, b] = [...this.pointers.values()];
+			if (!a || !b || this.pinchStart.distance <= 0) return;
+			const scale = this.pinchStart.view.scale * (distance(a.last, b.last) / this.pinchStart.distance);
+			this.zoomTo(scale, midpoint(a.last, b.last), false);
+			return;
+		}
+
+		if (!this.dragged && distance(point, info.start) > DRAG_SLOP) {
+			this.dragged = true;
+		}
+		if (this.dragged && this.isPannable()) {
+			this.stage.addClass("oss-gallery-is-dragging");
+			this.pan(dx, dy);
+		}
+	}
+
+	private onPointerUp(event: PointerEvent): void {
+		const info = this.pointers.get(event.pointerId);
+		if (!info) return;
+		const wasPinch = this.pointers.size >= 2 || this.pinchStart !== null;
+		this.pointers.delete(event.pointerId);
+		this.stage.removeClass("oss-gallery-is-dragging");
+		if (this.pointers.size > 0) return;
+		this.pinchStart = null;
+		if (wasPinch) return;
+
+		if (!this.dragged) {
+			// A click on the backdrop (not the image) closes the lightbox.
+			if (info.target === this.stage || info.target === this.placeholderElement) {
+				this.close();
+			}
+			return;
+		}
+		// Swipe only while the image fits (a drag of a zoomed image pans).
+		if (!this.isPannable()) {
+			const swipe = detectSwipe(info.last.x - info.start.x, info.last.y - info.start.y, performance.now() - info.startTime);
+			if (swipe) this.navigate(swipe);
+		}
+	}
+
+	private onPointerCancel(event: PointerEvent): void {
+		this.pointers.delete(event.pointerId);
+		if (this.pointers.size === 0) this.pinchStart = null;
+		this.stage.removeClass("oss-gallery-is-dragging");
+	}
+
+	/**
+	 * Keys: arrows pan along an axis where the image overflows, otherwise
+	 * Left/Right go to the previous/next image; + / - zoom, 0 fits, 1 is 100%.
+	 */
+	private bindKeys(): void {
+		const arrow = (dx: number, dy: number, nav: "prev" | "next" | null) => () => {
+			const o = this.natural ? overflow(this.view, this.natural, this.stageSize()) : { x: false, y: false };
+			if ((dx !== 0 && o.x) || (dy !== 0 && o.y)) {
+				this.pan(dx, dy);
+			} else if (nav) {
+				this.navigate(nav);
+			}
+			return false;
+		};
+		this.scope.register(null, "ArrowLeft", arrow(KEY_PAN_STEP, 0, "prev"));
+		this.scope.register(null, "ArrowRight", arrow(-KEY_PAN_STEP, 0, "next"));
+		this.scope.register(null, "ArrowUp", arrow(0, KEY_PAN_STEP, null));
+		this.scope.register(null, "ArrowDown", arrow(0, -KEY_PAN_STEP, null));
+		const zoomIn = () => {
+			this.zoomStep(ZOOM_STEP);
+			return false;
+		};
+		const zoomOut = () => {
+			this.zoomStep(1 / ZOOM_STEP);
+			return false;
+		};
+		this.scope.register(null, "+", zoomIn);
+		this.scope.register(null, "=", zoomIn);
+		this.scope.register(null, "-", zoomOut);
+		this.scope.register(null, "_", zoomOut);
+		this.scope.register(null, "0", () => {
+			this.setFit("contain", true);
+			return false;
+		});
+		this.scope.register(null, "1", () => {
+			this.zoomTo(1, this.stageCenter(), true);
+			return false;
+		});
 	}
 
 	onClose(): void {
 		this.closed = true;
-
-		// 清理计时器
-		if (this.loadingTimer) {
-			window.clearTimeout(this.loadingTimer);
-			this.loadingTimer = null;
+		this.loadToken++;
+		this.clearLoadingTimer();
+		if (this.zoomBadgeTimer !== null) {
+			window.clearTimeout(this.zoomBadgeTimer);
+			this.zoomBadgeTimer = null;
 		}
-
-		const { contentEl } = this;
-		contentEl.empty();
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
+		this.pointers.clear();
+		this.contentEl.empty();
 		this.imgElement = null;
 		this.pathElement = null;
+		this.counterElement = null;
 		this.loadingSpinner = null;
-		// container 不能设置为 null，因为它被其他地方使用
+		this.errorElement = null;
+		this.actionsElement = null;
+		this.options.onClosed?.();
 	}
 }
