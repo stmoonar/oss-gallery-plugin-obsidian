@@ -1,4 +1,4 @@
-import { UploadAction, UploadProgressStore } from "./UploadProgressStore";
+import { nextUploadPercent, UploadAction, UploadProgressStore } from "./UploadProgressStore";
 
 /**
  * Upload queue behind the progress cards. No Obsidian imports: everything
@@ -231,7 +231,7 @@ export class UploadQueue<T> {
 		const controller = new AbortController();
 		job.controller = controller;
 		job.state = "uploading";
-		this.store.update(job.id, { status: "uploading", percent: 0, error: undefined });
+		this.store.update(job.id, { status: "uploading", percent: null, error: undefined });
 
 		let result: UploadResult;
 		try {
@@ -240,9 +240,8 @@ export class UploadQueue<T> {
 					job.file,
 					(percent) => {
 						if (controller.signal.aborted) return;
-						const value = Math.min(100, Math.max(0, Math.round(percent)));
-						if (!Number.isFinite(value)) return;
-						this.store.update(job.id, { percent: value });
+						const current = this.store.get(job.id)?.percent ?? null;
+						this.store.update(job.id, { percent: nextUploadPercent(current, percent) });
 					},
 					controller.signal
 				),
@@ -287,7 +286,7 @@ export class UploadQueue<T> {
 	private retry(job: UploadJob<T>): void {
 		if (job.state !== "failed" || this.store.get(job.id)?.busy) return;
 		job.state = "queued";
-		this.store.update(job.id, { status: "queued", percent: 0, error: undefined, busy: false });
+		this.store.update(job.id, { status: "queued", percent: null, error: undefined, busy: false });
 		this.enqueue([job.id]);
 	}
 

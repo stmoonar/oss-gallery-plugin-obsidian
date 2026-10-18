@@ -3,7 +3,7 @@ import { SmMsSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import { isImageFile } from './shared/image';
 import { ListingCollector } from './shared/listing';
 import { getArray, getBoolean, getNumber, getNumberLike, getRecord, getString } from '../utils/typeGuards';
@@ -81,7 +81,7 @@ export class SmMsProvider implements IOssProvider {
             body: bodyArrayBuffer
         };
 
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         try {
             const response = await requestUrl({ ...requestParams, throw: false });

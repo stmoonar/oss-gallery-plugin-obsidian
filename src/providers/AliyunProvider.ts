@@ -3,7 +3,7 @@ import { AliyunSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, RequestUrlResponse, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { createHmac } from 'crypto';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import {
     buildListPrefix,
     buildObjectKey,
@@ -106,8 +106,7 @@ export class AliyunProvider implements IOssProvider {
             throw new Error(t('Please configure Aliyun OSS settings first'));
         }
 
-        // Simulate progress since requestUrl doesn't support it
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         // Build object key
         const objectKey = buildObjectKey(this.settings.path, path);

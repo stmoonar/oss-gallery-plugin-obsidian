@@ -2,7 +2,7 @@ import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { UpyunSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import { isImageFile } from './shared/image';
 import { ListingCollector, MAX_LIST_REQUESTS } from './shared/listing';
 import {
@@ -162,8 +162,7 @@ export class UpyunProvider implements IOssProvider {
         // fails up front instead of after the file is already stored.
         this.getPublicBaseUrl();
 
-        // Simulate progress since requestUrl doesn't support it
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         const objectKey = buildObjectKey(this.settings.path, path);
         const arrayBuffer = await file.arrayBuffer();

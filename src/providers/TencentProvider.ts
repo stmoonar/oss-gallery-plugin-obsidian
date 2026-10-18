@@ -2,7 +2,7 @@ import { IOssProvider, ListResult, UploadProgressInfo } from '../types/oss';
 import { TencentSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
 import { collectPages, ListingCollector, MAX_LIST_PAGES } from './shared/listing';
 import { parseS3ListObjectsPage, s3EntriesToImages } from './shared/s3xml';
@@ -64,8 +64,7 @@ export class TencentProvider implements IOssProvider {
             throw new Error(t('Please configure Tencent COS settings first'));
         }
 
-        // Simulate progress since requestUrl doesn't support it
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         const objectKey = buildObjectKey(this.settings.path, path);
         const host = this.getHost();

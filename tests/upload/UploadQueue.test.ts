@@ -6,7 +6,7 @@ import {
 	UploadQueueHost,
 	UploadResult,
 } from "../../src/services/UploadQueue";
-import { UploadProgressStore } from "../../src/services/UploadProgressStore";
+import { nextUploadPercent, UploadProgressStore } from "../../src/services/UploadProgressStore";
 
 interface Deferred<T> {
 	promise: Promise<T>;
@@ -114,18 +114,63 @@ describe("raceAbort", () => {
 	});
 });
 
+describe("nextUploadPercent", () => {
+	it("stays unknown for the start / finish reports of requests without progress", () => {
+		expect(nextUploadPercent(null, 0)).toBeNull();
+		expect(nextUploadPercent(null, 100)).toBeNull();
+		expect(nextUploadPercent(null, -5)).toBeNull();
+		expect(nextUploadPercent(null, 120)).toBeNull();
+		expect(nextUploadPercent(null, 0.4)).toBeNull();
+		expect(nextUploadPercent(null, 99.6)).toBeNull();
+	});
+
+	it("switches to a rounded percentage on the first real intermediate value", () => {
+		expect(nextUploadPercent(null, 41.6)).toBe(42);
+		expect(nextUploadPercent(42, 100)).toBe(100);
+		expect(nextUploadPercent(42, 0)).toBe(0);
+		expect(nextUploadPercent(42, 150)).toBe(100);
+	});
+
+	it("ignores values that are not numbers", () => {
+		expect(nextUploadPercent(null, Number.NaN)).toBeNull();
+		expect(nextUploadPercent(30, Number.POSITIVE_INFINITY)).toBe(30);
+	});
+});
+
 describe("UploadQueue", () => {
+	it("keeps a running upload indeterminate when the provider only reports start and finish", async () => {
+		const h = createHarness();
+		h.add("oss-upload-1-1", "a.png");
+		h.queue.enqueue(["oss-upload-1-1"]);
+		h.uploads[0].progress(0);
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
+		h.uploads[0].progress(100);
+		// "Sent" is not "done": the card waits for the result.
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
+		expect(h.store.get("oss-upload-1-1")?.status).toBe("uploading");
+
+		h.uploads[0].result.resolve({ url: "u", text: "x\n" });
+		await flush();
+		expect(h.store.has("oss-upload-1-1")).toBe(false);
+	});
+
 	it("shows queued jobs as waiting and runs them one at a time", async () => {
 		const h = createHarness();
 		h.add("oss-upload-1-1", "a.pdf");
 		h.add("oss-upload-1-2", "b.pdf");
 		expect(h.store.get("oss-upload-1-1")?.status).toBe("queued");
-		expect(h.store.get("oss-upload-1-1")?.percent).toBe(0);
+		// Nothing measured yet: no percentage at all.
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
 
 		h.queue.enqueue(["oss-upload-1-1", "oss-upload-1-2"]);
 		expect(h.uploads).toHaveLength(1);
 		expect(h.store.get("oss-upload-1-1")?.status).toBe("uploading");
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
 		expect(h.store.get("oss-upload-1-2")?.status).toBe("queued");
+
+		// A provider's "started" report is no progress: stays indeterminate.
+		h.uploads[0].progress(0);
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
 
 		h.uploads[0].progress(41.6);
 		expect(h.store.get("oss-upload-1-1")?.percent).toBe(42);
@@ -155,6 +200,7 @@ describe("UploadQueue", () => {
 
 		h.store.requestAction("oss-upload-1-1", "retry");
 		expect(h.store.get("oss-upload-1-1")?.status).toBe("uploading");
+		expect(h.store.get("oss-upload-1-1")?.percent).toBeNull();
 		expect(h.store.get("oss-upload-1-1")?.error).toBeUndefined();
 		expect(h.uploads).toHaveLength(2);
 		expect(h.uploads[1].file).toBe(file);

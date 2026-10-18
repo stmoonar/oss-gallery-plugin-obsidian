@@ -3,7 +3,7 @@ import { QiniuSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import { isImageFile } from './shared/image';
 import { buildListPrefix, buildObjectKey, encodeObjectKeyForUrl, normalizeBaseUrl } from './shared/path';
 import { collectPages, ListingCollector, MAX_LIST_PAGES } from './shared/listing';
@@ -82,8 +82,7 @@ export class QiniuProvider implements IOssProvider {
         // fails up front instead of after the file is already stored.
         this.getPublicBaseUrl();
 
-        // Simulate progress since requestUrl doesn't support it
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         // Build key
         const key = buildObjectKey(this.settings.path, path);

@@ -10,6 +10,7 @@ import {
 } from "@codemirror/view";
 import {
 	createUploadProgressCard,
+	dismissTooltipsWithin,
 	getUploadProgressCardId,
 	UploadCardActionHandler,
 	updateUploadProgressCard,
@@ -40,6 +41,11 @@ class UploadProgressWidget extends WidgetType {
 
 	toDOM(): HTMLElement {
 		return createUploadProgressCard(this.entry, this.onAction);
+	}
+
+	/** Best effort (only while still attached): no tooltip outlives the card. */
+	destroy(dom: HTMLElement): void {
+		dismissTooltipsWithin(dom);
 	}
 
 	/** Card buttons handle their own clicks; the editor must not. */

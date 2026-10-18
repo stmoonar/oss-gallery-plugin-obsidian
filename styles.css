@@ -414,6 +414,9 @@ If your plugin does not need CSS, delete this file.
     line-height: var(--line-height-tight);
     user-select: none;
     cursor: default;
+    /* The card's aria-label is for screen readers; it repeats the visible
+       text, and an Obsidian tooltip on it would outlive the card. */
+    --no-tooltip: true;
 }
 
 .oss-gallery-upload-thumb {
@@ -474,6 +477,33 @@ If your plugin does not need CSS, delete this file.
     transition: width 0.2s ease-out;
 }
 
+/* Upload running, no measured progress (requestUrl reports none): a
+   segment sliding through the track instead of a percentage that never
+   moves. */
+.oss-gallery-upload-track.oss-gallery-is-indeterminate .oss-gallery-upload-bar {
+    width: 40%;
+    transition: none;
+    animation: oss-gallery-upload-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes oss-gallery-upload-indeterminate {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(250%);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    /* Still visibly busy, without motion: a full, dimmed bar. */
+    .oss-gallery-upload-track.oss-gallery-is-indeterminate .oss-gallery-upload-bar {
+        width: 100%;
+        animation: none;
+        opacity: 0.5;
+    }
+}
+
 .oss-gallery-upload-widget.oss-gallery-is-done .oss-gallery-upload-bar {
     background-color: var(--text-success);
 }
@@ -527,6 +557,8 @@ If your plugin does not need CSS, delete this file.
 
 .oss-gallery-upload-action {
     font-size: var(--font-ui-smaller);
+    /* Icon-only buttons keep their tooltip (their aria-label). */
+    --no-tooltip: false;
 }
 
 .oss-gallery-upload-action.clickable-icon {

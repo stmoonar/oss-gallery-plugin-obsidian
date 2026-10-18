@@ -3,7 +3,7 @@ import { ImgurSettings, PluginSettings } from '../types/settings';
 import { requestUrl, RequestUrlParam, Setting } from 'obsidian';
 import { t } from '../i18n';
 import { buildMultipartBody, generateBoundary } from './shared/multipart';
-import { simulateProgress } from './shared/progress';
+import { reportUploadBounds } from './shared/progress';
 import { getBoolean, getRecord, getString } from '../utils/typeGuards';
 
 export class ImgurProvider implements IOssProvider {
@@ -36,8 +36,7 @@ export class ImgurProvider implements IOssProvider {
             throw new Error(t('Please configure Imgur settings first'));
         }
 
-        // Simulate progress since requestUrl doesn't support it
-        const progress = simulateProgress(onProgress, file.size);
+        const progress = reportUploadBounds(onProgress, file.size);
 
         // Convert file to base64
         const base64 = await this.fileToBase64(file);

@@ -1,29 +1,23 @@
 import { UploadProgressInfo } from '../../types/oss';
 
 /**
- * Controller returned by simulateProgress. Callers must invoke exactly one of
- * finish()/fail() once the real upload settles, so the simulated ticking stops
- * and no timer is left running.
+ * Controller returned by reportUploadBounds. Callers must invoke exactly one
+ * of finish()/fail() once the real upload settles.
  */
 export interface ProgressController {
-    /** Upload succeeded: stop simulating and report 100%. */
+    /** Upload succeeded: report 100%. */
     finish(): void;
-    /** Upload failed: stop simulating without reporting completion. */
+    /** Upload failed: report nothing more. */
     fail(): void;
 }
 
-const CAP_PERCENTAGE = 90;
-const TICK_MS = 200;
-
 /**
- * Simulate progress for providers that use requestUrl (which doesn't support
- * progress events). Fires 0% immediately, then eases the percentage upward
- * over time toward a cap (never reaching 100% on its own) so the bar doesn't
- * look finished while the request is still in flight. The caller must call
- * finish() once the upload actually succeeds (reports 100%) or fail() if it
- * errors out (stops without reporting completion).
+ * Report only what is known for an upload sent through requestUrl, which
+ * cannot report transfer progress: 0% when it starts and 100% when it
+ * succeeds. No made-up percentages in between: the upload card shows an
+ * indeterminate bar until a provider reports real intermediate progress.
  */
-export function simulateProgress(
+export function reportUploadBounds(
     onProgress: ((progress: UploadProgressInfo) => void) | undefined,
     fileSize: number
 ): ProgressController {
@@ -31,45 +25,17 @@ export function simulateProgress(
         return { finish() {}, fail() {} };
     }
 
-    let percentage = 0;
-    let timer: number | undefined;
     let settled = false;
-
-    const report = (pct: number) => {
-        percentage = pct;
-        onProgress({ loaded: Math.round((pct / 100) * fileSize), total: fileSize, percentage: pct });
-    };
-
-    const stop = () => {
-        if (timer !== undefined) {
-            window.clearInterval(timer);
-            timer = undefined;
-        }
-    };
-
-    report(0);
-    timer = window.setInterval(() => {
-        // Ease toward the cap: cover a fraction of the remaining distance each
-        // tick, so progress slows down as it approaches CAP_PERCENTAGE.
-        const remaining = CAP_PERCENTAGE - percentage;
-        const next = Math.min(CAP_PERCENTAGE, percentage + Math.max(1, remaining * 0.15));
-        report(next);
-        if (next >= CAP_PERCENTAGE) {
-            stop();
-        }
-    }, TICK_MS);
+    onProgress({ loaded: 0, total: fileSize, percentage: 0 });
 
     return {
         finish() {
             if (settled) return;
             settled = true;
-            stop();
-            report(100);
+            onProgress({ loaded: fileSize, total: fileSize, percentage: 100 });
         },
         fail() {
-            if (settled) return;
             settled = true;
-            stop();
         },
     };
 }

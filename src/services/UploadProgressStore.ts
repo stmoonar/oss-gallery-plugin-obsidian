@@ -13,8 +13,12 @@ export interface UploadEntry {
 	id: string;
 	name: string;
 	mime: string;
-	/** 0-100, rounded. */
-	percent: number;
+	/**
+	 * 0-100, rounded, only once the provider reported real transfer progress.
+	 * null: no progress known (requestUrl cannot report any), so the card
+	 * shows an indeterminate bar instead of a percentage that never moves.
+	 */
+	percent: number | null;
 	status: UploadStatus;
 	/** Failure reason shown on a failed card (already filtered for secrets). */
 	error?: string;
@@ -25,6 +29,20 @@ export interface UploadEntry {
 }
 
 export type UploadEntryPatch = Partial<Pick<UploadEntry, "percent" | "status" | "error" | "busy">>;
+
+/**
+ * Percent to show after the provider reported `reported` (0-100).
+ * While nothing real is known (`current` null), 0 and 100 carry no
+ * information: providers report them around a request that cannot report
+ * progress, and the card status already says started / finished. The first
+ * value strictly in between switches the card to a determinate bar.
+ */
+export function nextUploadPercent(current: number | null, reported: number): number | null {
+	if (!Number.isFinite(reported)) return current;
+	const value = Math.min(100, Math.max(0, Math.round(reported)));
+	if (current === null && (value <= 0 || value >= 100)) return null;
+	return value;
+}
 
 /** Called with the id of the entry that changed (or was removed). */
 export type UploadProgressListener = (id: string) => void;
@@ -55,7 +73,7 @@ export class UploadProgressStore {
 			id,
 			name: file.name,
 			mime,
-			percent: 0,
+			percent: null,
 			status: "queued",
 			previewUrl: mime.startsWith("image/") ? URL.createObjectURL(file) : undefined,
 		});

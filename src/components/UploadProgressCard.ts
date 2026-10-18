@@ -62,12 +62,44 @@ export function describeUploadEntry(entry: UploadEntry): string {
 	switch (entry.status) {
 		case "queued":
 			return fill("Upload aria waiting");
+		case "uploading":
+			return fill(entry.percent === null ? "Upload aria uploading" : "Upload aria uploading percent");
 		case "done":
 			return fill("Upload aria done");
 		case "failed":
 			return fill("Upload aria failed");
-		default:
-			return fill("Upload aria uploading");
+	}
+}
+
+/**
+ * Obsidian shows a tooltip for every hovered element with an aria-label and
+ * hides it only on pointerout / pointerup. A card element removed under the
+ * pointer (upload finished, buttons rebuilt) never sends pointerout, so its
+ * tooltip would stay on screen with the text it had when it appeared.
+ * Send that pointerout ourselves before the element goes away.
+ */
+export function dismissTooltipsWithin(el: HTMLElement): void {
+	if (!el.isConnected) return;
+	const labelled = [el, ...Array.from(el.querySelectorAll<HTMLElement>("[aria-label]"))];
+	for (const node of labelled) {
+		if (!node.hasAttribute("aria-label") || !node.matches(":hover")) continue;
+		node.dispatchEvent(
+			new PointerEvent("pointerout", { bubbles: true, pointerType: "mouse", relatedTarget: null })
+		);
+	}
+}
+
+/** Text next to the file name: never a percentage nobody measured. */
+function statusText(entry: UploadEntry): string {
+	switch (entry.status) {
+		case "failed":
+			return t("Upload failed");
+		case "done":
+			return t("Upload complete");
+		case "queued":
+			return t("Upload waiting");
+		case "uploading":
+			return entry.percent === null ? t("Uploading") : `${entry.percent}%`;
 	}
 }
 
@@ -78,33 +110,33 @@ export function updateUploadProgressCard(
 	onAction: UploadCardActionHandler
 ): void {
 	const failed = entry.status === "failed";
-	root.toggleClass("oss-gallery-is-done", entry.status === "done");
+	const done = entry.status === "done";
+	// The card disappears right after this; take its tooltips with it.
+	if (done) dismissTooltipsWithin(root);
+	root.toggleClass("oss-gallery-is-done", done);
 	root.toggleClass("oss-gallery-is-failed", failed);
 	root.toggleClass("oss-gallery-is-queued", entry.status === "queued");
 	root.setAttribute("aria-label", describeUploadEntry(entry));
 	root.setAttribute("aria-busy", String(entry.status === "uploading" || entry.busy === true));
 
-	const percent = entry.status === "done" ? 100 : entry.status === "queued" ? 0 : entry.percent;
+	// null: nothing measured. A queued card shows an empty track, a running
+	// upload without real progress an indeterminate (animated) bar.
+	const percent = done ? 100 : entry.status === "uploading" ? entry.percent : null;
+	const indeterminate = entry.status === "uploading" && entry.percent === null;
+	const text = statusText(entry);
 
 	const status = root.querySelector<HTMLElement>(".oss-gallery-upload-status");
-	if (status) {
-		status.setText(
-			failed
-				? t("Upload failed")
-				: entry.status === "done"
-					? t("Upload complete")
-					: entry.status === "queued"
-						? t("Upload waiting")
-						: `${percent}%`
-		);
-	}
+	status?.setText(text);
 
 	const track = root.querySelector<HTMLElement>(".oss-gallery-upload-track");
 	if (track) {
 		track.toggleClass("oss-gallery-hidden", failed);
-		track.setAttribute("aria-valuenow", String(percent));
-		track.setAttribute("aria-valuetext", status?.getText() ?? `${percent}%`);
-		track.setCssProps({ "--oss-upload-progress": `${percent}%` });
+		track.toggleClass("oss-gallery-is-indeterminate", indeterminate);
+		// An indeterminate progressbar has no aria-valuenow (WAI-ARIA).
+		if (percent === null) track.removeAttribute("aria-valuenow");
+		else track.setAttribute("aria-valuenow", String(percent));
+		track.setAttribute("aria-valuetext", text);
+		track.setCssProps({ "--oss-upload-progress": `${percent ?? 0}%` });
 	}
 
 	const errorEl = root.querySelector<HTMLElement>(".oss-gallery-upload-error");
@@ -132,6 +164,7 @@ function renderActions(
 	const key = `${entry.status}:${entry.busy === true}`;
 	if (container.getAttribute("data-state") === key) return;
 	container.setAttribute("data-state", key);
+	dismissTooltipsWithin(container);
 	container.empty();
 
 	const addButton = (
