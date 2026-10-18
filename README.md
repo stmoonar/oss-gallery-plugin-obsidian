@@ -1,239 +1,175 @@
-# Obsidian OSS Gallery Plugin
+# OSS Gallery for Obsidian
 
 ### English | [中文](./README-zh.md)
 
-This plugin uploads files from Obsidian to multiple object storage providers and offers a gallery view for providers that support listing.
+Upload images, videos, audio and documents from Obsidian to your own storage (S3, R2, MinIO, Aliyun, Tencent, Qiniu, Upyun, GitHub, SM.MS, Imgur or a local folder), browse them in a gallery, and optionally search your images by description on your own computer.
 
-> **Requires** Obsidian 1.7.2 or later.
+[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE)
 
-> **Note**: This plugin is desktop-only. It relies on Node.js APIs (crypto signing, local file system) that are not available in Obsidian mobile.
+![Demo: gallery, preview, upload by paste, semantic search](./docs/assets/demo.gif)
 
-It started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin) and now supports a broader multi-provider workflow.
+## Quick start
 
-## Supported providers
+1. Install the plugin (see [Installation](#installation)) and enable it.
+2. In **Settings > OSS Gallery**, pick a provider under **Select provider** and fill in the fields marked **Required**.
+3. Press **Test connection**.
+4. Paste or drop a file into a note. Open the gallery with the **OSS Gallery** ribbon icon or the command **Open gallery**.
 
-- **Local**: desktop-only local file storage with gallery management
-- **SM.MS**: image hosting
-- **GitHub**: repository-backed uploads
-- **Aliyun OSS**
-- **Tencent COS**
-- **Qiniu Kodo**
-- **Upyun USS**
-- **Imgur**: image upload only, no gallery listing or deletion in this plugin
-- **Cloudflare R2**: S3-compatible object storage
-- **S3**: generic S3-compatible provider (AWS S3, DigitalOcean Spaces, Backblaze B2, etc.)
-- **MinIO**: self-hosted S3-compatible object storage
+## Installation
+
+- **Community plugins** (recommended): in **Settings > Community plugins > Browse**, search for "OSS Gallery", or open [its page](https://community.obsidian.md/plugins/oss-gallery) and click **Add to Obsidian**.
+- **Manual**: download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) into `<vault>/.obsidian/plugins/oss-gallery/`, then enable the plugin.
+- The semantic search runtime is not part of the install. The plugin downloads it on request into the model directory, from the GitHub release whose tag matches the plugin version. A build without a matching release (a local dev build, or a BRAT build of an untagged version) cannot download it.
+- Desktop only. Requires Obsidian **1.7.2** or later; older versions are not supported.
 
 ## Features
 
-- Upload files from the command palette (several at once), paste, or drag and drop
-- Upload progress cards in the note: cancel a running or waiting upload; a failed upload keeps its file in the note with Retry, Save to vault (as a normal attachment) and Remove
-- Supported file types: images, video, audio, `.doc`, `.docx`, `.pdf`, `.pptx`, `.xls`, `.xlsx`
-- Global object naming and path rules
-- Optional base path prefix for all uploads
-- Configurable embed output for image, video, audio, and document preview
-- Gallery view for providers that support listing
-- URL search with plain text or regex mode
-- One-click URL copy, copy as embed (your embed format), insert into the last note, or drag a tile into a note to insert its embed
-- Delete from the gallery for providers that support deletion
-- Multi-select (Ctrl/Cmd-click, Shift-click, Ctrl/Cmd+A, Esc to clear) with batch copy URLs / embeds, insert and delete
-- Keyboard navigation in the grid (arrow keys, Home/End, Enter to preview, context-menu key for actions)
-- Full-screen image preview with zoom (wheel, pinch, double click, +/-/0/1), fit to screen / fit width / 100%, drag to pan, previous/next buttons, arrow keys or swipe, and copy / delete / find similar actions
-- Lazy loading, batch rendering, back-to-top control, and background refresh for the gallery
-- Local gallery thumbnails: each image is downloaded once, then shown from a small thumbnail kept on this device (size-capped, works without semantic search)
-- Optional on-device semantic image search: find images by description or by similarity (WebGPU, model downloaded on request; see [below](#semantic-image-search-optional))
+- **Upload**: paste, drag and drop, or the **File upload** command (several files at once). Images, video, audio, PDF and Office files (`.doc`, `.docx`, `.pptx`, `.xls`, `.xlsx`). Files are uploaded one at a time; a progress card in the note lets you cancel a running or waiting upload. A failed upload keeps the file in the note with **Retry**, **Save to vault** (as a normal attachment) and **Remove**.
+- **Inserted links**: embeds or plain links per file type, with a custom image embed format.
+- **Gallery** for providers that can list: shows image files only (`.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.webp`, `.svg`, `.ico`, `.tiff`, `.tif`, `.avif`). Search by URL (plain text or regex), **Copy URL**, **Copy as embed**, **Insert into note**, drag a tile into a note, delete.
+- **Multi-select and keyboard**: Ctrl/Cmd-click, Shift-click, Ctrl/Cmd+A, Esc; arrow keys, Home/End, Enter to preview. Batch copy, insert and delete.
+- **Lightbox**: zoom (wheel, pinch, double click, `+`/`-`/`0`/`1`), fit to screen / fit width / 100%, pan, previous/next, swipe.
+- **Local thumbnails**: each gallery image is downloaded once; later views use a small thumbnail kept on this device. See [Settings](#gallery-thumbnails).
+- **Semantic image search** (opt-in): find images by description or by similarity, on your GPU. See [below](#semantic-image-search).
 
-![upload](./docs/assets/upload.gif)
+## Providers
 
----
+| Provider | Upload | Gallery | Delete | Semantic search | Private bucket (signed GET) | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Local | yes | yes | yes | yes | n/a | Vault folder, or an absolute folder (inserted as `file:///` links) |
+| SM.MS | yes | yes | yes | yes | no | Uses the S.EE API (SM.MS moved to S.EE) |
+| GitHub | yes | yes | yes | yes | no | Links use `raw.githubusercontent.com` unless **Custom domain** is set |
+| Aliyun OSS | yes | yes | yes | yes | no | |
+| Tencent COS | yes | yes | yes | yes | no | |
+| Qiniu | yes | yes | yes | yes | no | **URL** (CDN domain) is required |
+| Upyun | yes | yes | yes | yes | no | **URL** (acceleration domain) is required |
+| Imgur | yes | no | no | no | no | Upload only, images only |
+| Cloudflare R2 | yes | yes | yes | yes | yes | |
+| S3 | yes | yes | yes | yes | yes | AWS S3 and S3-compatible services |
+| MinIO | yes | yes | yes | yes | yes | For public links, allow anonymous read in the bucket policy |
 
-![delete](./docs/assets/delete.gif)
+Signed GET: for private S3 / R2 / MinIO buckets, gallery thumbnails and semantic indexing retry with a signed request when the public URL is refused. Links in notes and the lightbox always use the public URL.
+
+Fields (`*` = required, default in parentheses):
+
+| Provider | Fields |
+| --- | --- |
+| Local | Storage path* (`attachments`), Path relative to the vault (on), Delete to the trash (on) |
+| SM.MS | S.EE API key* (create one under **Tools > API Token** on S.EE) |
+| GitHub | Repository name* (`username/reponame`), Branch (`main`), Token*, Custom domain |
+| Aliyun OSS | Access key ID*, Access key secret*, Bucket*, Region (`oss-cn-hangzhou`), Path, Custom domain |
+| Tencent COS | Secret ID*, Secret key*, Bucket*, Region (`ap-shanghai`), Path, Custom domain |
+| Qiniu | Access key*, Secret key*, Bucket*, URL*, Area (`z0`), Path |
+| Upyun | Operator*, Password*, Bucket* (service name), URL*, Path, Suffix |
+| Imgur | Client ID*, Proxy |
+| Cloudflare R2 | Account ID*, Access key ID*, Secret access key*, Bucket*, Public URL |
+| S3 | Endpoint*, Region (`us-east-1`), Access key ID*, Secret access key*, Bucket*, Use HTTPS (on), Path-style URLs (on), Public URL |
+| MinIO | Endpoint*, Port (`9000`), Use HTTPS (on), Access key*, Secret key*, Bucket*, Region, Custom domain |
+
+**Path** is a provider-side folder prefix. MinIO **Port** and **Use HTTPS** apply only when **Endpoint** has no `http://` / `https://` prefix.
 
 ## Settings
 
-Choose an active provider in the plugin settings, then configure:
+In the order of the settings tab:
 
-### Global settings
+1. **Select provider**: upload-only and not-yet-set-up providers are marked. The provider's fields follow, with a "Missing: ..." line and **Test connection** (Imgur can only be checked by uploading).
+2. **File names and folders**
+   - **Base path**: folder for uploads; the gallery lists only files under it.
+   - **File naming**: Original file name / Timestamp / Timestamp and original file name (default). The original name can overwrite a stored file with the same name.
+   - **Folder structure**: None (base path only) (default) / By file type / By date / By file type and date.
+3. **Inserted links**
+   - **Embed images** (on; off inserts a plain link) and **Image embed format**: `$URL` is the image URL, `$NAME` the file name. Default `![]($URL)`; wiki-link example `![[$NAME]]`.
+   - **Embed videos**, **Embed audio** (on): insert as a player.
+   - **Embed documents**: Disabled (default) / Google Docs / Office online viewer for PDF and Office files (the file URL must be public).
+4. <a id="gallery-thumbnails"></a>**Gallery thumbnails**
+   - **Local thumbnails** (on): the first time a tile is shown, the original is downloaded once and a small copy (320 px, WebP) is saved on this device. Preview, copy and embeds always use the original. GIF and SVG tiles load the original; TIFF tiles show a thumbnail only if indexing made one. Off: tiles load the original directly.
+   - **Thumbnail cache size (MB)** (500, range 10 to 100000): per vault on this device; the least recently viewed go first.
+   - **Clear thumbnails**.
+5. **Semantic image search**: see the next section.
 
-- **Base path**: optional prefix applied to every uploaded object key; the gallery only lists files under it (and under the provider's own path prefix, if set)
-- **File naming** (how uploaded files are named in storage)
-  - Original file name (`local`; overwrites a stored file with the same name)
-  - Timestamp (`time`)
-  - Timestamp and original file name (`timeAndLocal`)
-- **Folder structure** (folders under the base path)
-  - None (`root`)
-  - By file type (`type`)
-  - By date (`date`)
-  - By file type and date (`typeAndDate`)
-- **Inserted links** (what is written into the note after an upload)
-  - embed images on or off (off: a plain link); the image embed format is shown while it is on
-  - embed videos / audio as players on or off
-  - document viewer: disabled (plain link), Google Docs, or Office Online
-- **Provider setup**: the provider list shows which providers are upload-only and which are not set up yet; required fields are marked and a line lists the missing ones. **Test connection** checks the settings with one small read-only request (a one-file listing; nothing is uploaded). Upload-only providers (Imgur) can only be checked by uploading.
-- **Gallery thumbnails** (on by default, independent of semantic search)
-  - The first time a gallery tile is shown, the original is downloaded once (Obsidian's request API; Local reads the file from disk), shown, and a small copy (longest side 320 px, WebP) is saved on this device, outside the vault: Windows `%LOCALAPPDATA%\obsidian-oss-gallery\thumbs`, macOS `~/Library/Application Support/obsidian-oss-gallery/thumbs`, Linux `~/.cache/obsidian-oss-gallery/thumbs`. Later views show the thumbnail without downloading. Semantic indexing saves thumbnails too.
-  - Preview, **Copy URL** and embeds always use the original. Animated GIFs and SVGs load the original as before; TIFF tiles show a thumbnail only if indexing made one.
-  - **Thumbnail cache size** (default 500 MB per vault on this device): above it, the least recently viewed thumbnails are deleted.
-  - **Clear thumbnails** deletes only thumbnail files; the semantic index and the model are not touched (and their actions never touch thumbnails). Turn thumbnails off to load originals exactly as before.
-- **Semantic image search**: model download/verify/delete, model directory, index directory, image detail, automatic indexing, index status and clearing (see [Semantic image search](#semantic-image-search-optional))
+## Semantic image search
 
-### Provider settings
+Find images by describing them in English or Chinese, or find images that look like a given one. Off by default; nothing is downloaded until you confirm.
 
-#### Local
+- **Needs WebGPU** with a hardware GPU (integrated graphics are fine). There is no CPU fallback. The settings page checks it first and says why it is unavailable.
+- **Download**: **Settings > Semantic image search > Download model**, about **343 MB**: the model ([EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX), q4, about 316 MB) from Hugging Face at a pinned revision, and the runtime (about 27 MB) from this plugin's GitHub release. Every file is checked against a SHA-256 hash built into the plugin. Semantic search turns on when all files pass.
+- **Build the index**: open the gallery and press **Build index** under the search box (later **Update index (N new)**). Local reads files from disk; remote providers download each image once, only after a dialog shows the count and download size. **Index automatically** indexes new images when the gallery opens.
+- **Search**: turn on the sparkles toggle next to the search box, type a description, press **Enter**. The best matches come first, with their count under the search box; **Show more** at the end of the grid adds less similar ones.
+- **Find similar images**: right-click a tile, use its hover button, or the lightbox action.
+- **Slow downloads** (for example in mainland China): set **Hugging Face endpoint** (e.g. `https://hf-mirror.com`) and **GitHub mirror** under **Download sources**. Mirrors change only where files come from; the hashes still apply.
+- **Offline install**: copy the files into the model directory with the same layout (`huggingface.co/...` and `runtime/<version>/...`), then press **Download model**: files that pass the hash check are kept and not downloaded again.
+- **Image detail** (70 / 140 / 280, default 70): more detail is slower; changing it rebuilds the index.
 
-- Available in Obsidian desktop only
-- Storage path: vault-relative directory, or absolute directory inserted as `file:///` links
-- Path relative to the vault: toggle (default on, desktop only)
-- Delete to the trash: move deleted files to the system trash (default on)
+## Where files are stored
 
-#### SM.MS
+All of these are outside the vault, per device, and never synced. `<app>` is `%LOCALAPPDATA%\obsidian-oss-gallery` on Windows, `~/Library/Application Support/obsidian-oss-gallery` on macOS, and `$XDG_CACHE_HOME/obsidian-oss-gallery` on Linux (`~/.cache/obsidian-oss-gallery` when `XDG_CACHE_HOME` is unset or not absolute).
 
-- S.EE API key (SM.MS has migrated to S.EE; create a key under S.EE **Tools > API Token**)
+| What | Default | Changed by | Cleared by |
+| --- | --- | --- | --- |
+| Semantic model and runtime (shared by all vaults) | `<app>/models` | **Model directory** | **Delete model**: only the files the plugin downloaded |
+| Semantic index | `<app>/indexes` | **Index directory** | **Clear index for this vault**: only this vault's index files |
+| Gallery thumbnails | `<app>/thumbs` | (fixed) | **Clear thumbnails**: only this vault's thumbnail files |
 
-#### GitHub
+Each button removes only its own files: clearing the index keeps the model and thumbnails, and so on.
 
-- Repository: `owner/repo`
-- Branch
-- Personal access token
-- Custom URL: optional, for CDN such as jsDelivr
+## Commands
 
-#### Aliyun OSS
+| Command | Notes |
+| --- | --- |
+| File upload | Pick files to upload into the current note |
+| Open gallery | Same as the **OSS Gallery** ribbon icon |
+| Semantic search: run self-test | Shown once the model is installed |
+| Semantic search: index the current provider now | Needs the model and a listable provider |
+| Semantic search: stop indexing | Shown while indexing runs |
 
-- Access Key ID
-- Access Key Secret
-- Bucket
-- Region, for example `oss-cn-hangzhou`
-- Path prefix: optional
-- Custom domain: optional
+## FAQ
 
-#### Tencent COS
+**Images in a private bucket do not load, or the index says "Access denied (HTTP 403): check the bucket permissions or make the images publicly readable".**
+Notes and the lightbox load the public URL, so the bucket (or its custom domain) must allow public read. S3, R2 and MinIO can index and show thumbnails of a private bucket through signed requests; other providers cannot.
 
-- Secret ID
-- Secret Key
-- Bucket
-- Region, for example `ap-shanghai`
-- Path prefix: optional
-- Custom domain: optional
+**I uploaded a PDF or a video, but it is not in the gallery.**
+The gallery lists image files only. The file is uploaded and linked in your note.
 
-#### Qiniu Kodo
+**The semantic search toggle is disabled.**
+Its tooltip says why: the model is not downloaded or is being checked, semantic search is turned off in settings, WebGPU is not available, the provider cannot be indexed (Imgur), or there is no index yet (press **Build index**).
 
-- Access Key
-- Secret Key
-- Bucket
-- CDN domain URL
-- Storage area
-- Path prefix: optional
+**WebGPU is unavailable.**
+Update Obsidian with the latest installer from obsidian.md and your graphics driver, and make sure hardware acceleration is on. Remote desktop sessions and virtual machines usually have no GPU access.
 
-#### Upyun USS
+**The model download is slow or fails.**
+Set a mirror under **Download sources** (see above), or use the offline install.
 
-- Operator name
-- Password
-- Service name
-- Acceleration domain URL
-- Path prefix: optional
-- Image processing suffix: optional
+**What happens to unfinished uploads when Obsidian closes?**
+The placeholder in the note is replaced with "(Upload of <name> did not finish)". Upload the file again.
 
-#### Imgur
-
-- Client ID
-- Proxy URL: optional, required in some regions
-
-Note: Imgur uploads are supported for image files only; gallery listing and deletion are not.
-
-#### Cloudflare R2
-
-- Account ID
-- Access Key ID
-- Secret Access Key
-- Bucket
-- Public URL: custom domain or `r2.dev` URL
-
-#### S3 (Generic)
-
-- Endpoint: S3-compatible endpoint (e.g. `s3.amazonaws.com`)
-- Region
-- Access Key ID
-- Secret Access Key
-- Bucket
-- Use HTTPS: toggle (default on)
-- Path-style URLs: use `endpoint/bucket/key` instead of `bucket.endpoint/key` (default on)
-- Public URL: optional custom URL for file access
-
-#### MinIO
-
-- Endpoint: host name or complete URL; an explicit `http://` / `https://` scheme and port take precedence
-- Port: used when Endpoint is a host name without a port
-- Use HTTPS: used when Endpoint does not include a URL scheme
-- Access Key
-- Secret Key
-- Bucket
-- Region: optional
-- Custom domain: optional
-
-For MinIO public access, enable anonymous or otherwise publicly accessible object URLs in your bucket policy.
-
-![Settings](./docs/assets/minio-bucket-setting.png)
-
-## Semantic image search (optional)
-
-Semantic search finds images by describing them in English or Chinese, and finds images that look like a given one. It is **off by default** and nothing is downloaded until you ask.
-
-**Quick start:** **Settings → Semantic image search → Download model** → open the gallery → **Build index** (under the search box) → turn on the ✨ toggle next to the search box, type a description (for example "a cat on a sofa") and press **Enter**.
-
-- **Requirements:** desktop Obsidian with **WebGPU** and a hardware GPU (integrated graphics are fine). The settings page checks this first and explains why it is unavailable (outdated Obsidian or graphics driver, remote desktop / virtual machine, software-only renderer). There is no CPU fallback.
-- **Download:** about **343 MB**, only after you confirm the file list in **Settings → Semantic image search → Download**:
-  - runtime (about 27 MB): `semantic-worker.js` and the ONNX Runtime WebAssembly files, from this plugin's GitHub release
-  - model (about 316 MB): [EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX) text and vision encoders (q4), from Hugging Face at a pinned revision
-  - every file is checked against a SHA-256 hash built into the plugin before it is used; interrupted downloads resume file by file
-- **Stored outside your vault**, shared by every vault on this computer and never synced:
-  - Windows: `%LOCALAPPDATA%\obsidian-oss-gallery\models`
-  - macOS: `~/Library/Application Support/obsidian-oss-gallery/models`
-  - Linux: `$XDG_CACHE_HOME/obsidian-oss-gallery/models` (default `~/.cache/...`)
-  - change it with **Model directory** (absolute path)
-- **Delete:** **Delete model** removes only the files the plugin downloaded (and directories left empty), not other files in the directory. It affects every vault that uses the same directory.
-- **Download sources (optional):** downloads go through Node's HTTPS client, which does **not** use the system proxy. If Hugging Face or GitHub is blocked or slow where you are (for example in mainland China), set them under **Settings → Semantic image search → Download sources**:
-  - **Hugging Face endpoint** replaces `https://huggingface.co` for the model files. The mirror must serve the same `/<repo>/resolve/<revision>/<file>` paths, for example `https://hf-mirror.com`.
-  - **GitHub mirror** is a proxy prefix for the runtime files; the full GitHub URL is appended after it: `https://gh-proxy.com` requests `https://gh-proxy.com/https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases/download/<version>/<file>`.
-  - Only `https://` addresses are accepted (trailing slashes are removed). Leave empty for the official sites.
-  - Mirrors cannot change what gets installed: every file must still match the SHA-256 hash built into the plugin, and the download dialog shows the hosts actually contacted. Changing a mirror does not affect files already installed.
-  - If no mirror works for you, use the offline install below.
-- **Offline install:** copy the files into the model directory with the same layout (`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` and `runtime/<plugin version>/...`), then press **Verify** or **Download**: files that pass the hash check are kept and not downloaded again.
-- **Settings:** before the model is installed the section shows only the WebGPU check, the download sources and the download; the model and index directories are under **Advanced**. While the model downloads, the status bar shows "Model download 42%" (click to open the settings). After installing: image detail (how closely the model looks at each image: 70/140/280, default 70; changing it later asks first, since it rebuilds the index and remote images are downloaded again) and automatic indexing.
-- **Indexing:** every listable provider can be indexed (not Imgur). Press **Build index** / **Update index (N new)** in the gallery (or run **Semantic search: index the current provider now**). While it runs, a bar at the top of the gallery shows the count, the current file, pause/resume and stop; the status bar shows the same count, e.g. "Indexing 12/80 · click to pause" (click to pause/resume). Stopping keeps what was indexed; the next start continues.
-  - **Local** reads files from disk: no network traffic, no confirmation.
-  - **Remote providers** download each image once to analyze it on your computer. Indexing never starts without a dialog showing the number of images, the download size and how many are already indexed. With **Index automatically** on, new images are indexed after the gallery refreshes; it asks the first time on each device and again only when more than 200 MB would be downloaded.
-  - Images are downloaded with Obsidian's own request API (no bucket CORS rules needed, uses the system proxy) from the same URL the gallery shows. For **private** S3 / R2 / MinIO buckets a signed request is used when the public URL is refused. Images that still can't be read (for example a private Aliyun/Tencent/Qiniu bucket) are listed as *failed* with "access denied: check the bucket permissions".
-  - Images uploaded through the plugin are indexed from the file in hand (no download); images deleted in the gallery leave the index right away; images deleted elsewhere are hidden from results at the next full listing and removed after the second.
-  - **Index files** are stored per device, outside your vault, and never synced (each device builds its own index): Windows `%LOCALAPPDATA%\obsidian-oss-gallery\indexes`, macOS `~/Library/Application Support/obsidian-oss-gallery/indexes`, Linux `~/.cache/obsidian-oss-gallery/indexes`. Change it with **Index directory**; **Clear index for this vault** deletes only this vault's index files. Deleting the model does not touch indexes, and the reverse.
-  - **Thumbnails:** while an image is indexed, its [gallery thumbnail](#global-settings) is saved as a by-product (no extra download; TIFF tiles get a real thumbnail this way). **Clear index for this vault** keeps thumbnails, **Clear thumbnails** keeps the index.
-- **Image formats:** JPEG, PNG, WebP, GIF (first frame), BMP, ICO and AVIF are read directly (the gallery lists `.avif` files too). **SVG** is rasterized (scripts and external references are never loaded) and **TIFF** is decoded with the bundled [UTIF.js](https://github.com/photopea/UTIF.js) (MIT); both are listed as *converted*. HEIC/HEIF, PSD, camera RAW and unreadable files are *unsupported* and skipped.
-- **Search:** the ✨ toggle next to the search box switches it to semantic mode (it is disabled, with the reason in its tooltip, until the model is installed and the provider has an index; the regex toggle is off in this mode). Type a description and press **Enter**: the gallery shows the best matches first (between 12 and 60, chosen by how far the top scores stand out from the rest), best first, with a small score on each tile; **Show more** at the end of the grid adds the less similar ones, 60 at a time, in the same order. The first search loads the search model (about 1.5 s). **Esc**, the clear button or **×** returns to all images. Scores only rank results; there is no fixed threshold.
-- **Find similar images:** right-click an image (or use the hover button) → **Find similar images**. The gallery shows the images closest to it under "Similar to *name* ×", most similar first, with **Show more** for the rest.
-- **Text search** shows a small "12 of 552 images" caption under the search box; without a search there is no count.
-- **Index status:** when new images wait or some failed, a chip under the search box reads like "1,234 indexed · 3 converted · 2 failed" (hidden once everything is indexed). Click it for the details: converted files (with their source format) and unsupported / failed files with the reason; click a file name to show it in the gallery, or **Retry failed**. The status bar stays empty while nothing runs. The settings page shows the same counts and lists. Both also show the index size on disk (for the current provider and, when other providers are indexed too, for the whole vault): exactly the files **Clear index for this vault** would delete.
-- **Self-test:** after the model is installed, run **Semantic search: run self-test** from the command palette. It loads the model on your GPU, embeds a few test queries, a generated test image and up to two images from your vault (the active image first), and shows load time, latency and a similarity table. Nothing leaves your computer; the model runs offline from the model directory.
-- **Third-party licenses:** the runtime bundles [transformers.js](https://github.com/huggingface/transformers.js) (Apache-2.0), ONNX Runtime Web (MIT), UTIF.js and pako (MIT/Zlib) and a few of their dependencies. Their license texts are in `THIRD_PARTY_NOTICES.txt`, attached to every GitHub release next to `semantic-worker.js`.
+**Why does the upload card show no percentage?**
+Uploads go through Obsidian's `requestUrl`, which cannot report progress. The card shows an "Uploading" bar until the upload finishes.
 
 ## Network use and privacy
 
-This plugin makes network requests only to the storage service you configure, plus GitHub and Hugging Face (or the mirrors you set) if you choose to download the semantic search model. It has no telemetry, analytics, or ads, and sends nothing to the plugin author.
+The plugin talks only to the storage service you configure, and, if you download the semantic model, to GitHub and Hugging Face (or your mirrors). No telemetry, analytics or ads; nothing is sent to the plugin author. You need no account other than your own provider's.
 
-- **Files are sent to the service you choose.** Uploading, listing, and deleting contact the active provider's endpoint:
-  - S3 (Generic) / MinIO: the endpoint you enter (for MinIO, `http://` or `https://` as configured)
-  - Cloudflare R2: your R2 S3 endpoint (`<account>.r2.cloudflarestorage.com`)
-  - Aliyun OSS: `<bucket>.<area>.aliyuncs.com` (or your custom domain)
+- **Provider endpoints** used for upload, list and delete:
+  - S3 / MinIO: the endpoint you enter
+  - Cloudflare R2: `<account>.r2.cloudflarestorage.com`
+  - Aliyun OSS: `<bucket>.<region>.aliyuncs.com` (or your custom domain)
   - Tencent COS: `<bucket>.cos.<region>.myqcloud.com`
-  - Qiniu Kodo: `up-<area>.qiniup.com` and the Qiniu API hosts
-  - Upyun USS: `v0.api.upyun.com`
-  - GitHub: `api.github.com` (links use `raw.githubusercontent.com` unless you set a custom domain)
-  - Imgur: `api.imgur.com`, or the proxy you configure
-  - SM.MS (via S.EE): `s.ee/api/v1`
-  - Local: no network access
-- **Document preview.** If you set the document preview option to Google Docs or Office Online, the public URL of the document is sent to `docs.google.com/viewer` or `view.officeapps.live.com` so they can render it. Keep it Disabled to avoid this.
-- **Accounts and cost.** Every provider except Local needs an account (or self-hosted server) of your own. Some services are paid; check each provider's pricing.
-- **Local files outside the vault.** The Local provider can use an absolute storage path. In that mode it reads, writes, and (optionally) moves to the system trash files outside your vault, because the gallery needs to list and manage the directory you chose. It only touches that directory.
-- **Gallery thumbnails.** Gallery tiles download each image from your storage service once (as before, but through Obsidian's request API) and keep a small thumbnail per device outside the vault, so later views need no download. Turn it off under **Gallery thumbnails** to load images directly again.
-- **Semantic image index (opt-in).** Indexing a remote provider downloads its images from that same storage service, only after you confirm the size estimate. Images are analyzed locally; nothing is uploaded.
-- **Semantic search model (opt-in).** Only after you confirm the download dialog, the plugin downloads files from `github.com` (this plugin's releases, served from `release-assets.githubusercontent.com`) and `huggingface.co` (served from its CDN), or from the mirrors you set under **Download sources**, and writes them to the model directory outside your vault. No images or queries are sent anywhere; the model runs locally on your GPU.
-- **Credentials are stored in plain text.** Access keys, tokens, and secrets are saved in the plugin's `data.json` under your vault's `.obsidian/plugins/` folder. If you sync or commit your vault (Git, cloud drives), exclude that file or use least-privilege keys.
-- **No telemetry.** The plugin does not collect usage data or crash reports.
+  - Qiniu: `up-<area>.qiniup.com` and the Qiniu API hosts
+  - Upyun: `v0.api.upyun.com`
+  - GitHub: `api.github.com` (links: `raw.githubusercontent.com` or your custom domain)
+  - Imgur: `api.imgur.com`, or your proxy
+  - SM.MS: `s.ee/api/v1`
+  - Local: no network
+- **Test connection** sends one or two small read requests (a one-file listing; for GitHub, the repository and branch). Nothing is uploaded or changed.
+- **Document viewer**: with Google Docs or Office online, the public URL of the document is sent to `docs.google.com` or `view.officeapps.live.com`. Keep it Disabled to avoid this.
+- **Thumbnails and indexing** download your images from your own storage. Indexing a remote provider starts only after you confirm the download size. Images are analyzed locally; nothing is uploaded.
+- **Semantic model download** happens only after you confirm the file list: `github.com` (release assets) and `huggingface.co`, or your mirrors. Queries and images never leave your computer.
+- **Files outside the vault**: the model, index and thumbnails (see [Where files are stored](#where-files-are-stored)), and the Local provider's folder if you set an absolute path.
+- **Credentials are stored in plain text** in `.obsidian/plugins/oss-gallery/data.json`. If you sync or commit your vault, exclude that file or use least-privilege keys.
+- Every provider except Local needs your own account or server; some are paid.
+
+## License
+
+[MIT](./LICENSE). Changelog: [GitHub Releases](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases). Licenses of the bundled semantic runtime (transformers.js, ONNX Runtime Web, UTIF.js, pako) are in `THIRD_PARTY_NOTICES.txt` on each release.
+
+Started as a fork of [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin).

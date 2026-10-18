@@ -1,239 +1,175 @@
-# Obsidian OSS Gallery 插件
+# OSS Gallery for Obsidian
 
 ### [English](./README.md) | 中文
 
-这个插件可以把 Obsidian 中的文件上传到多个对象存储服务，并为支持列举对象的服务提供图库视图。
+把 Obsidian 中的图片、视频、音频和文档上传到你自己的存储（S3、R2、MinIO、阿里云、腾讯云、七牛、又拍云、GitHub、SM.MS、Imgur 或本地文件夹），在图库中浏览，并可选地在本机用文字描述搜索图片。
 
-> **要求**：Obsidian 1.7.2 或更高版本。
+[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE)
 
-> **注意**：本插件仅支持桌面端。它依赖 Obsidian 移动端不具备的 Node.js 能力（crypto 签名、本地文件系统）。
+![演示：图库、预览、粘贴上传、语义搜索](./docs/assets/demo.gif)
 
-项目最初 fork 自 [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin)，目前已经扩展为多 provider 架构。
+## 快速开始
 
-## 支持的存储服务
+1. 安装并启用插件（见[安装](#安装)）。
+2. 在 **设置 > OSS Gallery** 的 **选择存储服务** 中选一个服务，填好标有 **必填** 的字段。
+3. 点击 **测试连接**。
+4. 把文件粘贴或拖进笔记即可上传。通过左侧边栏的 **OSS 图库** 图标或命令 **打开图库** 打开图库。
 
-- **本地存储**：仅桌面端可用的本地文件管理，支持图库预览、删除到回收站
-- **SM.MS**：图床
-- **GitHub**：上传到仓库
-- **阿里云 OSS**
-- **腾讯云 COS**
-- **七牛 Kodo**
-- **又拍云 USS**
-- **Imgur**：仅支持图片上传，不支持图库列举和删除
-- **Cloudflare R2**：S3 兼容对象存储
-- **S3**：通用 S3 兼容提供商（AWS S3、DigitalOcean Spaces、Backblaze B2 等）
-- **MinIO**：自托管 S3 兼容对象存储
+## 安装
+
+- **社区插件**（推荐）：在 **设置 > 第三方插件 > 浏览** 中搜索 “OSS Gallery”，或打开[插件页面](https://community.obsidian.md/plugins/oss-gallery)点击 **Add to Obsidian**。
+- **手动安装**：从[最新 Release](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放到 `<仓库>/.obsidian/plugins/oss-gallery/`，然后启用插件。
+- 语义搜索的运行时文件不随插件安装，而是在你确认后由插件下载到模型目录，来源是 tag 与插件版本号一致的 GitHub Release。没有对应 Release 的版本（本地开发构建，或 BRAT 安装的未发布版本）无法下载运行时。
+- 仅支持桌面端。需要 Obsidian **1.7.2** 或更高版本，不支持更旧的版本。
 
 ## 功能
 
-- 支持命令面板上传（可一次选择多个文件）、粘贴上传、拖拽上传
-- 笔记中显示上传进度卡片：可取消正在上传或等待中的文件；上传失败时文件保留在笔记中，可重试、保存到仓库（作为普通附件）或移除
-- 支持的文件类型：图片、视频、音频、`.doc`、`.docx`、`.pdf`、`.pptx`、`.xls`、`.xlsx`
-- 支持全局对象命名规则和路径规则
-- 支持全局基础路径前缀
-- 支持图片、视频、音频、文档的插入/预览配置
-- 对支持列举的 provider 提供图库视图
-- 支持普通文本搜索和正则搜索
-- 一键复制链接、复制为嵌入（按你的嵌入格式）、插入到最近的笔记，或把图片拖进笔记直接插入嵌入
-- 对支持删除的 provider 可直接在图库中删除
-- 多选（Ctrl/Cmd 点击、Shift 点击、Ctrl/Cmd+A，Esc 取消），可批量复制链接 / 嵌入、插入和删除
-- 网格支持键盘操作（方向键、Home/End、Enter 预览、菜单键打开操作）
-- 图片全屏预览：缩放（滚轮、双指捏合、双击、+/-/0/1）、适应屏幕 / 适应宽度 / 100%、拖动平移、上一张/下一张按钮、方向键或滑动切换，以及复制 / 删除 / 查找相似图片
-- 图库包含懒加载、分批渲染、回到顶部和后台刷新
-- 本地图库缩略图：每张图片只下载一次，之后显示本机保存的小缩略图（有容量上限，不依赖语义搜索）
-- 可选的本地语义图片搜索：按描述或相似度查找图片（需要 WebGPU，模型按需下载，见[下文](#语义图片搜索可选)）
+- **上传**：粘贴、拖拽，或命令 **选择文件上传**（可一次选多个文件）。支持图片、视频、音频、PDF 和 Office 文件（`.doc`、`.docx`、`.pptx`、`.xls`、`.xlsx`）。文件逐个上传；笔记中的进度卡片可以取消正在上传或等待中的文件。上传失败时文件保留在笔记中，可 **重试**、**保存到仓库**（作为普通附件）或 **移除**。
+- **插入的链接**：按文件类型插入嵌入或普通链接，图片嵌入格式可自定义。
+- **图库**（仅限能列出文件的存储服务）：只显示图片文件（`.jpg`、`.jpeg`、`.png`、`.gif`、`.bmp`、`.webp`、`.svg`、`.ico`、`.tiff`、`.tif`、`.avif`）。按链接搜索（普通文本或正则）、**复制链接**、**复制为嵌入链接**、**插入到笔记**、把图片拖进笔记、删除。
+- **多选与键盘**：Ctrl/Cmd 点击、Shift 点击、Ctrl/Cmd+A、Esc；方向键、Home/End、Enter 预览。可批量复制、插入和删除。
+- **大图预览**：缩放（滚轮、双指捏合、双击、`+`/`-`/`0`/`1`）、适应屏幕 / 适应宽度 / 实际大小（100%）、拖动平移、上一张/下一张、滑动切换。
+- **本地缩略图**：图库中每张图片只下载一次，之后显示本机保存的小缩略图。见[设置](#gallery-thumbnails)。
+- **语义图片搜索**（需主动开启）：按描述或相似度查找图片，在你的 GPU 上运行。见[下文](#语义图片搜索)。
 
-![upload](./docs/assets/upload.gif)
+## 存储服务
 
----
+| 存储服务 | 上传 | 图库 | 删除 | 语义搜索 | 私有存储桶（签名 GET） | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Local | 是 | 是 | 是 | 是 | 不适用 | 仓库内目录，或绝对目录（以 `file:///` 链接插入） |
+| SM.MS | 是 | 是 | 是 | 是 | 否 | 使用 S.EE API（SM.MS 已迁移到 S.EE） |
+| GitHub | 是 | 是 | 是 | 是 | 否 | 未设置 **自定义域名** 时链接使用 `raw.githubusercontent.com` |
+| Aliyun OSS | 是 | 是 | 是 | 是 | 否 | |
+| Tencent COS | 是 | 是 | 是 | 是 | 否 | |
+| Qiniu | 是 | 是 | 是 | 是 | 否 | **访问域名**（CDN 域名）必填 |
+| Upyun | 是 | 是 | 是 | 是 | 否 | **访问域名**（加速域名）必填 |
+| Imgur | 是 | 否 | 否 | 否 | 否 | 仅上传，仅图片 |
+| Cloudflare R2 | 是 | 是 | 是 | 是 | 是 | |
+| S3 | 是 | 是 | 是 | 是 | 是 | AWS S3 及 S3 兼容服务 |
+| MinIO | 是 | 是 | 是 | 是 | 是 | 需要公开链接时，在存储桶策略中允许匿名读取 |
 
-![delete](./docs/assets/delete.gif)
+签名 GET：对于私有的 S3 / R2 / MinIO 存储桶，公开地址被拒绝时，图库缩略图和语义索引会改用签名请求再试一次。笔记中的链接和大图预览始终使用公开地址。
+
+字段（`*` 为必填，括号内为默认值）：
+
+| 存储服务 | 字段 |
+| --- | --- |
+| Local | 存储路径*（`attachments`）、使用仓库相对路径（开）、删除到回收站（开） |
+| SM.MS | S.EE API Key*（在 S.EE 的“工具 > API Token”中创建） |
+| GitHub | GitHub 仓库名*（`用户名/仓库名`）、分支（`main`）、访问令牌*、自定义域名 |
+| Aliyun OSS | Access Key ID*、Access Key Secret*、存储桶*、区域（`oss-cn-hangzhou`）、路径前缀、自定义域名 |
+| Tencent COS | Secret ID*、Secret Key*、存储桶*、区域（`ap-shanghai`）、路径前缀、自定义域名 |
+| Qiniu | Access Key*、Secret Key*、存储桶*、访问域名*、存储区域（`z0`）、路径前缀 |
+| Upyun | 操作员*、密码*、存储桶*（服务名称）、访问域名*、路径前缀、处理后缀 |
+| Imgur | Client ID*、代理 |
+| Cloudflare R2 | 账户 ID*、Access Key ID*、Secret Access Key*、存储桶*、公开访问地址 |
+| S3 | Endpoint*、区域（`us-east-1`）、Access Key ID*、Secret Access Key*、存储桶*、使用 SSL（开）、强制路径风格（开）、公开访问地址 |
+| MinIO | Endpoint*、端口（`9000`）、使用 SSL（开）、Access Key*、Secret Key*、存储桶*、区域、自定义域名 |
+
+**路径前缀** 是存储服务内的目录前缀。MinIO 的 **端口** 和 **使用 SSL** 只在 **Endpoint** 没有 `http://` / `https://` 前缀时生效。
 
 ## 设置
 
-先在插件设置里选择当前启用的 provider，再配置下面两类设置。
+按设置页中的顺序：
 
-### 全局设置
+1. **选择存储服务**：仅上传和未配置的服务会标出。下面是该服务的字段、一行 “缺少：...” 提示和 **测试连接**（Imgur 只能通过上传来检查）。
+2. **上传路径与文件名**
+   - **基础路径**：上传文件的目录；图库只列出此路径下的文件。
+   - **命名规则**：本地文件名 / 时间戳 / 时间戳 + 本地文件名（默认）。原文件名易读，但可能覆盖存储中的同名文件；时间戳可以避免。
+   - **路径规则**：根目录（不分子目录）（默认） / 按文件类型划分目录 / 按日期划分目录 / 按文件类型 + 日期划分目录。
+3. **插入的链接**
+   - **嵌入图片**（开；关闭则插入普通链接）和 **图片嵌入格式**：`$URL` 表示图片地址，`$NAME` 表示文件名。默认 `![]($URL)`；Wiki 链接示例 `![[$NAME]]`。
+   - **嵌入视频**、**嵌入音频**（开）：以播放器插入。
+   - **嵌入文档**：禁用（默认） / Google Docs 预览 / Office Online 预览，用于 PDF 和 Office 文件（文件地址必须公开）。
+4. <a id="gallery-thumbnails"></a>**图库缩略图**
+   - **本地缩略图**（开）：图片第一次在图库显示时，原图只下载一次，并在本机保存一张小缩略图（320 px，WebP）。预览、复制和嵌入始终使用原图。GIF 和 SVG 照旧加载原图；TIFF 只有在建立索引时生成过缩略图才会显示。关闭后图库直接加载原图。
+   - **缩略图缓存上限（MB）**（500，范围 10 到 100000）：本仓库在本机的上限，超出后先删除最久未查看的。
+   - **清除缩略图**。
+5. **语义搜索**：见下一节。
 
-- **Base path**：所有上传对象统一追加的前缀路径；图库只列出该路径（以及服务商自身的路径前缀，如有）下的文件
-- **命名规则**
-  - `local`
-  - `time`
-  - `timeAndLocal`
-- **路径规则**
-  - `root`
-  - `type`
-  - `date`
-  - `typeAndDate`
-- **插入的链接**（上传后写入笔记的内容）
-  - 嵌入图片开关（关闭则插入普通链接）；开启时显示图片嵌入格式
-  - 以播放器嵌入视频 / 音频的开关
-  - 文档预览服务：禁用（普通链接）、Google Docs、Office Online
-- **存储服务配置**：服务列表标出仅上传和尚未配置的存储服务；必填项带标记，并有一行列出缺少的字段。**测试连接** 用一次只读的小请求检查设置（列出一个文件，不上传任何内容）。仅上传的存储服务（Imgur）只能通过上传来检查。
-- **图库缩略图**（默认开启，与语义搜索无关）
-  - 图库瓦片第一次显示时，原图只下载一次（通过 Obsidian 自带的请求接口；Local 直接读磁盘文件）并显示，同时在本机、仓库之外保存一张小缩略图（最长边 320 px，WebP）：Windows `%LOCALAPPDATA%\obsidian-oss-gallery\thumbs`，macOS `~/Library/Application Support/obsidian-oss-gallery/thumbs`，Linux `~/.cache/obsidian-oss-gallery/thumbs`。之后再显示时直接用缩略图，不再下载。建立语义索引时也会顺带保存缩略图。
-  - 预览、**复制链接** 和嵌入始终使用原图。动图 GIF 和 SVG 照旧加载原图；TIFF 只有在建立索引时生成过缩略图才会显示。
-  - **缩略图缓存上限**（默认每个 vault 在本机 500 MB）：超出后删除最久未查看的缩略图。
-  - **清除缩略图** 只删除缩略图文件，不影响语义索引和模型（它们的操作也不会动缩略图）。关闭缩略图后图库与以前完全相同，直接加载原图。
-- **语义搜索**：模型下载 / 校验 / 删除、模型目录、索引目录、识别精细度、自动建立索引、索引状态与清除（见[语义图片搜索](#语义图片搜索可选)）
+## 语义图片搜索
 
-### Provider 设置
+用中文或英文描述来查找图片，或查找与某张图片相似的图片。默认关闭，你确认之前不会下载任何文件。
 
-#### 本地存储
+- **需要 WebGPU** 和硬件 GPU（集成显卡也可以），没有 CPU 后备方案。设置页会先检测，并说明不可用的原因。
+- **下载**：**设置 > 语义搜索 > 下载模型**，共约 **343 MB**：模型（[EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX)，q4，约 316 MB）从 Hugging Face 的固定版本下载，运行时（约 27 MB）从本插件的 GitHub Release 下载。每个文件都会与插件内置的 SHA-256 核对。全部通过后语义搜索自动开启。
+- **建立索引**：打开图库，点击搜索框下方的 **建立索引**（之后是 **更新索引（N 张新图片）**）。Local 直接读磁盘；远程服务会把每张图片下载一次，并且只在对话框显示数量和下载量、你确认后才开始。开启 **自动建立索引** 后，打开图库时会为新图片建立索引。
+- **搜索**：打开搜索框旁的闪光图标开关，输入描述，按 **Enter**。最佳匹配排在前面，数量显示在搜索框下方；网格末尾的 **显示更多** 会追加相似度较低的图片。
+- **找相似图片**：右键图片、使用悬停按钮，或在大图预览中操作。
+- **下载慢**（例如在中国大陆）：在 **下载源** 中设置 **Hugging Face 地址**（例如 `https://hf-mirror.com`）和 **GitHub 镜像**。镜像只改变下载来源，SHA-256 校验照常进行。
+- **离线安装**：按相同目录结构（`huggingface.co/...` 和 `runtime/<版本>/...`）把文件复制到模型目录，再点击 **下载模型**：通过校验的文件会保留，不会重新下载。
+- **识别精细度**（70 / 140 / 280，默认 70）：越精细越慢；修改后会重建索引。
 
-- 仅支持 Obsidian 桌面端
-- 存储路径：仓库相对路径，或会插入为 `file:///` 链接的绝对路径
-- 使用仓库相对路径：开关（默认开启，仅支持本地文件仓库）
-- 删除到回收站：删除文件时移到系统回收站（默认开启）
+## 文件存放位置
 
-#### SM.MS
+以下文件都在仓库之外，每台设备各自一份，不会同步。`<app>` 在 Windows 上是 `%LOCALAPPDATA%\obsidian-oss-gallery`，macOS 上是 `~/Library/Application Support/obsidian-oss-gallery`，Linux 上是 `$XDG_CACHE_HOME/obsidian-oss-gallery`（`XDG_CACHE_HOME` 未设置或不是绝对路径时为 `~/.cache/obsidian-oss-gallery`）。
 
-- S.EE API Key（SM.MS 已迁移至 S.EE，请在 S.EE 的 **工具 > API Token** 中创建）
+| 内容 | 默认位置 | 修改方式 | 清除方式 |
+| --- | --- | --- | --- |
+| 语义搜索模型和运行时（本机所有仓库共用） | `<app>/models` | **模型目录** | **删除模型**：只删除插件下载的文件 |
+| 语义索引 | `<app>/indexes` | **索引目录** | **清除本仓库的索引**：只删除本仓库的索引文件 |
+| 图库缩略图 | `<app>/thumbs` | （固定） | **清除缩略图**：只删除本仓库的缩略图文件 |
 
-#### GitHub
+每个按钮只删除自己的文件：清除索引会保留模型和缩略图，其余同理。
 
-- 仓库：`owner/repo`
-- 分支
-- Personal Access Token
-- 自定义 URL：可选，适合 jsDelivr 等 CDN
+## 命令
 
-#### 阿里云 OSS
+| 命令 | 说明 |
+| --- | --- |
+| 选择文件上传 | 选择文件上传到当前笔记 |
+| 打开图库 | 与左侧边栏的 **OSS 图库** 图标相同 |
+| 语义搜索：运行自检 | 模型安装后才显示 |
+| 语义搜索：立即为当前存储服务建立索引 | 需要已安装模型且当前服务能列出文件 |
+| 语义搜索：停止建立索引 | 正在建立索引时才显示 |
 
-- Access Key ID
-- Access Key Secret
-- Bucket
-- Region，例如 `oss-cn-hangzhou`
-- 路径前缀：可选
-- 自定义域名：可选
+## 常见问题
 
-#### 腾讯云 COS
+**私有存储桶的图片加载不出来，或索引显示 “拒绝访问（HTTP 403）：请检查存储桶权限，或将图片设为公开可读”。**
+笔记和大图预览加载的是公开地址，因此存储桶（或其自定义域名）必须允许公开读取。S3、R2 和 MinIO 可以通过签名请求为私有存储桶建立索引并显示缩略图，其他服务不行。
 
-- Secret ID
-- Secret Key
-- Bucket
-- Region，例如 `ap-shanghai`
-- 路径前缀：可选
-- 自定义域名：可选
+**上传了 PDF 或视频，但图库里没有。**
+图库只列出图片文件。文件已经上传，链接也已插入笔记。
 
-#### 七牛 Kodo
+**语义搜索开关是灰的。**
+鼠标悬停可看到原因：模型未下载或正在检查、语义搜索已在设置中关闭、WebGPU 不可用、当前服务无法建立索引（Imgur），或还没有索引（点击 **建立索引**）。
 
-- Access Key
-- Secret Key
-- Bucket
-- CDN 域名 URL
-- 存储区域
-- 路径前缀：可选
+**WebGPU 不可用。**
+从 obsidian.md 下载最新安装包更新 Obsidian，并更新显卡驱动，确认已开启硬件加速。远程桌面和虚拟机通常无法使用 GPU。
 
-#### 又拍云 USS
+**模型下载很慢或失败。**
+在 **下载源** 中设置镜像（见上文），或使用离线安装。
 
-- 操作员名称
-- 密码
-- 服务名称
-- 加速域名 URL
-- 路径前缀：可选
-- 图片处理后缀：可选
+**关闭 Obsidian 时还没传完的文件会怎样？**
+笔记中的占位符会被替换为 “（<文件名> 未完成上传）”。请重新上传该文件。
 
-#### Imgur
-
-- Client ID
-- Proxy URL：可选，部分地区需要
-
-注意：Imgur 目前只支持上传图片文件，不支持图库列举和删除。
-
-#### Cloudflare R2
-
-- Account ID
-- Access Key ID
-- Secret Access Key
-- Bucket
-- Public URL：自定义域名或 `r2.dev` 地址
-
-#### S3（通用）
-
-- Endpoint：S3 兼容端点（例如 `s3.amazonaws.com`）
-- Region
-- Access Key ID
-- Secret Access Key
-- Bucket
-- 使用 SSL：开关（默认开启）
-- 强制路径风格：使用 `endpoint/bucket/key` 而非 `bucket.endpoint/key`（默认开启）
-- Public URL：可选，自定义文件访问 URL
-
-#### MinIO
-
-- Endpoint：主机名或完整 URL；显式填写的 `http://` / `https://` 协议和端口优先
-- Port：Endpoint 为未指定端口的主机名时使用
-- Use SSL：Endpoint 未包含 URL 协议时使用
-- Access Key
-- Secret Key
-- Bucket
-- Region：可选
-- 自定义域名：可选
-
-如果要让 MinIO 返回的链接可直接访问，需要在 Bucket 策略中开放匿名访问或提供公开可访问的对象 URL。
-
-![Settings](./docs/assets/minio-bucket-setting.png)
-
-## 语义图片搜索（可选）
-
-语义搜索可以用中文或英文描述来查找图片，也可以查找与某张图相似的图片。**默认关闭**，在你确认之前不会下载任何文件。
-
-**快速上手：** **设置 → 语义搜索 → 下载模型** → 打开图库 → 点击搜索框下方的 **建立索引** → 打开搜索框旁的 ✨ 开关，输入描述（例如“沙发上的猫”）并按 **回车**。
-
-- **要求：** 桌面版 Obsidian，支持 **WebGPU** 且有硬件 GPU（核显即可）。设置页会先检测，并说明不可用的原因（Obsidian 或显卡驱动过旧、远程桌面 / 虚拟机、只有软件渲染器）。没有 CPU 回退。
-- **下载：** 约 **343 MB**，只有在 **设置 → 语义搜索 → 下载** 中确认文件清单后才开始：
-  - 运行时（约 27 MB）：`semantic-worker.js` 与 ONNX Runtime WebAssembly 文件，来自本插件的 GitHub Release
-  - 模型（约 316 MB）：[EmbeddingGemma 2](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX) 文本与视觉编码器（q4），来自 Hugging Face 的固定版本
-  - 每个文件使用前都会用插件内置的 SHA-256 校验；下载中断后按文件续传
-- **存放在仓库之外**，本机所有仓库共用，不会被同步：
-  - Windows：`%LOCALAPPDATA%\obsidian-oss-gallery\models`
-  - macOS：`~/Library/Application Support/obsidian-oss-gallery/models`
-  - Linux：`$XDG_CACHE_HOME/obsidian-oss-gallery/models`（默认 `~/.cache/...`）
-  - 可在 **模型目录** 中修改（绝对路径）
-- **删除：** **删除模型** 只删除插件下载的文件（以及因此变空的目录），不会动目录中的其他文件。使用同一目录的所有仓库都会受影响。
-- **下载源（可选）：** 下载使用 Node 的 HTTPS 客户端，**不会**走系统代理。如果你所在地区无法访问或访问 Hugging Face / GitHub 较慢（例如中国大陆），可在 **设置 → 语义搜索 → 下载源** 中设置：
-  - **Hugging Face 地址**：替换模型文件的 `https://huggingface.co`。镜像需提供相同的 `/<repo>/resolve/<revision>/<file>` 路径，例如 `https://hf-mirror.com`。
-  - **GitHub 镜像**：运行时文件的代理前缀，完整的 GitHub 地址会拼接在其后：填写 `https://gh-proxy.com` 时实际请求 `https://gh-proxy.com/https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases/download/<版本>/<文件>`。
-  - 只接受 `https://` 地址（末尾的 `/` 会被去掉）。留空使用官方站点。
-  - 镜像无法改变安装的内容：每个文件仍必须与插件内置的 SHA-256 一致，下载对话框会显示实际连接的主机。修改镜像不影响已安装的文件。
-  - 如果没有可用的镜像，可以使用下面的离线安装。
-- **离线安装：** 按相同结构把文件复制到模型目录（`huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/<revision>/...` 与 `runtime/<插件版本>/...`），然后点 **校验** 或 **下载**：通过哈希校验的文件会被保留，不会重新下载。
-- **设置项：** 模型安装前只显示 WebGPU 检查、下载源和下载按钮；模型目录与索引目录在 **高级** 中。下载模型时状态栏显示“正在下载模型 42%”（点击打开设置）。安装后：识别精细度（70/140/280，即模型看每张图片时使用的图像 token 数，默认 70；之后修改会先确认，因为会重建索引，远程图片需要重新下载）与自动建立索引。
-- **建立索引：** 所有支持列表的图床都可以建立索引（Imgur 除外）。在图库中点击 **建立索引** / **更新索引（N 张新图片）**（或运行 **语义搜索：立即为当前存储服务建立索引**）。进行中时图库顶部的进度条显示数量、当前文件、暂停 / 继续与停止；状态栏显示同样的计数，例如“正在索引 12/80 · 点击暂停”（点击暂停 / 继续）。停止后已完成的部分保留，下次继续。
-  - **本地** 图床直接读取磁盘文件：不产生网络流量，也不需要确认。
-  - **远程图床** 需要把每张图片下载一次并在本机分析。开始前一定会弹出对话框，显示图片数量、需下载的大小和已有索引的数量。开启 **自动建立索引** 后，图库刷新时会为新图片建立索引；每台设备第一次会询问，之后只有需下载超过 200 MB 时才会再次询问。
-  - 图片通过 Obsidian 自带的请求接口下载（不需要配置存储桶 CORS，会走系统代理），地址与图库显示的相同。**私有** 的 S3 / R2 / MinIO 存储桶在公开地址被拒绝时改用签名请求。仍无法读取的图片（例如私有的阿里云 / 腾讯云 / 七牛存储桶）会标记为“失败”，原因为“拒绝访问：请检查存储桶权限”。
-  - 通过插件上传的图片直接用手头的文件建立索引（不重新下载）；在图库中删除的图片立即移出索引；在别处删除的图片会在下一次完整列表时从结果中隐藏，第二次时彻底清除。
-  - **索引文件** 按设备存放在仓库之外，不会同步（每台设备各自建立索引）：Windows `%LOCALAPPDATA%\obsidian-oss-gallery\indexes`，macOS `~/Library/Application Support/obsidian-oss-gallery/indexes`，Linux `~/.cache/obsidian-oss-gallery/indexes`。可在 **索引目录** 中修改；**清除本仓库的索引** 只删除本仓库的索引文件。删除模型不会影响索引，反之亦然。
-  - **缩略图：** 图片被索引时顺带保存它的[图库缩略图](#全局设置)（不产生额外下载；TIFF 也能因此显示真实缩略图）。**清除本仓库的索引** 保留缩略图，**清除缩略图** 保留索引。
-- **图片格式：** JPEG、PNG、WebP、GIF（第一帧）、BMP、ICO、AVIF 直接读取。**SVG** 会先栅格化（不会执行脚本或加载外部资源），**TIFF** 用内置的 [UTIF.js](https://github.com/photopea/UTIF.js)（MIT）解码，二者标记为“经转换”。HEIC/HEIF、PSD、相机 RAW 与无法识别的文件标记为“不支持”并跳过。图库也会列出 `.avif` 文件。
-- **搜索：** 搜索框旁的 ✨ 开关切换到语义模式（在模型安装完成且当前图床已有索引之前不可用，提示中会说明原因；语义模式下正则开关不可用）。输入描述后按 **回车**，图库先显示最佳匹配（12 到 60 张，取决于最高分与其余图片拉开的差距），按相似度从高到低排列，每张图左下角显示一个小分数；网格末尾的 **显示更多** 按同样的顺序每次再加 60 张相似度较低的图片。第一次搜索需要加载搜索模型（约 1.5 秒）。按 **Esc**、清除按钮或 **×** 返回全部图片。分数只用于排序，没有固定阈值。
-- **找相似图片：** 右键点击图片（或使用悬停按钮）→ **找相似图片**，图库显示与它最接近的图片，标题为“与 *文件名* 相似 ×”，最相似的在前，其余可通过 **显示更多** 查看。
-- **文字搜索** 时搜索框下方显示一行小字，例如“12 / 552 张图片”；不搜索时不显示数量。
-- **索引状态：** 有新图片待索引或有失败项时，搜索框下方显示类似“已索引 1,234 张 · 3 张已转换 · 2 张失败”的标签（全部索引完成后隐藏）。点击查看详情：经转换的文件（含原格式）以及不支持 / 失败的文件和原因；点击文件名可在图库中定位，也可 **重试失败的图片**。没有任务进行时状态栏不显示内容。设置页显示同样的统计和列表。两处都会显示索引在磁盘上的大小（当前存储服务的；若其他存储服务也有索引，另显示本仓库合计），正好是 **清除本仓库的索引** 会删除的文件。
-- **自检：** 模型安装后，在命令面板运行 **语义搜索：运行自检**。它会在 GPU 上加载模型，对几条测试查询、一张生成的测试图片以及仓库中最多两张图片（优先当前打开的图片）计算向量，并显示加载时间、延迟与相似度表。所有数据都不会离开本机；模型从模型目录离线运行。
-- **第三方许可：** 运行时打包了 [transformers.js](https://github.com/huggingface/transformers.js)（Apache-2.0）、ONNX Runtime Web（MIT）、UTIF.js 与 pako（MIT/Zlib）及它们的少量依赖。许可证全文见每个 GitHub Release 中与 `semantic-worker.js` 一起发布的 `THIRD_PARTY_NOTICES.txt`。
+**上传卡片为什么不显示百分比？**
+上传通过 Obsidian 的 `requestUrl` 发出，它无法报告进度。卡片会一直显示 “上传中” 进度条，直到上传完成。
 
 ## 网络使用与隐私
 
-本插件只会向你配置的存储服务发起网络请求（若你选择下载语义搜索模型，另会访问 GitHub 与 Hugging Face，或你设置的镜像），不含遥测、统计或广告，也不会向插件作者发送任何数据。
+插件只访问你配置的存储服务；如果你下载语义搜索模型，还会访问 GitHub 和 Hugging Face（或你设置的镜像）。没有遥测、统计或广告，也不会向插件作者发送任何数据。除了你自己的存储服务账号，不需要其他账号。
 
-- **文件会发送到你选择的服务。** 上传、列表、删除会访问当前 Provider 的端点：
-  - S3（通用） / MinIO：你填写的 Endpoint（MinIO 按配置使用 `http://` 或 `https://`）
-  - Cloudflare R2：你的 R2 S3 端点（`<account>.r2.cloudflarestorage.com`）
-  - 阿里云 OSS：`<bucket>.<area>.aliyuncs.com`（或自定义域名）
-  - 腾讯云 COS：`<bucket>.cos.<region>.myqcloud.com`
-  - 七牛 Kodo：`up-<area>.qiniup.com` 及七牛 API 域名
-  - 又拍云 USS：`v0.api.upyun.com`
-  - GitHub：`api.github.com`（链接默认使用 `raw.githubusercontent.com`，设置自定义域名后则使用你的域名）
-  - Imgur：`api.imgur.com`，或你配置的代理
-  - SM.MS（通过 S.EE）：`s.ee/api/v1`
-  - 本地存储：不联网
-- **文档预览。** 若将文档预览服务设为 Google Docs 或 Office Online，文档的公网 URL 会被发送到 `docs.google.com/viewer` 或 `view.officeapps.live.com` 以便渲染。保持“禁用”即可避免。
-- **账号与费用。** 除本地存储外，每个 Provider 都需要你自己的账号（或自建服务）。部分服务是收费的，请查看各服务的定价。
-- **仓库之外的本地文件。** 本地存储支持绝对路径。该模式下插件会读取、写入并（可选）把文件移入系统回收站，这些文件位于仓库之外，因为画廊需要列出并管理你指定的目录。插件只操作该目录。
-- **图库缩略图。** 图库瓦片从你的存储服务下载每张图片一次（与以前相同，但改用 Obsidian 的请求接口），并在本机、仓库之外保存小缩略图，之后显示不再下载。可在 **图库缩略图** 中关闭，恢复直接加载图片。
-- **语义图片索引（需主动开启）。** 为远程图床建立索引时，会从该存储服务下载图片，且只在你确认流量估算之后进行。图片在本机分析，不会上传任何内容。
-- **语义搜索模型（需主动开启）。** 只有在你确认下载对话框后，插件才会从 `github.com`（本插件的 Release，由 `release-assets.githubusercontent.com` 提供）和 `huggingface.co`（由其 CDN 提供）下载文件（若在 **下载源** 中设置了镜像，则从镜像下载），并写入仓库之外的模型目录。图片和搜索词不会被发送到任何地方；模型在你的 GPU 上本地运行。
-- **凭据以明文保存。** Access Key、Token、Secret 会明文保存在仓库 `.obsidian/plugins/` 下插件的 `data.json` 中。如果你同步或提交仓库（Git、网盘），请排除该文件，或使用最小权限的密钥。
-- **无遥测。** 插件不收集使用数据或崩溃报告。
+- **上传、列出、删除访问的端点**：
+  - S3 / MinIO：你填写的 Endpoint
+  - Cloudflare R2：`<account>.r2.cloudflarestorage.com`
+  - Aliyun OSS：`<bucket>.<region>.aliyuncs.com`（或你的自定义域名）
+  - Tencent COS：`<bucket>.cos.<region>.myqcloud.com`
+  - Qiniu：`up-<area>.qiniup.com` 及七牛 API 域名
+  - Upyun：`v0.api.upyun.com`
+  - GitHub：`api.github.com`（链接：`raw.githubusercontent.com` 或你的自定义域名）
+  - Imgur：`api.imgur.com`，或你设置的代理
+  - SM.MS：`s.ee/api/v1`
+  - Local：不联网
+- **测试连接** 只发送一到两次小的只读请求（列出一个文件；GitHub 则检查仓库和分支），不上传也不修改任何内容。
+- **文档预览**：选择 Google Docs 或 Office Online 预览时，文档的公开地址会发送到 `docs.google.com` 或 `view.officeapps.live.com`。保持 “禁用” 即可避免。
+- **缩略图和索引** 从你自己的存储下载图片。为远程服务建立索引只在你确认下载量后开始。图片在本机分析，不会上传任何内容。
+- **模型下载** 只在你确认文件列表后进行：`github.com`（Release 文件）和 `huggingface.co`，或你设置的镜像。搜索词和图片不会离开你的电脑。
+- **仓库之外的文件**：模型、索引和缩略图（见[文件存放位置](#文件存放位置)），以及 Local 使用绝对路径时的存储目录。
+- **凭据以明文保存** 在 `.obsidian/plugins/oss-gallery/data.json`。如果你同步或提交仓库，请排除该文件，或使用最小权限的密钥。
+- 除 Local 外，每个存储服务都需要你自己的账号或服务器，部分服务收费。
+
+## 许可证
+
+[MIT](./LICENSE)。更新日志见 [GitHub Releases](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases)。语义搜索运行时所打包组件（transformers.js、ONNX Runtime Web、UTIF.js、pako）的许可证见每个 Release 中的 `THIRD_PARTY_NOTICES.txt`。
+
+项目最初 fork 自 [Obsidian Minio Uploader Plugin](https://github.com/seebin/obsidian-minio-uploader-plugin)。
