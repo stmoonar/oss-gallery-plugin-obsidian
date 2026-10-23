@@ -4,7 +4,9 @@
 
 把 Obsidian 中的图片、视频、音频和文档上传到你自己的存储（S3、R2、MinIO、阿里云、腾讯云、七牛、又拍云、GitHub、SM.MS、Imgur 或本地文件夹），在图库中浏览，并可选地在本机用文字描述搜索图片。
 
-[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE) [![Stars](https://img.shields.io/github/stars/stmoonar/oss-gallery-plugin-obsidian?style=social)](https://github.com/stmoonar/oss-gallery-plugin-obsidian)
+
+如果这个插件对你有帮助，欢迎在 GitHub 上点个 ⭐ [Star](https://github.com/stmoonar/oss-gallery-plugin-obsidian)。遇到问题或有新想法？请[提交 Issue](https://github.com/stmoonar/oss-gallery-plugin-obsidian/issues/new)（见[支持与反馈](#支持与反馈)）。
 
 ![演示：图库、预览、粘贴上传、语义搜索](./docs/assets/demo.gif)
 
@@ -167,6 +169,15 @@
 - **仓库之外的文件**：模型、索引和缩略图（见[文件存放位置](#文件存放位置)），以及 Local 使用绝对路径时的存储目录。
 - **凭据以明文保存** 在 `.obsidian/plugins/oss-gallery/data.json`。如果你同步或提交仓库，请排除该文件，或使用最小权限的密钥。
 - 除 Local 外，每个存储服务都需要你自己的账号或服务器，部分服务收费。
+
+## 支持与反馈
+
+- **觉得好用？** 欢迎在 GitHub 上给项目点个 ⭐ [Star](https://github.com/stmoonar/oss-gallery-plugin-obsidian)，这能让更多人发现它。
+- **遇到问题或有新想法？** 请[提交 Issue](https://github.com/stmoonar/oss-gallery-plugin-obsidian/issues/new)。报告问题时请附上：
+  - 插件版本、Obsidian 版本和操作系统
+  - 使用的存储服务（不要贴出密钥等凭据）
+  - 复现步骤、预期结果和实际结果
+  - 开发者控制台中的报错（`Ctrl+Shift+I`，macOS 为 `Cmd+Option+I`），如果有的话
 
 ## 许可证
 

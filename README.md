@@ -4,7 +4,9 @@
 
 Upload images, videos, audio and documents from Obsidian to your own storage (S3, R2, MinIO, Aliyun, Tencent, Qiniu, Upyun, GitHub, SM.MS, Imgur or a local folder), browse them in a gallery, and optionally search your images by description on your own computer.
 
-[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/stmoonar/oss-gallery-plugin-obsidian)](https://github.com/stmoonar/oss-gallery-plugin-obsidian/releases) [![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22oss-gallery%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://community.obsidian.md/plugins/oss-gallery) [![License](https://img.shields.io/github/license/stmoonar/oss-gallery-plugin-obsidian)](./LICENSE) [![Stars](https://img.shields.io/github/stars/stmoonar/oss-gallery-plugin-obsidian?style=social)](https://github.com/stmoonar/oss-gallery-plugin-obsidian)
+
+If this plugin helps you, please ⭐ [star it on GitHub](https://github.com/stmoonar/oss-gallery-plugin-obsidian). Found a bug or have an idea? [Open an issue](https://github.com/stmoonar/oss-gallery-plugin-obsidian/issues/new) (see [Support and feedback](#support-and-feedback)).
 
 ![Demo: gallery, preview, upload by paste, semantic search](./docs/assets/demo.gif)
 
@@ -167,6 +169,15 @@ The plugin talks only to the storage service you configure, and, if you download
 - **Files outside the vault**: the model, index and thumbnails (see [Where files are stored](#where-files-are-stored)), and the Local provider's folder if you set an absolute path.
 - **Credentials are stored in plain text** in `.obsidian/plugins/oss-gallery/data.json`. If you sync or commit your vault, exclude that file or use least-privilege keys.
 - Every provider except Local needs your own account or server; some are paid.
+
+## Support and feedback
+
+- **Like the plugin?** Give it a ⭐ [star on GitHub](https://github.com/stmoonar/oss-gallery-plugin-obsidian). It helps other people find it.
+- **Found a bug or have an idea?** [Open an issue](https://github.com/stmoonar/oss-gallery-plugin-obsidian/issues/new). For bugs, please include:
+  - plugin version, Obsidian version and OS
+  - the provider you use (never paste keys or secrets)
+  - steps to reproduce, what you expected and what happened
+  - errors from the developer console (`Ctrl+Shift+I`, or `Cmd+Option+I` on macOS), if any
 
 ## License
 
